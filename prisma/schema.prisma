@@ -1,0 +1,566 @@
+// Multi-tenant finance analysis platform — every business-data table is scoped by
+// organizationId so each company's data is fully isolated from every other company's.
+// PostgreSQL (Neon). Run `npx prisma migrate dev` after DATABASE_URL/DIRECT_URL are set in .env
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  ADMIN     // 系统管理员
+  DIRECTOR  // 集团总监
+  FINANCE   // 财务人员
+  MANAGER   // 子公司经理
+  VIEWER    // 访客(只读)
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum RiskSeverity {
+  GOOD
+  WARNING
+  SERIOUS
+  CRITICAL
+}
+
+enum ProjectStatus {
+  ON_TRACK
+  AHEAD
+  DELAYED
+}
+
+enum ReportType {
+  MANAGEMENT
+  SPECIAL
+  STATUTORY
+}
+
+enum ReportStatus {
+  GENERATED
+  GENERATING
+  ARCHIVED
+}
+
+// Deliberately distinct from RiskSeverity (GOOD/WARNING/SERIOUS/CRITICAL, used for dashboard
+// health indicators) — this is the LOW/MEDIUM/HIGH/CRITICAL classification an internal-audit
+// finding uses, matching standard audit risk-rating terminology.
+enum AuditRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AuditFindingStatus {
+  OPEN
+  IN_PROGRESS
+  CLOSED
+}
+
+// One row per tenant company. inviteCode is how new members join self-serve
+// (shared by an org admin); everything else is that company's own settings.
+model Organization {
+  id           String   @id @default(cuid())
+  name         String
+  baseCurrency String   @default("CNY")
+  // Month the group's financial year ends in (1-12; 12 = calendar year). Drives which month
+  // subsidiary-level year-end figures are read from for consolidated/audit reporting.
+  fyeMonth     Int      @default(12)
+  // Group/HQ-level balance sheet figures — mirrors Subsidiary.equity/debtRatio, but for the
+  // holding entity itself rather than any subsidiary (e.g. holdco overhead not captured under
+  // any operating entity). Set via the Balance Sheet import tools or directly under Group Settings.
+  equity       Decimal  @default(0) @db.Decimal(14, 2)
+  debtRatio    Decimal  @default(0) @db.Decimal(6, 2)
+  // Current HQ headcount snapshot — mirrors Subsidiary.headcount, for the holding entity itself.
+  headcount    Int      @default(0)
+  inviteCode   String   @unique
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  users             User[]
+  accessRequests    AccessRequest[]
+  subsidiaries      Subsidiary[]
+  regions           Region[]
+  monthlyFinancials MonthlyFinancial[]
+  regionMonthlyFinancials RegionMonthlyFinancial[]
+  budgets           Budget[]
+  bankAccounts      BankAccount[]
+  cashFlowMonthlies CashFlowMonthly[]
+  arCustomers       ARCustomer[]
+  payables          Payable[]
+  projects          Project[]
+  riskAlerts        RiskAlert[]
+  reportDocs        ReportDoc[]
+  importBatches     ImportBatch[]
+  exchangeRates     ExchangeRate[]
+  xeroConnections   XeroConnection[]
+  xeroGroupConnection XeroGroupConnection?
+  auditFindings     AuditFinding[]
+}
+
+// Email is unique platform-wide (not just per-org): one login belongs to exactly one
+// company. Someone working with two client companies needs two separate accounts.
+model User {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  name           String
+  email          String       @unique
+  passwordHash   String
+  role           Role         @default(VIEWER)
+  status         UserStatus   @default(ACTIVE)
+  subsidiaryId   String?
+  subsidiary     Subsidiary?  @relation(fields: [subsidiaryId], references: [id])
+  lastLoginAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  decidedRequests     AccessRequest[]      @relation("DecidedBy")
+  importBatches       ImportBatch[]
+  passwordResetTokens PasswordResetToken[]
+
+  @@index([email])
+  @@index([organizationId])
+}
+
+model AccessRequest {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  name           String
+  email          String
+  phone          String
+  subsidiaryId   String?
+  subsidiary     Subsidiary?   @relation(fields: [subsidiaryId], references: [id])
+  requestedRole  Role          @default(VIEWER)
+  reason         String        @db.Text
+  status         RequestStatus @default(PENDING)
+  decidedById    String?
+  decidedBy      User?         @relation("DecidedBy", fields: [decidedById], references: [id])
+  decidedAt      DateTime?
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId])
+}
+
+// Subsidiary doubles as the "business segment" dimension used throughout the dashboards.
+model Subsidiary {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  key            String // e.g. "mfg","cons","nrg","oth","tech" — unique within the org, not globally
+  nameZh         String
+  nameZhTw       String
+  nameEn         String
+  nameMs         String
+  nameId         String
+  segmentZh      String // 业务板块名称 (制造业务 etc.)
+  segmentZhTw    String
+  segmentEn      String
+  segmentMs      String
+  segmentId      String
+  colorHex       String       @default("#2a78d6")
+  sortOrder      Int          @default(0)
+  // ROE is computed as netProfit ÷ equity (see the 子公司分析/利润分析 pages) rather than
+  // stored directly — a hand-typed ratio drifts from the real numbers and can't be checked.
+  equity         Decimal      @default(0) @db.Decimal(14, 2)
+  debtRatio      Decimal      @default(0) @db.Decimal(6, 2)
+  riskRating     RiskSeverity @default(GOOD)
+  // Month this subsidiary's own financial year ends in (1-12) — subsidiaries in a group can
+  // legitimately close on different dates (e.g. a foreign subsidiary on a local statutory FYE).
+  fyeMonth       Int          @default(12)
+  // Current headcount snapshot for this entity (a company-profile fact, edited directly here) —
+  // distinct from MonthlyFinancial.headcount, which is a per-month historical value feeding the
+  // Revenue per Employee trend and can differ from today's count.
+  headcount      Int          @default(0)
+
+  users             User[]
+  accessRequests    AccessRequest[]
+  monthlyFinancials MonthlyFinancial[]
+  budgets           Budget[]
+  arCustomers       ARCustomer[]
+  payables          Payable[]
+  projects          Project[]
+  riskAlerts        RiskAlert[]
+  xeroConnection    XeroConnection?
+  bankAccounts      BankAccount[]
+
+  @@unique([organizationId, key])
+}
+
+model Region {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  key            String
+  nameZh         String
+  nameZhTw       String
+  nameEn         String
+  nameMs         String
+  nameId         String
+  sortOrder      Int          @default(0)
+
+  monthlyFinancials RegionMonthlyFinancial[]
+
+  @@unique([organizationId, key])
+}
+
+// Group-level monthly actuals per subsidiary (万元 = RMB 10K unless noted)
+model MonthlyFinancial {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  // null = group/HQ-level P&L, not tied to any single subsidiary (mirrors BankAccount.subsidiaryId).
+  // A separate partial unique index (see migration) enforces one HQ row per (organizationId, year,
+  // month), since the compound @@unique below doesn't dedupe multiple nulls in Postgres.
+  subsidiaryId   String?
+  subsidiary     Subsidiary?  @relation(fields: [subsidiaryId], references: [id])
+  year           Int
+  month          Int // 1-12
+  revenue        Decimal      @db.Decimal(14, 2)
+  netProfit      Decimal      @db.Decimal(14, 2)
+  grossMarginPct Decimal      @db.Decimal(6, 2)
+  opCost         Decimal      @db.Decimal(14, 2) // cost of sales (above the gross-profit line)
+  // Period expenses (below the gross-profit line) — previously the Business Analysis page
+  // faked these as fixed percentages of revenue (8.6/5.2/3.2/1.7%) rather than real entered
+  // figures, so R&D Intensity/Expense Ratio always showed the same number regardless of
+  // actual spending. Real fields now back those KPIs.
+  sellExp        Decimal      @default(0) @db.Decimal(14, 2)
+  adminExp       Decimal      @default(0) @db.Decimal(14, 2)
+  rndExp         Decimal      @default(0) @db.Decimal(14, 2)
+  financeExp     Decimal      @default(0) @db.Decimal(14, 2)
+  // Point-in-time employee count for this subsidiary as of this month (not additive across
+  // months) — backs Revenue per Employee, which was previously hardcoded to 0.
+  headcount      Int          @default(0)
+  createdAt      DateTime     @default(now())
+
+  @@unique([subsidiaryId, year, month])
+  @@index([organizationId])
+}
+
+model RegionMonthlyFinancial {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  regionId       String
+  region         Region       @relation(fields: [regionId], references: [id])
+  year           Int
+  month          Int
+  revenue        Decimal      @db.Decimal(14, 2)
+  netProfit      Decimal      @db.Decimal(14, 2)
+
+  @@unique([regionId, year, month])
+  @@index([organizationId])
+}
+
+model Budget {
+  id                String       @id @default(cuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id])
+  // null = group/HQ-level budget, not tied to any single subsidiary (mirrors BankAccount.subsidiaryId).
+  // A separate partial unique index (see migration) enforces one HQ row per (organizationId, year).
+  subsidiaryId      String?
+  subsidiary        Subsidiary?  @relation(fields: [subsidiaryId], references: [id])
+  year              Int
+  revenueBudget     Decimal      @db.Decimal(14, 2)
+  costBudgetRate    Decimal      @db.Decimal(6, 2)
+  expenseBudgetRate Decimal      @db.Decimal(6, 2)
+
+  @@unique([subsidiaryId, year])
+  @@index([organizationId])
+}
+
+model BankAccount {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  bankZh         String
+  bankEn         String
+  acctType       String // key: main | general | fx
+  balance        Decimal      @db.Decimal(14, 2)
+  currency       String       @default("CNY")
+  // null = head office / group level, not tied to a specific subsidiary. Without this, every
+  // subsidiary's accounts were dumped into one undifferentiated list with no way to tell them
+  // apart — and a name-matching sync (see Xero bank sync) could overwrite the wrong entity's
+  // balance if two subsidiaries happened to bank with the same institution.
+  subsidiaryId   String?
+  subsidiary     Subsidiary?  @relation(fields: [subsidiaryId], references: [id])
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+}
+
+model CashFlowMonthly {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  year           Int
+  month          Int
+  ocf            Decimal      @db.Decimal(14, 2)
+  icf            Decimal      @db.Decimal(14, 2)
+  fcf            Decimal      @db.Decimal(14, 2)
+
+  @@unique([organizationId, year, month])
+}
+
+model ARCustomer {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  nameZh         String
+  nameEn         String
+  // null = a group/HQ-level receivable, not tied to any single subsidiary.
+  subsidiaryId   String?
+  subsidiary     Subsidiary?  @relation(fields: [subsidiaryId], references: [id])
+  balance        Decimal      @db.Decimal(14, 2)
+  agingDays      Int
+  status         RiskSeverity @default(GOOD)
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+}
+
+// Accounts payable — the mirror of ARCustomer, tracking what the org owes vendors rather
+// than what customers owe the org.
+model Payable {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  nameZh         String
+  nameEn         String
+  // null = a group/HQ-level payable, not tied to any single subsidiary.
+  subsidiaryId   String?
+  subsidiary     Subsidiary?  @relation(fields: [subsidiaryId], references: [id])
+  balance        Decimal      @db.Decimal(14, 2)
+  agingDays      Int
+  status         RiskSeverity @default(GOOD)
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+}
+
+model Project {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  nameZh         String
+  nameEn         String
+  subsidiaryId   String
+  subsidiary     Subsidiary    @relation(fields: [subsidiaryId], references: [id])
+  budget         Decimal       @db.Decimal(14, 2)
+  spent          Decimal       @db.Decimal(14, 2)
+  progressPct    Int
+  status         ProjectStatus @default(ON_TRACK)
+  owner          String
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId])
+}
+
+model RiskAlert {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  severity       RiskSeverity
+  category       String // key: opRisk | costRisk | creditRisk | marketRisk | liquidityRisk | complianceRisk
+  tag            String // short tag key
+  subsidiaryId   String?
+  subsidiary     Subsidiary?  @relation(fields: [subsidiaryId], references: [id])
+  entityLabel    String // free-text entity when not tied to a subsidiary (e.g. region, project)
+  textZh         String       @db.Text
+  textZhTw       String       @db.Text
+  textEn         String       @db.Text
+  textMs         String       @db.Text
+  textId         String       @db.Text
+  occurredAt     DateTime
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+}
+
+model ReportDoc {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  nameZh         String
+  nameEn         String
+  type           ReportType
+  status         ReportStatus
+  period         String
+  generatedAt    DateTime?
+  createdAt      DateTime     @default(now())
+  // Set only for rows the system generated itself (e.g. "consolidated_income_statement") — used
+  // to make the row clickable back to a live-recomputed report view. Rows logged manually by an
+  // admin (the original use of this table) leave both null.
+  reportKey      String?
+  periodYear     Int?
+  // Set only for report types keyed at monthly granularity (e.g. "monthly_risk") — lets two
+  // different months in the same year both exist under the same reportKey/periodYear. Left null
+  // for every other report type.
+  //
+  // Uniqueness is enforced by two PARTIAL unique indexes created in the migration, not a single
+  // @@unique here: one on (organizationId, reportKey, periodYear) WHERE periodMonth IS NULL for
+  // every existing report type, and one on (organizationId, reportKey, periodYear, periodMonth)
+  // WHERE periodMonth IS NOT NULL for monthly reports — a single non-partial compound unique
+  // can't express both at once (folding periodMonth into it would let Postgres, which never
+  // treats NULL = NULL, accept unlimited duplicate rows for every non-monthly report type). The
+  // API route does a manual find-then-create/update rather than a Prisma compound-unique upsert.
+  periodMonth    Int?
+
+  @@index([organizationId])
+}
+
+model ImportBatch {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  fileName       String
+  rowCount       Int
+  importedById   String
+  importedBy     User         @relation(fields: [importedById], references: [id])
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+}
+
+// One row per non-base currency the org transacts in. rateToBase = how many units of the
+// base currency one unit of `currency` is worth (e.g. USD -> CNY: rateToBase ≈ 7.1).
+model ExchangeRate {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  currency       String
+  rateToBase     Decimal      @db.Decimal(14, 6)
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organizationId, currency])
+}
+
+// One row per org's Xero OAuth connection, created once an admin completes the "Connect
+// Xero" flow under 设置 → 数据导入与ERP. No tokens are stored until that flow succeeds.
+// One connection per subsidiary (not per organization) — a group may have subsidiaries on
+// different Xero company files, so each subsidiary picks its own Xero tenant independently.
+model XeroConnection {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  subsidiaryId   String       @unique
+  subsidiary     Subsidiary   @relation(fields: [subsidiaryId], references: [id])
+  tenantId       String?
+  tenantName     String?
+  accessToken    String?      @db.Text
+  refreshToken   String?      @db.Text
+  expiresAt      DateTime?
+  connectedAt    DateTime?
+  // Visibility into the automatic (cron) and manual sync runs — without these, a silently
+  // failing or never-running sync looked identical to a healthy one from the UI.
+  lastSyncAt     DateTime?
+  lastSyncError  String?      @db.Text
+  updatedAt      DateTime     @updatedAt
+}
+
+// Group/HQ-level Xero connection, separate from the per-subsidiary XeroConnection above — an
+// organization that reports through one shared Xero company file connects here once, instead
+// of (or in addition to) connecting individual subsidiaries that have their own Xero files.
+model XeroGroupConnection {
+  id             String       @id @default(cuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  tenantId       String?
+  tenantName     String?
+  accessToken    String?      @db.Text
+  refreshToken   String?      @db.Text
+  expiresAt      DateTime?
+  connectedAt    DateTime?
+  updatedAt      DateTime     @updatedAt
+}
+
+// Single-use, time-limited token emailed to a user who requested a password reset.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// An internal-audit exception, raised either by the automated scan (src/lib/audit.ts) or
+// entered manually. Deliberately a PERSISTED, stateful record — unlike the consolidated/special
+// reports (which are always live-recomputed with no stored state), an audit finding must survive
+// after the underlying condition changes (e.g. an overdue receivable gets paid) since it's a
+// historical record of what was found, and its status/response/closure evidence are themselves
+// data entered over time, not something derivable by recomputing from current financials.
+model AuditFinding {
+  id             String              @id @default(cuid())
+  organizationId String
+  organization   Organization        @relation(fields: [organizationId], references: [id])
+  // e.g. "IA-2026-AR-001" — human-readable reference, unique per org, assigned sequentially per
+  // (area, year) at creation time by the scan/creation logic (not DB-generated).
+  findingRef     String
+  // Scan area key: ar | ap | budget | debt | risk | sod. Free-text rather than an enum since new
+  // detection areas may be added later without a migration.
+  area           String
+  severity       AuditRiskLevel
+  status         AuditFindingStatus  @default(OPEN)
+  dateIdentified DateTime            @default(now())
+  // Display name of the subsidiary/HQ this finding relates to, captured at detection time (not a
+  // live FK) — a finding must remain readable even if the subsidiary is later renamed or removed.
+  entityLabel    String?
+  // The specific customer/vendor/budget line this finding is about, e.g. a customer name — "N/A"
+  // when the finding isn't about a single transaction (e.g. a segregation-of-duties finding).
+  transactionRef String?
+  // Stable identity key the scan uses to avoid re-raising a finding that's already OPEN/IN_PROGRESS
+  // — distinct from (area, entityLabel, transactionRef), which two different finding TYPES about
+  // the same real-world thing can share (e.g. an AR aging exception and an AR concentration
+  // exception for the same customer would otherwise collide and the second would be silently
+  // dropped as a false duplicate).
+  dedupKey       String?
+  amount         Decimal?            @db.Decimal(14, 2)
+  // What should apply (policy/threshold) — see report format in the audit spec's §22.
+  criteria       String              @db.Text
+  // What was actually found — the real condition detected from real data.
+  condition      String              @db.Text
+  // Which real record(s) this finding is based on, e.g. "ARCustomer id=... balance=... agingDays=...".
+  evidence       String              @db.Text
+  riskImpact     String              @db.Text
+  recommendation String              @db.Text
+  // The rest are populated by a human reviewer, not the automated scan — the scan never
+  // fabricates a management response, root cause, or auditor conclusion (see §25: never
+  // fabricate management responses).
+  rootCause          String?         @db.Text
+  managementResponse String?         @db.Text
+  auditorAssessment  String?         @db.Text
+  responsibleOwner   String?
+  targetDate         DateTime?
+  // A finding is never auto-closed by recomputation — closure requires a human to record what
+  // evidence supports it (§23: "shall not mark a finding as closed solely because management
+  // states that corrective action was completed").
+  closureEvidence    String?         @db.Text
+  closedAt           DateTime?
+  // AUTOMATED = created by runAuditScan(); MANUAL = entered directly by a reviewer.
+  detectionType      String          @default("AUTOMATED")
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  @@unique([organizationId, findingRef])
+  @@index([organizationId])
+}

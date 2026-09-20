@@ -1,0 +1,2 @@
+ALTER TABLE "Subsidiary" DROP COLUMN "roe";
+ALTER TABLE "Subsidiary" ADD COLUMN "equity" DECIMAL(14,2) NOT NULL DEFAULT 0;
