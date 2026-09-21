@@ -94,6 +94,7 @@ export default function CrudTable({
   emptyLabel,
   addLabel,
   exportLabel,
+  defaultSearch,
 }: {
   apiBase: string;
   fields: FieldConfig[];
@@ -105,6 +106,9 @@ export default function CrudTable({
   addLabel: string;
   /** Base filename / print title for exports. Defaults to the last segment of apiBase. */
   exportLabel?: string;
+  /** Prefills the search box — lets another page deep-link straight to a specific row (e.g. an
+   * "Edit" link on the AR/AP dashboard) instead of landing on an unfiltered list. */
+  defaultSearch?: string;
 }) {
   const displayFields = tableKeys ? fields.filter((f) => tableKeys.includes(f.key)) : fields;
   const router = useRouter();
@@ -113,7 +117,7 @@ export default function CrudTable({
   const [form, setForm] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(defaultSearch ?? "");
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [exportOpen, setExportOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
@@ -203,7 +207,13 @@ export default function CrudTable({
       router.refresh();
     } else {
       const body = await res.json().catch(() => ({}));
-      setError(body.error === "invalid_input" ? "输入有误，请检查必填字段 / Invalid input" : "提交失败 / Request failed");
+      setError(
+        body.error === "invalid_input"
+          ? "输入有误，请检查必填字段 / Invalid input"
+          : body.error === "duplicate_entry"
+            ? "该记录已存在（同一主体下已有同名条目）— 请编辑已有记录，而不是新增 / This entry already exists for this entity — edit the existing record instead of adding a duplicate"
+            : "提交失败 / Request failed"
+      );
     }
   }
 
@@ -221,7 +231,12 @@ export default function CrudTable({
       setEditingId(null);
       router.refresh();
     } else {
-      setError("更新失败 / Update failed");
+      const body = await res.json().catch(() => ({}));
+      setError(
+        body.error === "duplicate_entry"
+          ? "该记录已存在（同一主体下已有同名条目）— 请改为编辑已有记录 / This entry already exists for this entity — edit the existing record instead"
+          : "更新失败 / Update failed"
+      );
     }
   }
 

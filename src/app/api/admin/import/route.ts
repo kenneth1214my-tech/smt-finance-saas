@@ -133,14 +133,22 @@ export async function POST(req: Request) {
           const subsidiaryId = resolveSubsidiaryId(raw.subsidiaryKey, subByKey);
           const parsed = arCustomerSchema.safeParse({ ...raw, subsidiaryId });
           if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "invalid_input");
-          await db.aRCustomer.create({ data: { ...parsed.data, organizationId } });
+          // Re-importing the same contact (same name, same entity) updates their balance/aging
+          // instead of creating a duplicate row — a DB partial-unique index backs this, but a
+          // manual find-then-create/update is used (not Prisma's compound-unique upsert) since
+          // the constraint is two partial indexes, not a single @@unique Prisma can target.
+          const existing = await db.aRCustomer.findFirst({ where: { organizationId, subsidiaryId, nameZh: parsed.data.nameZh } });
+          if (existing) await db.aRCustomer.update({ where: { id: existing.id }, data: parsed.data });
+          else await db.aRCustomer.create({ data: { ...parsed.data, organizationId } });
           break;
         }
         case "payable": {
           const subsidiaryId = resolveSubsidiaryId(raw.subsidiaryKey, subByKey);
           const parsed = payableSchema.safeParse({ ...raw, subsidiaryId });
           if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "invalid_input");
-          await db.payable.create({ data: { ...parsed.data, organizationId } });
+          const existing = await db.payable.findFirst({ where: { organizationId, subsidiaryId, nameZh: parsed.data.nameZh } });
+          if (existing) await db.payable.update({ where: { id: existing.id }, data: parsed.data });
+          else await db.payable.create({ data: { ...parsed.data, organizationId } });
           break;
         }
         case "balanceSheet": {

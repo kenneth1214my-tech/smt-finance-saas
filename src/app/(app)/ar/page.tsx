@@ -1,4 +1,5 @@
-import { FileSpreadsheet, Clock, AlertTriangle, ShieldAlert, Banknote } from "lucide-react";
+import { FileSpreadsheet, Clock, AlertTriangle, ShieldAlert, Banknote, Pencil } from "lucide-react";
+import Link from "next/link";
 import { requireUser } from "@/lib/dal";
 import { db } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
@@ -10,23 +11,30 @@ import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
 import StackedBar from "@/components/ui/StackedBar";
 import StatusPill from "@/components/ui/StatusPill";
+import EntityScopeFilter, { type EntityScope } from "@/components/ui/EntityScopeFilter";
 
 const fmt1 = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const RISK_TONE: Record<string, "good" | "warning" | "serious" | "critical"> = { GOOD: "good", WARNING: "warning", SERIOUS: "serious", CRITICAL: "critical" };
 
-export default async function ARPage() {
+export default async function ARPage(props: PageProps<"/ar">) {
   const user = await requireUser();
   const locale = await getServerLocale();
   const isZh = locale === "zh" || locale === "zh-Hant";
+  const searchParams = await props.searchParams;
+  const scopeParam = typeof searchParams.scope === "string" ? searchParams.scope : "all";
+  const scope: EntityScope = scopeParam === "hq" || scopeParam === "subsidiary" ? scopeParam : "all";
 
   const organizationId = user.organizationId;
   const baseCurrency = await getBaseCurrency(organizationId);
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const fmtM = (n: number) => fmtMoney(n, locale);
-  const [customers, monthly] = await Promise.all([
+  const [allCustomers, monthly] = await Promise.all([
     db.aRCustomer.findMany({ where: { organizationId }, include: { subsidiary: true }, orderBy: { balance: "desc" } }),
     db.monthlyFinancial.findMany({ where: { year: 2026, organizationId } }),
   ]);
+  // KPIs/aging buckets recompute from the SELECTED scope, not the full list — so "Group HQ"
+  // never shows the subsidiary's Xero-synced customers mixed into its own AR totals, and vice versa.
+  const customers = scope === "hq" ? allCustomers.filter((c) => !c.subsidiaryId) : scope === "subsidiary" ? allCustomers.filter((c) => c.subsidiaryId) : allCustomers;
 
   const totalAR = customers.reduce((a, c) => a + Number(c.balance), 0);
   const totalRevenue = monthly.reduce((a, m) => a + Number(m.revenue), 0);
@@ -71,6 +79,17 @@ export default async function ARPage() {
         </Card>
 
         <Card title={dict.m.custTableCard}>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <EntityScopeFilter scope={scope} locale={locale} />
+            <Link
+              href="/settings?tab=business&sub=ar"
+              className="flex items-center gap-1 rounded-lg border px-3 py-1.5 text-[12px] font-bold"
+              style={{ borderColor: "var(--border-strong)", color: "var(--ink-600)" }}
+            >
+              <Pencil size={13} />
+              {isZh ? "管理客户" : "Manage customers"}
+            </Link>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-[12.6px]">
               <thead>
@@ -80,6 +99,7 @@ export default async function ARPage() {
                   <th className="pb-2 text-right">{dict.m.arBalance} ({dict.common.yi})</th>
                   <th className="pb-2 text-right">{dict.m.thAgingDays}</th>
                   <th className="pb-2">{dict.m.thStatus}</th>
+                  <th className="pb-2" />
                 </tr>
               </thead>
               <tbody>
@@ -95,6 +115,16 @@ export default async function ARPage() {
                     <td className="tabular-nums py-2.5 text-right">{c.agingDays}</td>
                     <td className="py-2.5">
                       <StatusPill tone={RISK_TONE[c.status]} label={statusLabel(c.status)} />
+                    </td>
+                    <td className="py-2.5 text-right">
+                      <Link
+                        href={`/settings?tab=business&sub=ar&q=${encodeURIComponent(c.nameZh)}`}
+                        className="inline-flex items-center gap-1 text-[11.5px] font-semibold"
+                        style={{ color: "var(--cat-1)" }}
+                      >
+                        <Pencil size={12} />
+                        {isZh ? "编辑" : "Edit"}
+                      </Link>
                     </td>
                   </tr>
                 ))}

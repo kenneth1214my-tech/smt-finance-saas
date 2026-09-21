@@ -1289,7 +1289,15 @@ function BusinessTab({
   reports: Row[];
 }) {
   const isZh = locale === "zh" || locale === "zh-Hant";
-  const [sub, setSub] = useState<"ar" | "ap" | "project" | "risk" | "report">("ar");
+  // The AR/AP dashboard pages' "Edit" links land here with ?sub=ar|ap&q=<name> so a specific
+  // row opens pre-filtered instead of an unfiltered list of thousands of rows.
+  const searchParams = useSearchParams();
+  const initialSubParam = searchParams.get("sub");
+  const SUB_TABS = ["ar", "ap", "project", "risk", "report"] as const;
+  const [sub, setSub] = useState<(typeof SUB_TABS)[number]>(
+    SUB_TABS.includes(initialSubParam as (typeof SUB_TABS)[number]) ? (initialSubParam as (typeof SUB_TABS)[number]) : "ar"
+  );
+  const qParam = searchParams.get("q") ?? "";
 
   const subTabs: { id: typeof sub; label: string }[] = [
     { id: "ar", label: isZh ? "应收客户" : "AR Customers" },
@@ -1381,12 +1389,12 @@ function BusinessTab({
 
       {sub === "ar" && (
         <Card title={isZh ? "应收客户" : "AR Customers"}>
-          <CrudTable apiBase="/api/admin/ar-customers" fields={arFields} initialRows={arCustomers} emptyLabel={isZh ? "暂无客户" : "No customers yet"} addLabel={isZh ? "新增客户" : "Add customer"} />
+          <CrudTable apiBase="/api/admin/ar-customers" fields={arFields} initialRows={arCustomers} emptyLabel={isZh ? "暂无客户" : "No customers yet"} addLabel={isZh ? "新增客户" : "Add customer"} defaultSearch={qParam} />
         </Card>
       )}
       {sub === "ap" && (
         <Card title={isZh ? "应付供应商" : "AP Vendors"}>
-          <CrudTable apiBase="/api/admin/payables" fields={apFields} initialRows={payables} emptyLabel={isZh ? "暂无供应商" : "No vendors yet"} addLabel={isZh ? "新增供应商" : "Add vendor"} />
+          <CrudTable apiBase="/api/admin/payables" fields={apFields} initialRows={payables} emptyLabel={isZh ? "暂无供应商" : "No vendors yet"} addLabel={isZh ? "新增供应商" : "Add vendor"} defaultSearch={qParam} />
         </Card>
       )}
       {sub === "project" && (

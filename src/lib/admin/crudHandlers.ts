@@ -33,8 +33,18 @@ export function listCreateHandlers<T>(
     const raw = await req.json().catch(() => null);
     const parsed = createSchema.safeParse(raw);
     if (!parsed.success) return NextResponse.json({ error: "invalid_input", issues: parsed.error.issues }, { status: 400 });
-    const row = await delegate.create({ data: { ...parsed.data, organizationId: user.organizationId } });
-    return NextResponse.json({ row });
+    try {
+      const row = await delegate.create({ data: { ...parsed.data, organizationId: user.organizationId } });
+      return NextResponse.json({ row });
+    } catch (err) {
+      // P2002: unique constraint violation. Only ARCustomer/Payable carry one (on entity+name),
+      // so this only ever fires for those — a clearer message than a raw 500 for the case this
+      // was added for: someone manually adding a contact that already exists for that entity.
+      if (err && typeof err === "object" && "code" in err && err.code === "P2002") {
+        return NextResponse.json({ error: "duplicate_entry" }, { status: 409 });
+      }
+      throw err;
+    }
   }
 
   return { GET, POST };
@@ -52,12 +62,19 @@ export function itemHandlers<T>(
     const raw = await req.json().catch(() => null);
     const parsed = updateSchema.safeParse(raw);
     if (!parsed.success) return NextResponse.json({ error: "invalid_input", issues: parsed.error.issues }, { status: 400 });
-    // updateMany (not update) so the where clause can carry organizationId without needing a
-    // compound unique index — a mismatched org means 0 rows affected, not another tenant's row.
-    const result = await delegate.updateMany({ where: { id, organizationId: user.organizationId }, data: parsed.data });
-    if (result.count === 0) return NextResponse.json({ error: "not_found" }, { status: 404 });
-    const row = await delegate.findUnique({ where: { id } });
-    return NextResponse.json({ row });
+    try {
+      // updateMany (not update) so the where clause can carry organizationId without needing a
+      // compound unique index — a mismatched org means 0 rows affected, not another tenant's row.
+      const result = await delegate.updateMany({ where: { id, organizationId: user.organizationId }, data: parsed.data });
+      if (result.count === 0) return NextResponse.json({ error: "not_found" }, { status: 404 });
+      const row = await delegate.findUnique({ where: { id } });
+      return NextResponse.json({ row });
+    } catch (err) {
+      if (err && typeof err === "object" && "code" in err && err.code === "P2002") {
+        return NextResponse.json({ error: "duplicate_entry" }, { status: 409 });
+      }
+      throw err;
+    }
   }
 
   async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
