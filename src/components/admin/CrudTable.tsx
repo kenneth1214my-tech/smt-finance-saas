@@ -20,6 +20,11 @@ export interface FieldConfig {
   displayValue?: (row: Record<string, unknown>) => React.ReactNode;
   step?: string;
   required?: boolean;
+  /** If left blank on submit, this field's value is copied from another field in the same form
+   * instead of being sent empty — e.g. a secondary-locale name field falling back to the
+   * primary-locale one, so a form with several near-duplicate "name in language X" fields
+   * doesn't hard-block on all of them being filled in by hand. */
+  fallbackFrom?: string;
   /** Forces typed input to upper case as you type (e.g. a free-text bank name entered under
    * "Other", where preset entries already come pre-formatted and shouldn't be touched). */
   uppercase?: boolean;
@@ -80,6 +85,7 @@ function FieldInput({
       step={f.step}
       value={value}
       onChange={(e) => onChange(f.uppercase ? e.target.value.toUpperCase() : e.target.value)}
+      placeholder={f.fallbackFrom ? "留空则自动带入 / Leave blank to reuse another field" : undefined}
       className="crud-input"
     />
   );
@@ -182,11 +188,25 @@ export default function CrudTable({
     setError("");
   }
 
+  // Turns Zod's issue list into field labels the user actually recognizes (e.g. "名称(繁)")
+  // instead of a blanket "check the required fields" that doesn't say which one — the direct
+  // fix for a report that a form with several similar-looking fields silently failed with no
+  // indication of which one was the problem.
+  function describeIssues(issues: { path: (string | number)[]; message: string }[] | undefined): string | null {
+    if (!issues || issues.length === 0) return null;
+    const names = issues.map((iss) => {
+      const key = String(iss.path[0] ?? "");
+      return fields.find((f) => f.key === key)?.label ?? key;
+    });
+    return [...new Set(names)].join("、");
+  }
+
   function buildPayload() {
     const payload: Record<string, unknown> = {};
     for (const f of fields) {
       if (f.virtual) continue;
-      const raw = form[f.key];
+      let raw = form[f.key];
+      if (!raw && f.fallbackFrom) raw = form[f.fallbackFrom] ?? raw;
       if (f.type === "number") payload[f.key] = raw === "" ? undefined : Number(raw);
       else payload[f.key] = raw;
     }
@@ -207,9 +227,12 @@ export default function CrudTable({
       router.refresh();
     } else {
       const body = await res.json().catch(() => ({}));
+      const fieldNames = describeIssues(body.issues);
       setError(
         body.error === "invalid_input"
-          ? "输入有误，请检查必填字段 / Invalid input"
+          ? fieldNames
+            ? `请检查以下字段：${fieldNames} / Please check: ${fieldNames}`
+            : "输入有误，请检查必填字段 / Invalid input"
           : body.error === "duplicate_entry"
             ? "该记录已存在（同一主体下已有同名条目）— 请编辑已有记录，而不是新增 / This entry already exists for this entity — edit the existing record instead of adding a duplicate"
             : "提交失败 / Request failed"
@@ -232,10 +255,15 @@ export default function CrudTable({
       router.refresh();
     } else {
       const body = await res.json().catch(() => ({}));
+      const fieldNames = describeIssues(body.issues);
       setError(
-        body.error === "duplicate_entry"
-          ? "该记录已存在（同一主体下已有同名条目）— 请改为编辑已有记录 / This entry already exists for this entity — edit the existing record instead"
-          : "更新失败 / Update failed"
+        body.error === "invalid_input"
+          ? fieldNames
+            ? `请检查以下字段：${fieldNames} / Please check: ${fieldNames}`
+            : "输入有误，请检查必填字段 / Invalid input"
+          : body.error === "duplicate_entry"
+            ? "该记录已存在（同一主体下已有同名条目）— 请改为编辑已有记录 / This entry already exists for this entity — edit the existing record instead"
+            : "更新失败 / Update failed"
       );
     }
   }

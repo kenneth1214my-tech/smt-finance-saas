@@ -1089,10 +1089,14 @@ function OrgTab({ locale, subsidiaries, regions }: { locale: Locale; subsidiarie
     { key: "_country", label: isZh ? "国家/地区（选择自动填充）" : "Country (auto-fills fields)", type: "preset", presets: REGION_COUNTRY_PRESETS, virtual: true },
     { key: "key", label: "Key", type: "text" },
     { key: "nameZh", label: "名称(简)", type: "text" },
-    { key: "nameZhTw", label: "名称(繁)", type: "text" },
+    // Only Key + 名称(简) + Name (EN) are truly required — the other three locale variants
+    // fall back to one of those two if left blank, since typing out 5 near-duplicate "name in
+    // language X" fields by hand (instead of using the Country preset above) was reported as
+    // confusing and blocked submission with no indication of which field was the problem.
+    { key: "nameZhTw", label: "名称(繁)", type: "text", fallbackFrom: "nameZh" },
     { key: "nameEn", label: "Name (EN)", type: "text" },
-    { key: "nameMs", label: "Name (MS)", type: "text" },
-    { key: "nameId", label: "Name (ID)", type: "text" },
+    { key: "nameMs", label: "Name (MS)", type: "text", fallbackFrom: "nameEn" },
+    { key: "nameId", label: "Name (ID)", type: "text", fallbackFrom: "nameEn" },
     { key: "sortOrder", label: isZh ? "排序" : "Order", type: "number" },
   ];
   const regionTableKeys = ["nameZh", "nameEn", "sortOrder"];
