@@ -163,9 +163,11 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
     errors.push(`AR/AP: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // 3. Budget + Bank Accounts
+  // 3a. Budget — separate try/catch from Bank below: they used to share one, which meant a
+  // Budget failure silently skipped Bank too (it's called second, after Budget) and the combined
+  // "Budget/Bank: ..." error message couldn't say which of the two actually failed.
+  const year = new Date().getFullYear();
   try {
-    const year = new Date().getFullYear();
     const budgetReport = await fetchXeroBudgetSummary(accessToken, tenantId, `${year}-01-01`, 12);
     const { revenueBudget, costBudgetRate, expenseBudgetRate } = parseXeroBudgetSummary(budgetReport);
     await db.budget.upsert({
@@ -173,7 +175,12 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
       create: { subsidiaryId, organizationId, year, revenueBudget, costBudgetRate, expenseBudgetRate },
       update: { revenueBudget, costBudgetRate, expenseBudgetRate },
     });
+  } catch (err) {
+    errors.push(`Budget: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
+  // 3b. Bank Accounts
+  try {
     const now = new Date();
     const bankReport = await fetchXeroBankSummary(accessToken, tenantId, `${year}-01-01`, now.toISOString().slice(0, 10));
     const bankAccounts = parseXeroBankSummary(bankReport);
@@ -185,7 +192,7 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
     }
     result.bankAccountsSynced = bankAccounts.length;
   } catch (err) {
-    errors.push(`Budget/Bank: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`Bank: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // 4. Balance Sheet -> Subsidiary.equity/debtRatio

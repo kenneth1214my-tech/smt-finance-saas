@@ -99,7 +99,16 @@ async function xeroGet(accessToken: string, tenantId: string, url: string): Prom
       await new Promise((r) => setTimeout(r, retryAfterSec * 1000));
       continue;
     }
-    if (!res.ok) throw new Error(`Xero API call failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) {
+      // On a 401, Xero's WWW-Authenticate header distinguishes "token expired/invalid" from
+      // "insufficient_scope" (the token is valid but was never granted this report's scope,
+      // which happens when a scope was added to this app after an existing connection's OAuth
+      // consent — refreshing a token only renews its ORIGINALLY granted scopes, it can't add
+      // new ones; only a full reconnect re-prompts for consent) — surfaced here since the
+      // combined error message alone couldn't distinguish the two.
+      const wwwAuth = res.headers.get("www-authenticate");
+      throw new Error(`Xero API call failed: ${res.status}${wwwAuth ? ` (${wwwAuth})` : ""} ${await res.text()}`);
+    }
     return res.json();
   }
   throw new Error("Xero API call failed: exhausted retries after repeated 429");
