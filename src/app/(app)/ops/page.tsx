@@ -22,8 +22,11 @@ export default async function OpsPage() {
   const baseCurrency = await getBaseCurrency(organizationId);
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const fmtM = (n: number) => fmtMoney(n, locale);
-  const subsidiaries = await db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } });
-  const monthly = await db.monthlyFinancial.findMany({ where: { year: { in: [2025, 2026] }, organizationId }, orderBy: { month: "asc" } });
+  const [subsidiaries, monthly, org] = await Promise.all([
+    db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } }),
+    db.monthlyFinancial.findMany({ where: { year: { in: [2025, 2026] }, organizationId }, orderBy: { month: "asc" } }),
+    db.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { headcount: true } }),
+  ]);
   const m2026 = monthly.filter((m) => m.year === 2026);
   const m2025 = monthly.filter((m) => m.year === 2025);
 
@@ -34,7 +37,7 @@ export default async function OpsPage() {
   // unlike 集团总览/利润分析 which sum the org-wide monthly rows directly.
   const HQ_PSEUDO_SUB = { id: "__hq__", colorHex: "#64748b", segmentZh: "集团总部", segmentZhTw: "集團總部", segmentEn: "Group HQ", segmentMs: "Group HQ", segmentId: "Group HQ" };
 
-  function subRow(sub: (typeof subsidiaries)[number] | typeof HQ_PSEUDO_SUB, cur: typeof m2026, prev: typeof m2025) {
+  function subRow(sub: (typeof subsidiaries)[number] | typeof HQ_PSEUDO_SUB, cur: typeof m2026, prev: typeof m2025, currentHeadcount: number) {
     const revenue = cur.reduce((a, r) => a + Number(r.revenue), 0);
     const cost = cur.reduce((a, r) => a + Number(r.opCost), 0);
     const sellExp = cur.reduce((a, r) => a + Number(r.sellExp), 0);
@@ -42,9 +45,13 @@ export default async function OpsPage() {
     const rndExp = cur.reduce((a, r) => a + Number(r.rndExp), 0);
     const financeExp = cur.reduce((a, r) => a + Number(r.financeExp), 0);
     // Headcount is a point-in-time snapshot, not additive across months — take the latest
-    // month on file for this subsidiary rather than summing.
+    // month on file for this subsidiary rather than summing. Falls back to the entity's
+    // "current headcount" snapshot (Subsidiary.headcount / Organization.headcount, edited under
+    // 组织架构管理/集团设置) when this specific month's own headcount was never filled in — that
+    // snapshot field is kept up to date as a simple company-profile fact, while the monthly
+    // field only matters for a real per-month trend, which this KPI isn't.
     const latestMonth = cur.length ? Math.max(...cur.map((m) => m.month)) : 0;
-    const headcount = cur.find((m) => m.month === latestMonth)?.headcount ?? 0;
+    const headcount = cur.find((m) => m.month === latestMonth)?.headcount || currentHeadcount;
     const prevRevenue = prev.reduce((a, r) => a + Number(r.revenue), 0);
     // null (not 0) when there's no real prior-year figure to compare against — a genuinely new
     // entity (e.g. HQ's first-ever import) showing "+0.0% growth" would misreport "flat" when
@@ -56,9 +63,9 @@ export default async function OpsPage() {
   const hqCur = m2026.filter((m) => !m.subsidiaryId);
   const hqPrev = m2025.filter((m) => !m.subsidiaryId);
   const bySub = [
-    ...subsidiaries.map((s) => subRow(s, m2026.filter((m) => m.subsidiaryId === s.id), m2025.filter((m) => m.subsidiaryId === s.id))),
+    ...subsidiaries.map((s) => subRow(s, m2026.filter((m) => m.subsidiaryId === s.id), m2025.filter((m) => m.subsidiaryId === s.id), s.headcount)),
     // Only shown when there's actually HQ-level data on file — don't clutter the breakdown with an empty row.
-    ...(hqCur.length || hqPrev.length ? [subRow(HQ_PSEUDO_SUB, hqCur, hqPrev)] : []),
+    ...(hqCur.length || hqPrev.length ? [subRow(HQ_PSEUDO_SUB, hqCur, hqPrev, org.headcount)] : []),
   ];
 
   const totalRevenue = bySub.reduce((a, b) => a + b.revenue, 0);
