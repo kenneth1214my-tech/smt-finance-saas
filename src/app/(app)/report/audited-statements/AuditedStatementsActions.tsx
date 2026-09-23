@@ -2,9 +2,27 @@
 
 import { Printer, Download } from "lucide-react";
 import { useState } from "react";
+import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, HeadingLevel, WidthType, AlignmentType, ShadingType } from "docx";
 import { exportToCsv, exportToXlsx, type ExportColumn } from "@/lib/export";
 import type { AuditedFinancialStatements } from "@/lib/consolidated-report";
 import type { Locale } from "@/lib/i18n/dictionaries";
+
+function docCell(text: string, { bold = false, right = false, color }: { bold?: boolean; right?: boolean; color?: string } = {}) {
+  return new TableCell({
+    children: [new Paragraph({ alignment: right ? AlignmentType.RIGHT : AlignmentType.LEFT, children: [new TextRun({ text, bold, color })] })],
+    margins: { top: 60, bottom: 60, left: 100, right: 100 },
+  });
+}
+
+function docTable(headerCells: string[], rows: string[][], boldRowIdx: Set<number> = new Set()) {
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      new TableRow({ children: headerCells.map((h, i) => docCell(h, { bold: true, right: i > 0 })) }),
+      ...rows.map((r, ri) => new TableRow({ children: r.map((c, i) => docCell(c, { bold: boldRowIdx.has(ri), right: i > 0 })) })),
+    ],
+  });
+}
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -97,6 +115,124 @@ export default function AuditedStatementsActions({ report, locale, baseCurrency 
     win.print();
   }
 
+  const row3 = (label: string, curV: number, prevV: number) => [label, fmtM(curV), fmtM(prevV)];
+
+  async function exportWord() {
+    const doc = new Document({
+      sections: [
+        {
+          children: [
+            new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: report.companyName, bold: true, size: 32 })] }),
+            new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: isZh ? "及其子公司" : "AND ITS SUBSIDIARY", size: 22 })] }),
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              spacing: { after: 200 },
+              children: [
+                new TextRun({
+                  text: `${isZh ? "会计年度" : "Fiscal Year"} ${report.year} · ${isZh ? "生成于" : "Generated"} ${report.generatedAt.toISOString().slice(0, 16).replace("T", " ")}`,
+                  size: 18,
+                  color: "666666",
+                }),
+              ],
+            }),
+            new Paragraph({
+              shading: { type: ShadingType.SOLID, color: "FEF3C7", fill: "FEF3C7" },
+              spacing: { after: 200 },
+              children: [
+                new TextRun({
+                  text: isZh
+                    ? "本报表为管理层编制版，尚未经外部审计师审计，不构成审计意见。"
+                    : "Management-prepared statement, not audited by an external auditor — does not constitute an audit opinion.",
+                  size: 18,
+                  color: "92400E",
+                }),
+              ],
+            }),
+            new Paragraph({ heading: HeadingLevel.HEADING_2, text: isZh ? "独立审计师报告" : "Independent Auditor's Report" }),
+            new Paragraph({
+              spacing: { after: 200 },
+              children: [
+                new TextRun({
+                  text: isZh
+                    ? "【待附加】由持牌公共会计师签署的独立审计师报告正本"
+                    : "[To be attached] The signed Independent Auditor's Report from a licensed public accountant",
+                  italics: true,
+                  color: "999999",
+                }),
+              ],
+            }),
+            new Paragraph({ heading: HeadingLevel.HEADING_2, text: isZh ? `财务状况表 — 截至 ${report.year} 年 12 月 31 日` : `Statement of Financial Position — as at 31 Dec ${report.year}` }),
+            docTable(
+              ["", isZh ? "集团" : "Group", isZh ? "公司" : "Company"],
+              [
+                [isZh ? "资产总额" : "Total Assets", fmtM(balanceSheet.totalAssets), companyBalanceSheet ? fmtM(companyBalanceSheet.totalAssets) : "—"],
+                [isZh ? "负债总额" : "Total Liabilities", fmtM(balanceSheet.totalLiabilities), companyBalanceSheet ? fmtM(companyBalanceSheet.totalLiabilities) : "—"],
+                [isZh ? "所有者权益" : "Total Equity", fmtM(balanceSheet.totalEquity), companyBalanceSheet ? fmtM(companyBalanceSheet.equity) : "—"],
+              ],
+              new Set([0, 2])
+            ),
+            new Paragraph({ text: "", spacing: { after: 200 } }),
+            new Paragraph({ heading: HeadingLevel.HEADING_2, text: isZh ? "合并综合收益表" : "Consolidated Statement of Comprehensive Income" }),
+            docTable(
+              ["", String(report.year), String(report.priorYear)],
+              [
+                row3(isZh ? "营业收入" : "Revenue", cur.revenue, prior.revenue),
+                row3(isZh ? "销售成本" : "Cost of Sales", -cur.costOfSales, -prior.costOfSales),
+                row3(isZh ? "毛利润" : "Gross Profit", cur.grossProfit, prior.grossProfit),
+                row3(isZh ? "销售费用" : "Selling Exp.", -cur.sellExp, -prior.sellExp),
+                row3(isZh ? "管理费用" : "Admin Exp.", -cur.adminExp, -prior.adminExp),
+                row3(isZh ? "研发费用" : "R&D Exp.", -cur.rndExp, -prior.rndExp),
+                row3(isZh ? "财务费用" : "Finance Exp.", -cur.financeExp, -prior.financeExp),
+                row3(isZh ? "营业利润" : "Operating Profit", cur.operatingProfit, prior.operatingProfit),
+                row3(isZh ? "净利润/(亏损)" : "Net Profit/(Loss)", cur.netProfit, prior.netProfit),
+              ],
+              new Set([2, 7, 8])
+            ),
+            new Paragraph({ text: "", spacing: { after: 200 } }),
+            new Paragraph({ heading: HeadingLevel.HEADING_2, text: isZh ? "按主体拆分" : "Breakdown by Entity" }),
+            docTable(
+              [isZh ? "主体" : "Entity", isZh ? "营业收入" : "Revenue", isZh ? "净利润" : "Net Profit", isZh ? "净利率" : "Net Margin"],
+              cur.byEntity.map((r) => [r.name, fmtM(r.revenue), fmtM(r.netProfit), `${r.netMarginPct.toFixed(1)}%`])
+            ),
+            new Paragraph({ text: "", spacing: { after: 200 } }),
+            new Paragraph({ heading: HeadingLevel.HEADING_2, text: isZh ? "权益变动表" : "Statement of Changes in Equity" }),
+            docTable(
+              ["", isZh ? "集团" : "Group", isZh ? "公司" : "Company"],
+              [
+                [isZh ? "期初权益（推算）" : "Opening Equity (derived)", fmtM(groupRoll.openingEquity), companyRoll ? fmtM(companyRoll.openingEquity) : "—"],
+                [isZh ? "本年度综合收益/(亏损)" : "Total Comprehensive Income/(Loss)", fmtM(groupRoll.netProfit), companyRoll ? fmtM(companyRoll.netProfit) : "—"],
+                [isZh ? "期末权益" : "Closing Equity", fmtM(groupRoll.closingEquity), companyRoll ? fmtM(companyRoll.closingEquity) : "—"],
+              ],
+              new Set([2])
+            ),
+            new Paragraph({ text: "", spacing: { after: 200 } }),
+            new Paragraph({ heading: HeadingLevel.HEADING_2, text: isZh ? "合并现金流量表" : "Consolidated Statement of Cash Flows" }),
+            docTable(
+              ["", String(report.year), String(report.priorYear)],
+              [
+                row3(isZh ? "经营活动现金流" : "Operating Activities", cashFlow.ocf, priorCashFlow.ocf),
+                row3(isZh ? "投资活动现金流" : "Investing Activities", cashFlow.icf, priorCashFlow.icf),
+                row3(isZh ? "融资活动现金流" : "Financing Activities", cashFlow.fcf, priorCashFlow.fcf),
+                row3(isZh ? "现金净变动" : "Net Change in Cash", cashFlow.netChange, priorCashFlow.netChange),
+              ],
+              new Set([3])
+            ),
+          ],
+        },
+      ],
+    });
+    const blob = await Packer.toBlob(doc);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `audited-statements-${report.year}.docx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setOpen(false);
+  }
+
   function exportEntities(format: "csv" | "xlsx") {
     const columns: ExportColumn[] = [
       { key: "name", label: isZh ? "主体" : "Entity" },
@@ -131,12 +267,16 @@ export default function AuditedStatementsActions({ report, locale, baseCurrency 
           {isZh ? "导出 / Export" : "Export"}
         </button>
         {open && (
-          <div className="absolute right-0 z-10 mt-1 min-w-[140px] overflow-hidden rounded-lg border py-1 shadow-lg" style={{ borderColor: "var(--border-strong)", background: "var(--surface)" }}>
+          <div className="absolute right-0 z-10 mt-1 min-w-[190px] overflow-hidden rounded-lg border py-1 shadow-lg" style={{ borderColor: "var(--border-strong)", background: "var(--surface)" }}>
+            <button onClick={exportWord} className="block w-full px-3 py-1.5 text-left text-[12.3px]" style={{ color: "var(--ink-900)" }}>
+              Word (.docx) — {isZh ? "完整报表" : "Full Report"}
+            </button>
+            <div className="my-1 border-t" style={{ borderColor: "var(--border)" }} />
             <button onClick={() => exportEntities("csv")} className="block w-full px-3 py-1.5 text-left text-[12.3px]" style={{ color: "var(--ink-900)" }}>
-              CSV
+              CSV — {isZh ? "按主体" : "By Entity"}
             </button>
             <button onClick={() => exportEntities("xlsx")} className="block w-full px-3 py-1.5 text-left text-[12.3px]" style={{ color: "var(--ink-900)" }}>
-              Excel (.xlsx)
+              Excel (.xlsx) — {isZh ? "按主体" : "By Entity"}
             </button>
           </div>
         )}

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles } from "lucide-react";
+import { Sparkles, Eye } from "lucide-react";
 import type { Locale } from "@/lib/i18n/dictionaries";
 
 const REPORT_TYPES = [
@@ -24,6 +24,15 @@ export default function GenerateReportButton({ locale }: { locale: Locale }) {
   const [busy, setBusy] = useState(false);
 
   const type = REPORT_TYPES.find((t) => t.key === reportKey)!;
+
+  // Every report page recomputes live from current data on every view regardless of whether a
+  // ReportDoc exists for it (see the report-generation architecture notes) — so "preview" is
+  // just navigating to that same live view without registering it in Report Center's list.
+  // "Generate" does the same navigation but also creates/updates the ReportDoc row first, so the
+  // report shows up as a tracked entry afterward.
+  function preview() {
+    router.push(type.monthly ? `${type.href}?year=${year}&month=${month}` : `${type.href}?year=${year}`);
+  }
 
   async function generate() {
     setBusy(true);
@@ -71,6 +80,15 @@ export default function GenerateReportButton({ locale }: { locale: Locale }) {
           ))}
         </select>
       )}
+      <button
+        onClick={preview}
+        disabled={busy}
+        className="flex items-center gap-1.5 rounded-lg border px-3.5 py-1.5 text-[12.5px] font-bold disabled:opacity-50"
+        style={{ borderColor: "var(--border-strong)", color: "var(--ink-900)" }}
+      >
+        <Eye size={14} />
+        {isZh ? "预览" : "Preview"}
+      </button>
       <button
         onClick={generate}
         disabled={busy}
