@@ -173,3 +173,81 @@ export async function computeConsolidatedCashFlow(organizationId: string, year: 
   const fcf = cashflow.reduce((a, c) => a + Number(c.fcf), 0);
   return { companyName: organization.name, year, ocf, icf, fcf, netChange: ocf + icf + fcf, generatedAt: new Date() };
 }
+
+// A single report packaging the same 4 statements a real Singapore statutory audited report
+// contains (Statement of Financial Position, Consolidated Statement of Comprehensive Income,
+// Statement of Changes in Equity, Consolidated Statement of Cash Flows), in the same Group/
+// Company side-by-side layout — built by studying a real audited report's structure. Reuses the
+// existing compute functions rather than re-deriving anything; the only genuinely new logic here
+// is the prior-year comparison (income statement/cash flow) and the Group/Company split for
+// Changes in Equity. Deliberately does NOT include an "Independent Auditor's Report" — that's a
+// licensed public accountant's professional opinion and signature, which nothing in this system
+// can produce; the report page renders a clearly-labelled placeholder for it instead, matching
+// how audit-jurisdiction.ts already treats the Internal Audit Report as distinct from a
+// statutory external audit opinion.
+export interface AuditedFinancialStatements {
+  companyName: string;
+  year: number;
+  priorYear: number;
+  generatedAt: Date;
+  incomeStatement: ConsolidatedIncomeStatement;
+  priorIncomeStatement: ConsolidatedIncomeStatement;
+  balanceSheet: ConsolidatedBalanceSheet;
+  companyBalanceSheet: ConsolidatedBalanceSheetEntityRow | null; // the HQ/"Company"-only row, split out of balanceSheet.byEntity
+  cashFlow: ConsolidatedCashFlow;
+  priorCashFlow: ConsolidatedCashFlow;
+  equityRollForward: {
+    scope: "group" | "company";
+    openingEquity: number;
+    netProfit: number;
+    closingEquity: number;
+  }[];
+}
+
+export async function computeAuditedFinancialStatements(organizationId: string, year: number, locale: Locale): Promise<AuditedFinancialStatements> {
+  const priorYear = year - 1;
+  const [incomeStatement, priorIncomeStatement, balanceSheet, cashFlow, priorCashFlow] = await Promise.all([
+    computeConsolidatedIncomeStatement(organizationId, year, locale),
+    computeConsolidatedIncomeStatement(organizationId, priorYear, locale),
+    computeConsolidatedBalanceSheet(organizationId, year, locale),
+    computeConsolidatedCashFlow(organizationId, year),
+    computeConsolidatedCashFlow(organizationId, priorYear),
+  ]);
+
+  const companyBalanceSheet = balanceSheet.byEntity.find((e) => e.id === "__hq__") ?? null;
+
+  // Changes in Equity roll-forward: opening equity is derived as (current equity − this year's
+  // net profit) — the closest real approximation available, since equity/debtRatio are a CURRENT
+  // snapshot only (no stored prior-year balance to roll forward from; same limitation already
+  // noted on deriveAssetsAndLiabilities above). Valid as long as there were no share
+  // capital/reserve movements during the year — a reasonable default, not a stored historical
+  // fact, so the report page must label this as computed rather than presenting it as an exact
+  // audited opening balance.
+  const equityRollForward: AuditedFinancialStatements["equityRollForward"] = [
+    { scope: "group" as const, openingEquity: balanceSheet.totalEquity - incomeStatement.netProfit, netProfit: incomeStatement.netProfit, closingEquity: balanceSheet.totalEquity },
+    ...(companyBalanceSheet
+      ? [
+          {
+            scope: "company" as const,
+            openingEquity: companyBalanceSheet.equity - (incomeStatement.byEntity.find((e) => e.id === "__hq__")?.netProfit ?? 0),
+            netProfit: incomeStatement.byEntity.find((e) => e.id === "__hq__")?.netProfit ?? 0,
+            closingEquity: companyBalanceSheet.equity,
+          },
+        ]
+      : []),
+  ];
+
+  return {
+    companyName: incomeStatement.companyName,
+    year,
+    priorYear,
+    generatedAt: new Date(),
+    incomeStatement,
+    priorIncomeStatement,
+    balanceSheet,
+    companyBalanceSheet,
+    cashFlow,
+    priorCashFlow,
+    equityRollForward,
+  };
+}

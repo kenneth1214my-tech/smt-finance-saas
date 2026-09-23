@@ -2,12 +2,12 @@ import { NextResponse } from "next/server";
 import { requireUser, canApprove } from "@/lib/dal";
 import { db } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
-import { computeConsolidatedIncomeStatement, computeConsolidatedBalanceSheet, computeConsolidatedCashFlow } from "@/lib/consolidated-report";
+import { computeConsolidatedIncomeStatement, computeConsolidatedBalanceSheet, computeConsolidatedCashFlow, computeAuditedFinancialStatements } from "@/lib/consolidated-report";
 import { computeARAgingReport, computeMonthlyRiskReport } from "@/lib/special-report";
 import { computeAuditReport } from "@/lib/audit";
 import { z } from "zod";
 
-const REPORT_KEYS = ["consolidated_income_statement", "consolidated_balance_sheet", "consolidated_cash_flow", "ar_aging", "monthly_risk", "audit_report"] as const;
+const REPORT_KEYS = ["consolidated_income_statement", "consolidated_balance_sheet", "consolidated_cash_flow", "ar_aging", "monthly_risk", "audit_report", "audited_statements"] as const;
 
 const generateSchema = z.object({
   reportKey: z.enum(REPORT_KEYS),
@@ -32,6 +32,7 @@ export async function POST(req: Request) {
     ar_aging: { nameZh: `应收账龄分析报告 - ${year}年`, nameEn: `AR Aging Analysis Report - ${year}` },
     monthly_risk: { nameZh: `月度风险预警报告 - ${year}年${month}月`, nameEn: `Monthly Risk Report - ${year}-${String(month).padStart(2, "0")}` },
     audit_report: { nameZh: `内部审计报告 - ${year}年`, nameEn: `Internal Audit Report - ${year}` },
+    audited_statements: { nameZh: `合并审计财务报表 - ${year}年`, nameEn: `Consolidated Audited Financial Statements - ${year}` },
   };
 
   if (reportKey === "consolidated_income_statement") await computeConsolidatedIncomeStatement(user.organizationId, year, locale);
@@ -40,11 +41,12 @@ export async function POST(req: Request) {
   else if (reportKey === "ar_aging") await computeARAgingReport(user.organizationId, year, locale);
   else if (reportKey === "monthly_risk") await computeMonthlyRiskReport(user.organizationId, year, month!, locale);
   else if (reportKey === "audit_report") await computeAuditReport(user.organizationId, year);
+  else if (reportKey === "audited_statements") await computeAuditedFinancialStatements(user.organizationId, year, locale);
   else return NextResponse.json({ error: "invalid_type" }, { status: 400 });
 
   const periodMonth = reportKey === "monthly_risk" ? month! : null;
   const period = reportKey === "monthly_risk" ? `${year}-${String(month).padStart(2, "0")}` : String(year);
-  const type = reportKey === "ar_aging" || reportKey === "monthly_risk" || reportKey === "audit_report" ? "SPECIAL" : "MANAGEMENT";
+  const type = reportKey === "ar_aging" || reportKey === "monthly_risk" || reportKey === "audit_report" ? "SPECIAL" : reportKey === "audited_statements" ? "STATUTORY" : "MANAGEMENT";
 
   // Manual find-then-create/update rather than a Prisma compound-unique upsert — see the
   // periodMonth comment in schema.prisma for why this table has no single @@unique that could

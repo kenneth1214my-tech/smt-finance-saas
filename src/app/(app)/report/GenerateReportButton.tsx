@@ -12,6 +12,7 @@ const REPORT_TYPES = [
   { key: "ar_aging", zh: "应收账龄分析报告", en: "AR Aging Analysis Report", href: "/report/ar-aging", monthly: false },
   { key: "monthly_risk", zh: "月度风险预警报告", en: "Monthly Risk Report", href: "/report/monthly-risk", monthly: true },
   { key: "audit_report", zh: "内部审计报告", en: "Internal Audit Report", href: "/report/audit-report", monthly: false },
+  { key: "audited_statements", zh: "合并审计财务报表", en: "Consolidated Audited Financial Statements", href: "/report/audited-statements", monthly: false },
 ] as const;
 
 export default function GenerateReportButton({ locale }: { locale: Locale }) {

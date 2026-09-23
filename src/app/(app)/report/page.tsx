@@ -43,6 +43,7 @@ export default async function ReportPage() {
     if (r.reportKey === "ar_aging") return `/report/ar-aging?year=${r.periodYear}`;
     if (r.reportKey === "monthly_risk" && r.periodMonth) return `/report/monthly-risk?year=${r.periodYear}&month=${r.periodMonth}`;
     if (r.reportKey === "audit_report") return `/report/audit-report?year=${r.periodYear}`;
+    if (r.reportKey === "audited_statements") return `/report/audited-statements?year=${r.periodYear}`;
     return null;
   }
   const categories = isZh
