@@ -7,6 +7,15 @@ import { exportToCsv, exportToXlsx, printRows, type ExportColumn } from "@/lib/e
 
 export type FieldType = "text" | "number" | "select" | "color" | "date" | "textarea" | "preset";
 
+// The filter dropdown's own "show everything" sentinel — deliberately NOT "" (used by the
+// react-friendly-URL convention below "" is also a bare object with `filters[key] === undefined`)
+// because several real fields legitimately use "" as an actual option value (e.g. the HQ/
+// Group-level option in a Subsidiary select, where "" means "no subsidiary" and gets converted
+// to null server-side). Using "" as both "no filter chosen" and a real selectable value meant
+// picking that real option was indistinguishable from clearing the filter — it silently showed
+// every row instead of filtering to just that value.
+const FILTER_ALL = "__crud_filter_all__";
+
 export interface FieldConfig {
   key: string;
   label: string;
@@ -153,8 +162,8 @@ export default function CrudTable({
         if (!matches) return false;
       }
       for (const f of filterableFields) {
-        const active = filters[f.key];
-        if (active && String(row[f.key] ?? "") !== active) return false;
+        const active = filters[f.key] ?? FILTER_ALL;
+        if (active !== FILTER_ALL && String(row[f.key] ?? "") !== active) return false;
       }
       return true;
     });
@@ -322,12 +331,12 @@ export default function CrudTable({
           {filterableFields.map((f) => (
             <select
               key={f.key}
-              value={filters[f.key] ?? ""}
+              value={filters[f.key] ?? FILTER_ALL}
               onChange={(e) => setFilters((prev) => ({ ...prev, [f.key]: e.target.value }))}
               className="rounded-lg border py-1.5 px-2.5 text-[12.3px]"
               style={{ borderColor: "var(--border-strong)", background: "var(--surface)", color: "var(--ink-900)" }}
             >
-              <option value="">
+              <option value={FILTER_ALL}>
                 {f.label} — 全部 / All
               </option>
               {f.options?.map((o) => (
@@ -337,7 +346,7 @@ export default function CrudTable({
               ))}
             </select>
           ))}
-          {(search || Object.values(filters).some(Boolean)) && (
+          {(search || Object.values(filters).some((v) => v !== undefined && v !== FILTER_ALL)) && (
             <button
               onClick={() => {
                 setSearch("");
