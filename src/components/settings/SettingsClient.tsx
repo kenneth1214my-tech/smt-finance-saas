@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import * as XLSX from "xlsx";
 import { Check, X, Users, Globe, Database, Building2, ShieldAlert, Landmark, Briefcase, Coins, UserCircle, Plus, Pencil } from "lucide-react";
-import type { AccessRequest, User, Subsidiary, Region, MonthlyFinancial, RegionMonthlyFinancial, Budget, BankAccount, CashFlowMonthly, ARCustomer, Payable, Project, RiskAlert, ReportDoc, ExchangeRate, ImportBatch, XeroConnection } from "@prisma/client";
+import type { AccessRequest, User, Subsidiary, Region, MonthlyFinancial, RegionMonthlyFinancial, Budget, BankAccount, CashFlowMonthly, ARCustomer, Payable, Project, RiskAlert, ReportDoc, ExchangeRate, ImportBatch, XeroConnection, ExpenseCategoryMapping } from "@prisma/client";
+import { applyCategoryMapping, suggestCategory, type ExpenseCategory } from "@/lib/expense-categories";
 import { localizedName } from "@/lib/localize";
 import { formatMsg } from "@/lib/formatMsg";
 import { CURRENCY_OPTIONS } from "@/lib/currency-options";
@@ -64,6 +65,7 @@ export default function SettingsClient({
   xeroGroupConnected,
   xeroGroupTenantName,
   xeroConfigured,
+  expenseCategoryMappings,
 }: {
   dict: Dict;
   locale: Locale;
@@ -98,6 +100,7 @@ export default function SettingsClient({
   xeroGroupConnected: boolean;
   xeroGroupTenantName: string | null;
   xeroConfigured: boolean;
+  expenseCategoryMappings: ExpenseCategoryMapping[];
 }) {
   // Some actions (e.g. the Xero OAuth callback) redirect back here with ?tab=... so the user
   // lands back on the tab they started from instead of always resetting to My Profile.
@@ -185,6 +188,7 @@ export default function SettingsClient({
           xeroGroupConnected={xeroGroupConnected}
           xeroGroupTenantName={xeroGroupTenantName}
           xeroConfigured={xeroConfigured}
+          expenseCategoryMappings={expenseCategoryMappings}
         />
       )}
       {tab === "lang" && <LangTab locale={locale} />}
@@ -1442,6 +1446,7 @@ function DataTab({
   xeroGroupConnected,
   xeroGroupTenantName,
   xeroConfigured,
+  expenseCategoryMappings,
 }: {
   locale: Locale;
   onToast: (m: string) => void;
@@ -1451,6 +1456,7 @@ function DataTab({
   xeroGroupConnected: boolean;
   xeroGroupTenantName: string | null;
   xeroConfigured: boolean;
+  expenseCategoryMappings: ExpenseCategoryMapping[];
 }) {
   const isZh = locale === "zh" || locale === "zh-Hant";
   const router = useRouter();
@@ -1710,7 +1716,34 @@ function DataTab({
         </Card>
       )}
       <Card title={isZh ? "智能导入利润表（P&L）" : "Smart P&L import"}>
-        <PnlImport locale={locale} onToast={onToast} subsidiaries={subsidiaries} />
+        <PnlImport locale={locale} onToast={onToast} subsidiaries={subsidiaries} expenseCategoryMappings={expenseCategoryMappings} />
+      </Card>
+      <Card title={isZh ? "费用分类映射" : "Expense category mapping"}>
+        <div className="mb-3 text-[11.8px]" style={{ color: "var(--ink-400)" }}>
+          {isZh
+            ? "真实的利润表报告通常把所有营业费用列成一份平铺的明细（如「工资」「银行手续费」「办公室租金」），并不会自动分成销售/管理/研发/财务四类 — 这里记录每个费用科目名称对应哪一类，导入利润表时可直接分类（会自动记住），也可以在这里手动增删改。「利息」「银行手续费」类科目已可自动识别为财务费用。"
+            : "A real P&L report usually lists all operating expenses as one flat list (e.g. \"Salaries\", \"Bank Charges\", \"Office Rental\") — it's never automatically split into Selling/Admin/R&D/Finance. This records which category each real expense line item belongs to; classify inline while importing a P&L (remembered automatically), or manage entries directly here. \"Interest\"/\"Bank Charges\"-type items are already auto-recognized as Finance."}
+        </div>
+        <CrudTable
+          apiBase="/api/admin/expense-category-mappings"
+          fields={[
+            { key: "accountLabel", label: isZh ? "费用科目名称" : "Account label", type: "text" },
+            {
+              key: "category",
+              label: isZh ? "分类" : "Category",
+              type: "select",
+              options: [
+                { value: "SELLING", label: isZh ? "销售费用" : "Selling" },
+                { value: "ADMIN", label: isZh ? "管理费用" : "Admin" },
+                { value: "RND", label: isZh ? "研发费用" : "R&D" },
+                { value: "FINANCE", label: isZh ? "财务费用" : "Finance" },
+              ],
+            },
+          ]}
+          initialRows={expenseCategoryMappings as unknown as Row[]}
+          emptyLabel={isZh ? "暂无分类映射" : "No mappings yet"}
+          addLabel={isZh ? "新增映射" : "Add mapping"}
+        />
       </Card>
       <Card title={isZh ? "智能导入资产负债表" : "Smart Balance Sheet import"}>
         <BalanceSheetImport locale={locale} onToast={onToast} subsidiaries={subsidiaries} />
@@ -1819,7 +1852,17 @@ async function parseSpreadsheetToRows(file: File): Promise<string[][]> {
 // apart from "deliberately chose Group HQ".
 const HQ_OPTION_VALUE = "__group_hq__";
 
-function PnlImport({ locale, onToast, subsidiaries }: { locale: Locale; onToast: (m: string) => void; subsidiaries: Subsidiary[] }) {
+function PnlImport({
+  locale,
+  onToast,
+  subsidiaries,
+  expenseCategoryMappings,
+}: {
+  locale: Locale;
+  onToast: (m: string) => void;
+  subsidiaries: Subsidiary[];
+  expenseCategoryMappings: ExpenseCategoryMapping[];
+}) {
   const router = useRouter();
   const isZh = locale === "zh" || locale === "zh-Hant";
   const [fileName, setFileName] = useState("");
@@ -1832,6 +1875,12 @@ function PnlImport({ locale, onToast, subsidiaries }: { locale: Locale; onToast:
   const [year, setYear] = useState(String(new Date().getFullYear()));
   const [month, setMonth] = useState(String(new Date().getMonth() + 1));
   const [submitting, setSubmitting] = useState(false);
+  // Per-line-item category choice for this import — seeded from the org's saved mapping (or the
+  // narrow finance-keyword auto-suggestion) so a repeat import of the same chart of accounts
+  // needs no reclassification; any change here is saved back to the mapping on submit.
+  const [categoryByLabel, setCategoryByLabel] = useState<Record<string, ExpenseCategory | "">>({});
+
+  const savedMapping = Object.fromEntries(expenseCategoryMappings.map((m) => [m.accountLabel, m.category as ExpenseCategory]));
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -1845,6 +1894,11 @@ function PnlImport({ locale, onToast, subsidiaries }: { locale: Locale; onToast:
       setRevenue(result.revenue.toFixed(2));
       setOpCost(result.costOfSales.toFixed(2));
       setNetProfit((result.netProfit ?? 0).toFixed(2));
+      const initial: Record<string, ExpenseCategory | ""> = {};
+      for (const item of result.expenseLineItems) {
+        initial[item.label] = savedMapping[item.label] ?? suggestCategory(item.label) ?? "";
+      }
+      setCategoryByLabel(initial);
     } catch {
       setParsed(null);
       onToast(isZh ? "文件解析失败，请确认是有效的 CSV 或 Excel 文件" : "Couldn't parse this file — make sure it's a valid CSV or Excel file");
@@ -1854,6 +1908,11 @@ function PnlImport({ locale, onToast, subsidiaries }: { locale: Locale; onToast:
   const revenueNum = parseFloat(revenue) || 0;
   const opCostNum = parseFloat(opCost) || 0;
   const grossMarginPct = revenueNum > 0 ? ((revenueNum - opCostNum) / revenueNum) * 100 : 0;
+
+  const confirmedMapping = Object.fromEntries(
+    Object.entries(categoryByLabel).filter((entry): entry is [string, ExpenseCategory] => entry[1] !== "")
+  );
+  const categorized = parsed ? applyCategoryMapping(parsed.expenseLineItems, confirmedMapping) : null;
 
   async function confirmImport() {
     if (!subsidiaryId) {
@@ -1866,6 +1925,18 @@ function PnlImport({ locale, onToast, subsidiaries }: { locale: Locale; onToast:
     const sub = isHq ? null : subsidiaries.find((s) => s.id === subsidiaryId);
     if (!isHq && !sub) return;
     setSubmitting(true);
+    // Save any new/changed classifications so the next import of this chart of accounts is
+    // already pre-filled — only entries that actually changed from what's already saved.
+    const changedMappings = Object.entries(confirmedMapping)
+      .filter(([label, category]) => savedMapping[label] !== category)
+      .map(([accountLabel, category]) => ({ accountLabel, category }));
+    if (changedMappings.length > 0) {
+      await fetch("/api/admin/expense-category-mappings/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mappings: changedMappings }),
+      });
+    }
     const res = await fetch("/api/admin/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1881,6 +1952,10 @@ function PnlImport({ locale, onToast, subsidiaries }: { locale: Locale; onToast:
             netProfit,
             grossMarginPct: grossMarginPct.toFixed(2),
             opCost,
+            sellExp: String(categorized?.sellExp ?? 0),
+            adminExp: String(categorized?.adminExp ?? 0),
+            rndExp: String(categorized?.rndExp ?? 0),
+            financeExp: String(categorized?.financeExp ?? 0),
           },
         ],
       }),
@@ -1892,6 +1967,7 @@ function PnlImport({ locale, onToast, subsidiaries }: { locale: Locale; onToast:
         onToast(isZh ? "已导入" : "Imported");
         setParsed(null);
         setFileName("");
+        setCategoryByLabel({});
         router.refresh();
       } else {
         onToast(isZh ? `导入失败：${body.failed?.[0]?.error ?? "未知错误"}` : `Import failed: ${body.failed?.[0]?.error ?? "unknown error"}`);
@@ -1951,6 +2027,61 @@ function PnlImport({ locale, onToast, subsidiaries }: { locale: Locale; onToast:
               onFocus={(e) => e.currentTarget.select()}
             />
           </details>
+
+          {parsed.expenseLineItems.length > 0 && (
+            <div className="space-y-2 rounded-lg border p-3" style={{ borderColor: "var(--border)" }}>
+              <div className="text-[12.8px] font-bold" style={{ color: "var(--ink-900)" }}>
+                {isZh ? "费用分类" : "Expense categorization"} ({parsed.expenseLineItems.length})
+              </div>
+              <div className="text-[11.5px]" style={{ color: "var(--ink-400)" }}>
+                {isZh
+                  ? "为每个费用科目选择所属类别（会保存下来，下次导入自动带入）。未分类的科目金额不会计入销售/管理/研发/财务费用的合计，但不影响营业收入/成本/净利润这些数字。"
+                  : "Pick a category for each real expense line item (saved for next time). Unclassified items aren't counted in the Selling/Admin/R&D/Finance totals, but don't affect revenue/cost/net profit."}
+              </div>
+              {categorized && categorized.unmapped.length > 0 && (
+                <div className="rounded-lg px-3 py-2 text-[11.5px]" style={{ background: "color-mix(in srgb, var(--status-warning) 12%, transparent)", color: "var(--status-warning)" }}>
+                  {isZh
+                    ? `还有 ${categorized.unmapped.length} 项未分类，合计 ${categorized.unmapped.reduce((a, i) => a + i.value, 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : `${categorized.unmapped.length} item(s) still unclassified, totaling ${categorized.unmapped.reduce((a, i) => a + i.value, 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                </div>
+              )}
+              <div className="max-h-64 overflow-y-auto">
+                <table className="w-full text-[12px]">
+                  <thead>
+                    <tr className="text-left text-[11px] font-semibold" style={{ color: "var(--ink-400)" }}>
+                      <th className="pb-1.5">{isZh ? "费用科目" : "Account label"}</th>
+                      <th className="pb-1.5 text-right">{isZh ? "金额" : "Amount"}</th>
+                      <th className="pb-1.5">{isZh ? "分类" : "Category"}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {parsed.expenseLineItems.map((item) => (
+                      <tr key={item.label} className="border-t" style={{ borderColor: "var(--border)" }}>
+                        <td className="py-1.5" style={{ color: "var(--ink-900)" }}>
+                          {item.label}
+                        </td>
+                        <td className="tabular-nums py-1.5 text-right">{item.value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        <td className="py-1.5">
+                          <select
+                            value={categoryByLabel[item.label] ?? ""}
+                            onChange={(e) => setCategoryByLabel((prev) => ({ ...prev, [item.label]: e.target.value as ExpenseCategory | "" }))}
+                            className="rounded-lg border px-2 py-1 text-[12px]"
+                            style={{ borderColor: "var(--border)" }}
+                          >
+                            <option value="">{isZh ? "未分类" : "Unclassified"}</option>
+                            <option value="SELLING">{isZh ? "销售费用" : "Selling"}</option>
+                            <option value="ADMIN">{isZh ? "管理费用" : "Admin"}</option>
+                            <option value="RND">{isZh ? "研发费用" : "R&D"}</option>
+                            <option value="FINANCE">{isZh ? "财务费用" : "Finance"}</option>
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <label className="flex flex-col gap-1 text-[12.5px]">

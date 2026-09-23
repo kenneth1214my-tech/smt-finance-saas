@@ -17,6 +17,7 @@ import { parseXeroBudgetSummary, parseXeroBankSummary } from "@/lib/xero-budget-
 import { parseXeroBalanceSheet } from "@/lib/xero-balance-sheet-parser";
 import { getBaseCurrency } from "@/lib/currency";
 import { computeSyncedRiskRating, worse, type RiskSeverity } from "@/lib/risk-rating";
+import { applyCategoryMapping, type ExpenseCategory } from "@/lib/expense-categories";
 import type { XeroConnection } from "@prisma/client";
 
 function pad(n: number) {
@@ -109,6 +110,8 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
 
   // 1. P&L — trailing N months. Cron runs a short window (recent months only); the manual
   // button still asks for a full 24-month backfill via the `months` param.
+  const categoryMappingRows = await db.expenseCategoryMapping.findMany({ where: { organizationId } });
+  const categoryMapping = Object.fromEntries(categoryMappingRows.map((m) => [m.accountLabel, m.category as ExpenseCategory]));
   const periods = trailingMonths(months);
   for (let i = 0; i < periods.length; i += 2) {
     const batch = periods.slice(i, i + 2);
@@ -117,12 +120,16 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
         try {
           const { from, to } = monthDateRange(year, month);
           const report = await fetchXeroProfitAndLoss(accessToken, tenantId, from, to);
-          const { revenue, costOfSales, netProfit } = parseXeroPnl(report);
+          const { revenue, costOfSales, netProfit, expenseLineItems } = parseXeroPnl(report);
           const grossMarginPct = revenue > 0 ? ((revenue - costOfSales) / revenue) * 100 : 0;
+          // Only mapped labels (plus the narrow finance-keyword auto-suggestion) contribute —
+          // unmapped line items are simply not yet categorized, not silently dropped from the
+          // group's real totals (revenue/opCost/netProfit above are unaffected either way).
+          const { sellExp, adminExp, rndExp, financeExp } = applyCategoryMapping(expenseLineItems, categoryMapping);
           await db.monthlyFinancial.upsert({
             where: { subsidiaryId_year_month: { subsidiaryId, year, month } },
-            create: { subsidiaryId, organizationId, year, month, revenue, netProfit, grossMarginPct, opCost: costOfSales },
-            update: { revenue, netProfit, grossMarginPct, opCost: costOfSales },
+            create: { subsidiaryId, organizationId, year, month, revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp },
+            update: { revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp },
           });
           result.monthsSynced++;
         } catch (err) {

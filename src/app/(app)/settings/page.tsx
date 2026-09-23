@@ -44,6 +44,7 @@ export default async function SettingsPage() {
     org,
     xeroConnections,
     xeroGroupConnection,
+    expenseCategoryMappings,
   ] = await Promise.all([
     isAdmin ? db.accessRequest.findMany({ where: { status: "PENDING", organizationId }, include: { subsidiary: true }, orderBy: { createdAt: "desc" } }) : Promise.resolve([]),
     isAdmin ? db.user.findMany({ where: { organizationId }, include: { subsidiary: true }, orderBy: { createdAt: "asc" } }) : Promise.resolve([]),
@@ -67,6 +68,7 @@ export default async function SettingsPage() {
     isAdmin ? db.organization.findUniqueOrThrow({ where: { id: organizationId } }) : Promise.resolve(null),
     isAdmin ? db.xeroConnection.findMany({ where: { organizationId } }) : Promise.resolve([]),
     isAdmin ? db.xeroGroupConnection.findUnique({ where: { organizationId } }) : Promise.resolve(null),
+    isAdmin ? db.expenseCategoryMapping.findMany({ where: { organizationId }, orderBy: { accountLabel: "asc" } }) : Promise.resolve([]),
   ]);
 
   return (
@@ -107,6 +109,7 @@ export default async function SettingsPage() {
           xeroGroupConnected={Boolean(xeroGroupConnection?.connectedAt)}
           xeroGroupTenantName={xeroGroupConnection?.tenantName ?? null}
           xeroConfigured={isXeroConfigured()}
+          expenseCategoryMappings={toPlain(expenseCategoryMappings)}
         />
       </div>
     </>

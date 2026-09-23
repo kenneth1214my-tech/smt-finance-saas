@@ -111,6 +111,7 @@ model Organization {
   xeroConnections   XeroConnection[]
   xeroGroupConnection XeroGroupConnection?
   auditFindings     AuditFinding[]
+  expenseCategoryMappings ExpenseCategoryMapping[]
 }
 
 // Email is unique platform-wide (not just per-org): one login belongs to exactly one
@@ -352,6 +353,31 @@ model Payable {
   createdAt      DateTime     @default(now())
 
   @@index([organizationId])
+}
+
+enum ExpenseCategory {
+  SELLING
+  ADMIN
+  RND
+  FINANCE
+}
+
+// One-time mapping from a real P&L line-item label (e.g. "Bank Charges", "Salaries") to which
+// of MonthlyFinancial's 4 expense categories it belongs to. Neither the Smart P&L Import parser
+// nor the Xero auto-sync can reliably guess this from an arbitrary chart of accounts — an admin
+// classifies each real label once here (surfaced inline during P&L import), and every future
+// import/sync reuses it automatically. Deliberately NOT scoped by subsidiary: the same account
+// label (e.g. "Salaries") means the same category everywhere in the group.
+model ExpenseCategoryMapping {
+  id             String          @id @default(cuid())
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  accountLabel   String
+  category       ExpenseCategory
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@unique([organizationId, accountLabel])
 }
 
 model Project {

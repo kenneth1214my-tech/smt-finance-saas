@@ -25,6 +25,10 @@ export interface PnlParseResult {
   operatingProfit: number | null;
   sectionsFound: string[];
   usedComputedNetProfit: boolean;
+  // Individual line items from the Expenses/Operating Expenses section only (not Cost of Sales
+  // or Other Expense) — feeds the Selling/Admin/R&D/Finance category split via
+  // expense-categories.ts, which the "expenses" total alone can't provide.
+  expenseLineItems: { label: string; value: number }[];
 }
 
 const SECTION_PATTERNS: { key: keyof Pick<PnlParseResult, "revenue" | "costOfSales" | "expenses" | "otherIncome" | "otherExpense">; test: RegExp }[] = [
@@ -62,6 +66,7 @@ export function parsePnlReport(rows: string[][]): PnlParseResult {
   const sums = { revenue: 0, costOfSales: 0, expenses: 0, otherIncome: 0, otherExpense: 0 };
   const totals: Record<string, number> = {};
   const sectionsFound: string[] = [];
+  const expenseLineItems: { label: string; value: number }[] = [];
   let currentSectionKey: keyof typeof sums | null = null;
 
   for (const row of rows) {
@@ -97,7 +102,10 @@ export function parsePnlReport(rows: string[][]): PnlParseResult {
     // the individual line items it's already a subtotal of.
     if (/^total\b/i.test(label)) continue;
 
-    if (currentSectionKey) sums[currentSectionKey] += value;
+    if (currentSectionKey) {
+      sums[currentSectionKey] += value;
+      if (currentSectionKey === "expenses") expenseLineItems.push({ label, value });
+    }
   }
 
   const grossProfit = totals.grossProfit ?? sums.revenue - sums.costOfSales;
@@ -116,5 +124,6 @@ export function parsePnlReport(rows: string[][]): PnlParseResult {
     operatingProfit,
     sectionsFound,
     usedComputedNetProfit: totals.netProfit === undefined,
+    expenseLineItems,
   };
 }

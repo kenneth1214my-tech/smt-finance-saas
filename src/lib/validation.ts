@@ -281,3 +281,8 @@ export const exchangeRateSchema = z.object({
   currency: z.string().trim().length(3),
   rateToBase: z.coerce.number().positive(),
 });
+
+export const expenseCategoryMappingSchema = z.object({
+  accountLabel: z.string().trim().min(1).max(120),
+  category: z.enum(["SELLING", "ADMIN", "RND", "FINANCE"]),
+});
