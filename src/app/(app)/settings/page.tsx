@@ -104,6 +104,8 @@ export default async function SettingsPage() {
           inviteCode={org?.inviteCode ?? ""}
           hqEquity={org ? Number(org.equity) : 0}
           hqDebtRatio={org ? Number(org.debtRatio) : 0}
+          hqInvestmentInSubsidiaries={org ? Number(org.investmentInSubsidiaries) : 0}
+          hqDueToSubsidiaries={org ? Number(org.dueToSubsidiaries) : 0}
           hqHeadcount={org?.headcount ?? 0}
           xeroConnections={toPlain(xeroConnections)}
           xeroGroupConnected={Boolean(xeroGroupConnection?.connectedAt)}

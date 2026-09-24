@@ -220,6 +220,10 @@ export const balanceSheetSchema = z.object({
   totalAssets: z.coerce.number(),
   totalLiabilities: z.coerce.number(),
   totalEquity: z.coerce.number(),
+  // Consolidation-elimination lines — only meaningful (and only persisted) for the group/HQ-level
+  // balance sheet, since only Organization tracks them. See Organization.investmentInSubsidiaries.
+  investmentInSubsidiaries: z.coerce.number().default(0),
+  dueToSubsidiaries: z.coerce.number().default(0),
 });
 
 export const projectSchema = z.object({
@@ -271,6 +275,8 @@ export const companyNameSchema = z.object({
 export const hqBalanceSheetSchema = z.object({
   equity: z.coerce.number(),
   debtRatio: z.coerce.number(),
+  investmentInSubsidiaries: z.coerce.number().default(0),
+  dueToSubsidiaries: z.coerce.number().default(0),
 });
 
 export const hqHeadcountSchema = z.object({

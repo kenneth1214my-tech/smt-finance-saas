@@ -378,13 +378,15 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
     errors.push(`Bank: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // 4. Balance Sheet -> Organization.equity/debtRatio (the group's own holdco figures)
+  // 4. Balance Sheet -> Organization.equity/debtRatio (the group's own holdco figures), plus the
+  // investmentInSubsidiaries/dueToSubsidiaries consolidation-elimination lines this sync can
+  // detect directly from HQ's own Xero balance sheet (see xero-balance-sheet-parser.ts).
   try {
     const today = new Date().toISOString().slice(0, 10);
     const report = await fetchXeroBalanceSheet(accessToken, tenantId, today);
-    const { totalAssets, totalLiabilities, totalEquity } = parseXeroBalanceSheet(report);
+    const { totalAssets, totalLiabilities, totalEquity, investmentInSubsidiaries, dueToSubsidiaries } = parseXeroBalanceSheet(report);
     const debtRatio = totalAssets > 0 ? (totalLiabilities / totalAssets) * 100 : 0;
-    await db.organization.update({ where: { id: organizationId }, data: { equity: totalEquity, debtRatio } });
+    await db.organization.update({ where: { id: organizationId }, data: { equity: totalEquity, debtRatio, investmentInSubsidiaries, dueToSubsidiaries } });
     result.equity = totalEquity;
     result.debtRatio = debtRatio;
   } catch (err) {

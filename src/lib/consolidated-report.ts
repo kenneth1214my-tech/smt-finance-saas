@@ -106,6 +106,12 @@ export interface ConsolidatedBalanceSheet {
   totalEquity: number;
   debtRatioPct: number;
   byEntity: ConsolidatedBalanceSheetEntityRow[];
+  // Consolidation adjustments applied to get from Σ(byEntity) to the totals above — surfaced so
+  // the report can disclose them rather than leaving a silent gap between the entity breakdown
+  // and the group total. Both are 0 when HQ has no investment in / balance due to its
+  // subsidiaries on file.
+  investmentInSubsidiariesEliminated: number;
+  intercompanyEliminated: number;
   generatedAt: Date;
 }
 
@@ -143,12 +149,39 @@ export async function computeConsolidatedBalanceSheet(organizationId: string, ye
   }
   byEntity.sort((a, b) => b.totalAssets - a.totalAssets);
 
-  const totalAssets = byEntity.reduce((a, r) => a + r.totalAssets, 0);
-  const totalLiabilities = byEntity.reduce((a, r) => a + r.totalLiabilities, 0);
-  const totalEquity = byEntity.reduce((a, r) => a + r.equity, 0);
+  // byEntity holds each entity's own STANDALONE balance sheet — summing those naively double
+  // counts the subsidiary's net assets (once as HQ's "Investment in Subsidiary" asset, once as
+  // the subsidiary's own equity) and double counts any intercompany balance between them (a real
+  // liability/asset on each entity's own books, but not a claim against anyone outside the
+  // group). These two consolidation eliminations are applied here, against HQ's side only —
+  // see the Organization.investmentInSubsidiaries/dueToSubsidiaries schema comment.
+  const investmentInSubsidiariesEliminated = Number(organization.investmentInSubsidiaries);
+  const dueToSubsidiaries = Number(organization.dueToSubsidiaries);
+  // A positive dueToSubsidiaries is a liability on HQ's books (owes the subsidiary) to remove
+  // from Group liabilities; negative means it was actually an asset (subsidiary owes HQ) to
+  // remove from Group assets instead. Either way it's the same amount removed from both sides,
+  // so it never affects equity — unlike the investment elimination, which does.
+  const intercompanyEliminated = Math.abs(dueToSubsidiaries);
+
+  const rawTotalAssets = byEntity.reduce((a, r) => a + r.totalAssets, 0);
+  const rawTotalLiabilities = byEntity.reduce((a, r) => a + r.totalLiabilities, 0);
+  const totalAssets = rawTotalAssets - investmentInSubsidiariesEliminated - Math.max(0, -dueToSubsidiaries);
+  const totalLiabilities = rawTotalLiabilities - Math.max(0, dueToSubsidiaries);
+  const totalEquity = totalAssets - totalLiabilities;
   const debtRatioPct = totalAssets > 0 ? (totalLiabilities / totalAssets) * 100 : 0;
 
-  return { companyName: organization.name, year, totalAssets, totalLiabilities, totalEquity, debtRatioPct, byEntity, generatedAt: new Date() };
+  return {
+    companyName: organization.name,
+    year,
+    totalAssets,
+    totalLiabilities,
+    totalEquity,
+    debtRatioPct,
+    byEntity,
+    investmentInSubsidiariesEliminated,
+    intercompanyEliminated,
+    generatedAt: new Date(),
+  };
 }
 
 export interface ConsolidatedCashFlow {

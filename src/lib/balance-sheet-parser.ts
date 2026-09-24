@@ -22,6 +22,11 @@ export interface BalanceSheetParseResult {
   totalLiabilities: number;
   totalEquity: number;
   sectionsFound: string[];
+  // Consolidation-elimination line items for a parent entity's own balance sheet — see
+  // Organization.investmentInSubsidiaries/dueToSubsidiaries. Positive dueToSubsidiaries is a
+  // liability line ("due TO subsidiary"); negative is an asset line ("due FROM subsidiary").
+  investmentInSubsidiaries: number;
+  dueToSubsidiaries: number;
 }
 
 const SECTION_PATTERNS: { key: "assets" | "liabilities" | "equity"; test: RegExp }[] = [
@@ -36,6 +41,10 @@ const TOTAL_PATTERNS: { key: "totalAssets" | "totalLiabilities" | "totalEquity";
   { key: "totalEquity", test: /^(total\s+equity|net\s+assets)$/i },
 ];
 
+const INVESTMENT_IN_SUBSIDIARY_RE = /invest(?:ment|ments)?\s*(?:in|of)?\s*subsidiar/i;
+const DUE_TO_SUBSIDIARY_RE = /(?:amount\s*)?due\s*to\s*subsidiar/i;
+const DUE_FROM_SUBSIDIARY_RE = /(?:amount\s*)?due\s*from\s*subsidiar/i;
+
 function isNumericCell(cell: string): boolean {
   if (!cell) return false;
   const cleaned = cell.replace(/,/g, "").trim();
@@ -47,6 +56,8 @@ export function parseBalanceSheetReport(rows: string[][]): BalanceSheetParseResu
   const sums = { assets: 0, liabilities: 0, equity: 0 };
   const totals: Record<string, number> = {};
   const sectionsFound: string[] = [];
+  let investmentInSubsidiaries = 0;
+  let dueToSubsidiaries = 0;
   // Only the three top-level headers (Assets/Liabilities/Equity) change which bucket line items
   // are attributed to — nested sub-headers like "Bank" or "Current Assets" are recorded for UI
   // feedback but deliberately don't reset this, so their line items still count toward the
@@ -79,6 +90,10 @@ export function parseBalanceSheetReport(rows: string[][]): BalanceSheetParseResu
     // line items it's already a subtotal of.
     if (/^total\b/i.test(label)) continue;
 
+    if (INVESTMENT_IN_SUBSIDIARY_RE.test(label)) investmentInSubsidiaries += value;
+    else if (DUE_TO_SUBSIDIARY_RE.test(label)) dueToSubsidiaries += value;
+    else if (DUE_FROM_SUBSIDIARY_RE.test(label)) dueToSubsidiaries -= value;
+
     if (currentSectionKey) sums[currentSectionKey] += value;
   }
 
@@ -87,5 +102,7 @@ export function parseBalanceSheetReport(rows: string[][]): BalanceSheetParseResu
     totalLiabilities: totals.totalLiabilities ?? sums.liabilities,
     totalEquity: totals.totalEquity ?? sums.equity,
     sectionsFound,
+    investmentInSubsidiaries,
+    dueToSubsidiaries,
   };
 }

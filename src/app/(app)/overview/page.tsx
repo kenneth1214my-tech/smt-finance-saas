@@ -69,9 +69,17 @@ export default async function OverviewPage() {
     }
     return (bankBaseByEntity.get(subsidiaryId) ?? 0) + (arByEntity.get(subsidiaryId) ?? 0);
   }
+  // Naively summing each entity's own standalone assets double-counts the subsidiary's net
+  // assets — once via HQ's own "Investment in Subsidiary" asset (baked into entityAssets(null,
+  // ...) above), once via the subsidiary's own assets — and double-counts any intercompany
+  // balance the same way. Eliminate both, mirroring computeConsolidatedBalanceSheet.
+  const investmentInSubsidiariesEliminated = Number(organization.investmentInSubsidiaries);
+  const dueToSubsidiaries = Number(organization.dueToSubsidiaries);
   const totalAssets =
     subsidiaries.reduce((sum, s) => sum + entityAssets(s.id, Number(s.equity), Number(s.debtRatio)), 0) +
-    entityAssets(null, Number(organization.equity), Number(organization.debtRatio));
+    entityAssets(null, Number(organization.equity), Number(organization.debtRatio)) -
+    investmentInSubsidiariesEliminated -
+    Math.max(0, -dueToSubsidiaries);
 
   const subMap = new Map(subsidiaries.map((s) => [s.id, s]));
   // A pseudo-entity standing in for the group/HQ-level bucket (subsidiaryId === null) in the

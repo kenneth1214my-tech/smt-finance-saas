@@ -86,6 +86,21 @@ model Organization {
   // any operating entity). Set via the Balance Sheet import tools or directly under Group Settings.
   equity       Decimal  @default(0) @db.Decimal(14, 2)
   debtRatio    Decimal  @default(0) @db.Decimal(6, 2)
+  // Consolidation eliminations against HQ's own standalone balance sheet, applied when deriving
+  // the Group (consolidated) totals in computeConsolidatedBalanceSheet — without these, naively
+  // summing HQ's balance sheet + each subsidiary's balance sheet double-counts the subsidiary's
+  // net assets (once via HQ's "Investment in Subsidiary" asset, once via the subsidiary's own
+  // equity) and double-counts any intercompany balance (e.g. HQ owing the subsidiary money shows
+  // up as a real liability on HQ's own books but must net to zero at the Group level). Real
+  // Kingston data: HQ's Xero balance sheet carries an "Investments In Subsidiary" line and an
+  // "Amount due to Subsidiary" line — this system only supports eliminating against ONE parent's
+  // investment/intercompany balance (fine for this org's flat HQ + one-subsidiary structure; a
+  // multi-tier group would need this tracked per subsidiary instead).
+  investmentInSubsidiaries Decimal @default(0) @db.Decimal(14, 2)
+  // Net amount HQ owes its subsidiaries (positive = HQ owes them, i.e. a liability on HQ's own
+  // books to eliminate; negative = subsidiaries owe HQ, i.e. an asset on HQ's own books to
+  // eliminate instead).
+  dueToSubsidiaries        Decimal @default(0) @db.Decimal(14, 2)
   // Current HQ headcount snapshot — mirrors Subsidiary.headcount, for the holding entity itself.
   headcount    Int      @default(0)
   inviteCode   String   @unique

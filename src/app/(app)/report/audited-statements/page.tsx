@@ -134,6 +134,13 @@ export default async function AuditedStatementsPage(props: PageProps<"/report/au
               ? "以当前最新余额生成，非历史快照 — 与正式审计报表中按财年结账日的历史结存不同。"
               : "Generated from the current on-file balance, not a historical year-end snapshot the way a real audited report's figures are."}
           </p>
+          {(balanceSheet.investmentInSubsidiariesEliminated !== 0 || balanceSheet.intercompanyEliminated !== 0) && (
+            <p className="mt-1 text-[11px]" style={{ color: "var(--ink-400)" }}>
+              {isZh
+                ? `集团数据已抵消总部对子公司的投资（${fmtM(balanceSheet.investmentInSubsidiariesEliminated)}）与集团内部往来款（${fmtM(balanceSheet.intercompanyEliminated)}），避免子公司净资产在集团总额中被重复计算。`
+                : `Group figures eliminate HQ's investment in subsidiaries (${fmtM(balanceSheet.investmentInSubsidiariesEliminated)}) and intercompany balances (${fmtM(balanceSheet.intercompanyEliminated)}) so a subsidiary's net assets aren't double-counted in the Group total.`}
+            </p>
+          )}
         </Card>
 
         {/* Consolidated Statement of Comprehensive Income */}

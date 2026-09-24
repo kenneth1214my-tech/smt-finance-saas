@@ -60,6 +60,8 @@ export default function SettingsClient({
   inviteCode,
   hqEquity,
   hqDebtRatio,
+  hqInvestmentInSubsidiaries,
+  hqDueToSubsidiaries,
   hqHeadcount,
   xeroConnections,
   xeroGroupConnected,
@@ -97,6 +99,8 @@ export default function SettingsClient({
   inviteCode: string;
   hqEquity: number;
   hqDebtRatio: number;
+  hqInvestmentInSubsidiaries: number;
+  hqDueToSubsidiaries: number;
   hqHeadcount: number;
   xeroConnections: XeroConnection[];
   xeroGroupConnected: boolean;
@@ -177,6 +181,8 @@ export default function SettingsClient({
           fyeMonth={fyeMonth}
           hqEquity={hqEquity}
           hqDebtRatio={hqDebtRatio}
+          hqInvestmentInSubsidiaries={hqInvestmentInSubsidiaries}
+          hqDueToSubsidiaries={hqDueToSubsidiaries}
           hqHeadcount={hqHeadcount}
           exchangeRates={exchangeRates as unknown as Row[]}
           onToast={showToast}
@@ -783,6 +789,8 @@ function CurrencyTab({
   fyeMonth,
   hqEquity,
   hqDebtRatio,
+  hqInvestmentInSubsidiaries,
+  hqDueToSubsidiaries,
   hqHeadcount,
   exchangeRates,
   onToast,
@@ -794,6 +802,8 @@ function CurrencyTab({
   fyeMonth: number;
   hqEquity: number;
   hqDebtRatio: number;
+  hqInvestmentInSubsidiaries: number;
+  hqDueToSubsidiaries: number;
   hqHeadcount: number;
   exchangeRates: Row[];
   onToast: (m: string) => void;
@@ -808,6 +818,8 @@ function CurrencyTab({
   const [savingFye, setSavingFye] = useState(false);
   const [equity, setEquity] = useState(String(hqEquity));
   const [debtRatio, setDebtRatio] = useState(String(hqDebtRatio));
+  const [investmentInSubsidiaries, setInvestmentInSubsidiaries] = useState(String(hqInvestmentInSubsidiaries));
+  const [dueToSubsidiaries, setDueToSubsidiaries] = useState(String(hqDueToSubsidiaries));
   const [savingBs, setSavingBs] = useState(false);
   const [headcount, setHeadcount] = useState(String(hqHeadcount));
   const [savingHeadcount, setSavingHeadcount] = useState(false);
@@ -817,7 +829,7 @@ function CurrencyTab({
     const res = await fetch("/api/admin/hq-balance-sheet", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ equity, debtRatio }),
+      body: JSON.stringify({ equity, debtRatio, investmentInSubsidiaries, dueToSubsidiaries }),
     });
     setSavingBs(false);
     if (res.ok) {
@@ -1019,8 +1031,36 @@ function CurrencyTab({
             </span>
             <input value={debtRatio} onChange={(e) => setDebtRatio(e.target.value)} className="w-40 rounded-lg border px-3 py-2 text-[12.8px]" style={{ borderColor: "var(--border)" }} />
           </label>
+          <label className="flex flex-col gap-1 text-[12.5px]">
+            <span className="font-semibold" style={{ color: "var(--ink-600)" }}>
+              {isZh ? "对子公司的投资" : "Investment in subsidiaries"}
+            </span>
+            <input
+              value={investmentInSubsidiaries}
+              onChange={(e) => setInvestmentInSubsidiaries(e.target.value)}
+              className="w-40 rounded-lg border px-3 py-2 text-[12.8px]"
+              style={{ borderColor: "var(--border)" }}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-[12.5px]">
+            <span className="font-semibold" style={{ color: "var(--ink-600)" }}>
+              {isZh ? "应付子公司往来款（净额）" : "Net due to subsidiaries"}
+            </span>
+            <input
+              value={dueToSubsidiaries}
+              onChange={(e) => setDueToSubsidiaries(e.target.value)}
+              className="w-40 rounded-lg border px-3 py-2 text-[12.8px]"
+              style={{ borderColor: "var(--border)" }}
+            />
+          </label>
           <button
-            disabled={savingBs || (equity === String(hqEquity) && debtRatio === String(hqDebtRatio))}
+            disabled={
+              savingBs ||
+              (equity === String(hqEquity) &&
+                debtRatio === String(hqDebtRatio) &&
+                investmentInSubsidiaries === String(hqInvestmentInSubsidiaries) &&
+                dueToSubsidiaries === String(hqDueToSubsidiaries))
+            }
             onClick={saveHqBalanceSheet}
             className="rounded-lg px-3.5 py-2 text-[12.5px] font-bold text-white disabled:opacity-50"
             style={{ background: "var(--cat-1)" }}
@@ -1032,6 +1072,11 @@ function CurrencyTab({
           {isZh
             ? "集团/总部层面的股东权益与资产负债率（与各子公司「子公司主数据」中的字段是同一类数据，但归属于总部本身，不属于任何子公司）。可在此直接编辑，或使用下方「智能导入资产负债表」/「批量导入」并选择「集团总部」来更新。"
             : "Group/HQ-level equity and debt ratio (the same kind of field as each subsidiary's own Equity/Debt Ratio under Subsidiary master data, but belonging to the holding entity itself, not any subsidiary). Edit directly here, or update it via the Smart Balance Sheet import / Bulk import tools below by choosing \"Group HQ\"."}
+        </p>
+        <p className="mt-2 text-[11.8px]" style={{ color: "var(--ink-400)" }}>
+          {isZh
+            ? "「对子公司的投资」与「应付子公司往来款」用于生成合并（集团）报表时抵消 — 否则子公司的净资产会在集团总额里被重复计算一次（一次通过总部的「对子公司投资」资产，一次通过子公司自身的权益）。没有则填 0。"
+            : "\"Investment in subsidiaries\" and \"Net due to subsidiaries\" are eliminated when producing the consolidated (Group) statements — without them, a subsidiary's net assets get counted twice in the Group total (once via HQ's own \"Investment in Subsidiary\" asset, once via the subsidiary's own equity). Fill in 0 if there isn't one."}
         </p>
       </Card>
 
@@ -2234,6 +2279,8 @@ function BalanceSheetImport({ locale, onToast, subsidiaries }: { locale: Locale;
   const [totalAssets, setTotalAssets] = useState("0");
   const [totalLiabilities, setTotalLiabilities] = useState("0");
   const [totalEquity, setTotalEquity] = useState("0");
+  const [investmentInSubsidiaries, setInvestmentInSubsidiaries] = useState("0");
+  const [dueToSubsidiaries, setDueToSubsidiaries] = useState("0");
   const [subsidiaryId, setSubsidiaryId] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -2249,6 +2296,8 @@ function BalanceSheetImport({ locale, onToast, subsidiaries }: { locale: Locale;
       setTotalAssets(result.totalAssets.toFixed(2));
       setTotalLiabilities(result.totalLiabilities.toFixed(2));
       setTotalEquity(result.totalEquity.toFixed(2));
+      setInvestmentInSubsidiaries(result.investmentInSubsidiaries.toFixed(2));
+      setDueToSubsidiaries(result.dueToSubsidiaries.toFixed(2));
     } catch {
       setParsed(null);
       onToast(isZh ? "文件解析失败，请确认是有效的 CSV 或 Excel 文件" : "Couldn't parse this file — make sure it's a valid CSV or Excel file");
@@ -2274,7 +2323,7 @@ function BalanceSheetImport({ locale, onToast, subsidiaries }: { locale: Locale;
       body: JSON.stringify({
         type: "balanceSheet",
         fileName,
-        rows: [{ subsidiaryKey: sub?.key ?? "", totalAssets, totalLiabilities, totalEquity }],
+        rows: [{ subsidiaryKey: sub?.key ?? "", totalAssets, totalLiabilities, totalEquity, investmentInSubsidiaries, dueToSubsidiaries }],
       }),
     });
     setSubmitting(false);
@@ -2364,6 +2413,32 @@ function BalanceSheetImport({ locale, onToast, subsidiaries }: { locale: Locale;
               </span>
               <input value={debtRatio.toFixed(1)} disabled className="rounded-lg border px-3 py-2 text-[12.8px] opacity-60" style={{ borderColor: "var(--border)" }} />
             </label>
+            {subsidiaryId === HQ_OPTION_VALUE && (
+              <>
+                <label className="flex flex-col gap-1 text-[12.5px]">
+                  <span className="font-semibold" style={{ color: "var(--ink-600)" }}>
+                    {isZh ? "对子公司的投资" : "Investment in subsidiaries"}
+                  </span>
+                  <input
+                    value={investmentInSubsidiaries}
+                    onChange={(e) => setInvestmentInSubsidiaries(e.target.value)}
+                    className="rounded-lg border px-3 py-2 text-[12.8px]"
+                    style={{ borderColor: "var(--border)" }}
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[12.5px]">
+                  <span className="font-semibold" style={{ color: "var(--ink-600)" }}>
+                    {isZh ? "应付子公司往来款（净额）" : "Net due to subsidiaries"}
+                  </span>
+                  <input
+                    value={dueToSubsidiaries}
+                    onChange={(e) => setDueToSubsidiaries(e.target.value)}
+                    className="rounded-lg border px-3 py-2 text-[12.8px]"
+                    style={{ borderColor: "var(--border)" }}
+                  />
+                </label>
+              </>
+            )}
             <label className="flex flex-col gap-1 text-[12.5px]">
               <span className="font-semibold" style={{ color: "var(--ink-600)" }}>
                 {isZh ? "子公司" : "Subsidiary"}
@@ -2394,6 +2469,13 @@ function BalanceSheetImport({ locale, onToast, subsidiaries }: { locale: Locale;
               ? "这份数据会更新所选主体的「股东权益」与「资产负债率」为最新值（用于计算 ROE），并覆盖上一次的数值 — 不会按年/月保留历史记录。"
               : "This overwrites the selected entity's current \"equity\" and \"debt ratio\" (used to compute ROE) with these figures — it doesn't keep a year/month history."}
           </p>
+          {subsidiaryId === HQ_OPTION_VALUE && (
+            <p className="text-[11.5px]" style={{ color: "var(--ink-400)" }}>
+              {isZh
+                ? "「对子公司的投资」与「应付子公司往来款」用于合并报表时抵消（避免子公司的净资产被重复计入集团总额）— 自动从「Investments In Subsidiary」「Amount due to/from Subsidiary」等科目识别，如识别不到请手动填写（没有则填 0）。"
+                : "\"Investment in subsidiaries\" and \"Net due to subsidiaries\" are used to eliminate double-counting when consolidating (so a subsidiary's net assets aren't counted twice in the Group total) — auto-detected from accounts like \"Investments In Subsidiary\" / \"Amount due to/from Subsidiary\", or fill in by hand if not detected (0 if none)."}
+            </p>
+          )}
 
           <button
             disabled={submitting}

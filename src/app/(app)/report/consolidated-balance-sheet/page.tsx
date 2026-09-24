@@ -39,6 +39,14 @@ export default async function ConsolidatedBalanceSheetPage(props: PageProps<"/re
               {isZh ? `会计年度 ${year}` : `Fiscal Year ${year}`} · {isZh ? "生成于" : "Generated"} {report.generatedAt.toISOString().slice(0, 16).replace("T", " ")}
               {" · "}
               {isZh ? "以当前最新余额生成，非历史快照" : "Generated from the current on-file balance, not a historical snapshot"}
+              {(report.investmentInSubsidiariesEliminated !== 0 || report.intercompanyEliminated !== 0) && (
+                <>
+                  {" · "}
+                  {isZh
+                    ? `已抵消对子公司投资（${fmtM(report.investmentInSubsidiariesEliminated)}）与内部往来款（${fmtM(report.intercompanyEliminated)}），因此下方各主体明细之和不等于本页合计`
+                    : `Investment in subsidiaries (${fmtM(report.investmentInSubsidiariesEliminated)}) and intercompany balances (${fmtM(report.intercompanyEliminated)}) eliminated — so the entity breakdown below won't sum to the totals on this page`}
+                </>
+              )}
             </div>
           </div>
           <ConsolidatedBalanceSheetActions report={report} locale={locale} baseCurrency={baseCurrency} />

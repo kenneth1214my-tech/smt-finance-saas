@@ -155,10 +155,10 @@ export async function POST(req: Request) {
           const subsidiaryId = resolveSubsidiaryId(raw.subsidiaryKey, subByKey);
           const parsed = balanceSheetSchema.safeParse({ ...raw, subsidiaryId });
           if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "invalid_input");
-          const { subsidiaryId: sid, totalAssets, totalLiabilities, totalEquity } = parsed.data;
+          const { subsidiaryId: sid, totalAssets, totalLiabilities, totalEquity, investmentInSubsidiaries, dueToSubsidiaries } = parsed.data;
           const debtRatio = totalAssets > 0 ? (totalLiabilities / totalAssets) * 100 : 0;
           if (sid) await db.subsidiary.update({ where: { id: sid }, data: { equity: totalEquity, debtRatio } });
-          else await db.organization.update({ where: { id: organizationId }, data: { equity: totalEquity, debtRatio } });
+          else await db.organization.update({ where: { id: organizationId }, data: { equity: totalEquity, debtRatio, investmentInSubsidiaries, dueToSubsidiaries } });
           break;
         }
       }
