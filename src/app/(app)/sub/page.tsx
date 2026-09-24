@@ -25,11 +25,12 @@ export default async function SubPage() {
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const fmtM = (n: number) => fmtMoney(n, locale);
   const subsidiaries = await db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } });
-  const monthly = await db.monthlyFinancial.findMany({ where: { year: { in: [2025, 2026] }, organizationId } });
+  const currentYear = new Date().getFullYear();
+  const monthly = await db.monthlyFinancial.findMany({ where: { year: { in: [currentYear - 1, currentYear] }, organizationId } });
 
   const rows = subsidiaries.map((s) => {
-    const cur = monthly.filter((m) => m.subsidiaryId === s.id && m.year === 2026);
-    const prev = monthly.filter((m) => m.subsidiaryId === s.id && m.year === 2025);
+    const cur = monthly.filter((m) => m.subsidiaryId === s.id && m.year === currentYear);
+    const prev = monthly.filter((m) => m.subsidiaryId === s.id && m.year === currentYear - 1);
     const revenue = cur.reduce((a, r) => a + Number(r.revenue), 0);
     const netProfit = cur.reduce((a, r) => a + Number(r.netProfit), 0);
     const prevRevenue = prev.reduce((a, r) => a + Number(r.revenue), 0);

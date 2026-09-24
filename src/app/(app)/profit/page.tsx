@@ -27,10 +27,11 @@ export default async function ProfitPage() {
   const fmtM = (n: number) => fmtMoney(n, locale);
   const subsidiaries = await db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } });
   const organization = await db.organization.findUniqueOrThrow({ where: { id: organizationId } });
-  const monthly = await db.monthlyFinancial.findMany({ where: { year: 2026, organizationId }, orderBy: { month: "asc" } });
+  const currentYear = new Date().getFullYear();
+  const monthly = await db.monthlyFinancial.findMany({ where: { year: currentYear, organizationId }, orderBy: { month: "asc" } });
   // Prior-year revenue, fetched only to compute YoY for risk-rating escalation below — this
-  // page's own KPIs/trends stay 2026-only.
-  const prevYearMonthly = await db.monthlyFinancial.findMany({ where: { year: 2025, organizationId } });
+  // page's own KPIs/trends stay current-year-only.
+  const prevYearMonthly = await db.monthlyFinancial.findMany({ where: { year: currentYear - 1, organizationId } });
 
   const totalRevenue = monthly.reduce((a, r) => a + Number(r.revenue), 0);
   const totalCost = monthly.reduce((a, r) => a + Number(r.opCost), 0);

@@ -24,11 +24,12 @@ export default async function OpsPage() {
   const fmtM = (n: number) => fmtMoney(n, locale);
   const [subsidiaries, monthly, org] = await Promise.all([
     db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } }),
-    db.monthlyFinancial.findMany({ where: { year: { in: [2025, 2026] }, organizationId }, orderBy: { month: "asc" } }),
+    db.monthlyFinancial.findMany({ where: { year: { in: [new Date().getFullYear() - 1, new Date().getFullYear()] }, organizationId }, orderBy: { month: "asc" } }),
     db.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { headcount: true } }),
   ]);
-  const m2026 = monthly.filter((m) => m.year === 2026);
-  const m2025 = monthly.filter((m) => m.year === 2025);
+  const currentYear = new Date().getFullYear();
+  const mCur = monthly.filter((m) => m.year === currentYear);
+  const mPrev = monthly.filter((m) => m.year === currentYear - 1);
 
   // A pseudo-entity standing in for the group/HQ-level bucket (subsidiaryId === null) in the
   // breakdown views below. Previously this page's KPI totals (revenue, cost, expense ratio,
@@ -37,7 +38,7 @@ export default async function OpsPage() {
   // unlike 集团总览/利润分析 which sum the org-wide monthly rows directly.
   const HQ_PSEUDO_SUB = { id: "__hq__", colorHex: "#64748b", segmentZh: "集团总部", segmentZhTw: "集團總部", segmentEn: "Group HQ", segmentMs: "Group HQ", segmentId: "Group HQ" };
 
-  function subRow(sub: (typeof subsidiaries)[number] | typeof HQ_PSEUDO_SUB, cur: typeof m2026, prev: typeof m2025, currentHeadcount: number) {
+  function subRow(sub: (typeof subsidiaries)[number] | typeof HQ_PSEUDO_SUB, cur: typeof mCur, prev: typeof mPrev, currentHeadcount: number) {
     const revenue = cur.reduce((a, r) => a + Number(r.revenue), 0);
     const cost = cur.reduce((a, r) => a + Number(r.opCost), 0);
     const sellExp = cur.reduce((a, r) => a + Number(r.sellExp), 0);
@@ -60,10 +61,10 @@ export default async function OpsPage() {
     return { sub, revenue, cost, sellExp, adminExp, rndExp, financeExp, headcount, margin: revenue > 0 ? ((revenue - cost) / revenue) * 100 : 0, yoy };
   }
 
-  const hqCur = m2026.filter((m) => !m.subsidiaryId);
-  const hqPrev = m2025.filter((m) => !m.subsidiaryId);
+  const hqCur = mCur.filter((m) => !m.subsidiaryId);
+  const hqPrev = mPrev.filter((m) => !m.subsidiaryId);
   const bySub = [
-    ...subsidiaries.map((s) => subRow(s, m2026.filter((m) => m.subsidiaryId === s.id), m2025.filter((m) => m.subsidiaryId === s.id), s.headcount)),
+    ...subsidiaries.map((s) => subRow(s, mCur.filter((m) => m.subsidiaryId === s.id), mPrev.filter((m) => m.subsidiaryId === s.id), s.headcount)),
     // Only shown when there's actually HQ-level data on file — don't clutter the breakdown with an empty row.
     ...(hqCur.length || hqPrev.length ? [subRow(HQ_PSEUDO_SUB, hqCur, hqPrev, org.headcount)] : []),
   ];
@@ -79,10 +80,10 @@ export default async function OpsPage() {
   const expenseRatio = totalRevenue > 0 ? ((sellExp + adminExp + rndExp + financeExp) / totalRevenue) * 100 : 0;
   const revenuePerHead = totalHeadcount > 0 ? totalRevenue / totalHeadcount : 0;
 
-  const monthCount = m2026.length ? Math.max(...m2026.map((m) => m.month)) : 0;
+  const monthCount = mCur.length ? Math.max(...mCur.map((m) => m.month)) : 0;
   const months = monthLabels(locale, monthCount);
   const opCostRatioByMonth = Array.from({ length: monthCount }, (_, i) => {
-    const rows = m2026.filter((r) => r.month === i + 1);
+    const rows = mCur.filter((r) => r.month === i + 1);
     const rev = rows.reduce((a, r) => a + Number(r.revenue), 0);
     const cost = rows.reduce((a, r) => a + Number(r.opCost), 0);
     return rev > 0 ? (cost / rev) * 100 : 0;

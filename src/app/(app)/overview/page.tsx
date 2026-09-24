@@ -13,7 +13,7 @@ export default async function OverviewPage() {
   const user = await requireUser();
   const locale = await getServerLocale();
 
-  const YEAR = 2026;
+  const YEAR = new Date().getFullYear();
   const organizationId = user.organizationId;
 
   const [bySubsidiary, subsidiaries, organization, monthlyRows, cashflow, banks, arCustomers, baseCurrency, rates] = await Promise.all([

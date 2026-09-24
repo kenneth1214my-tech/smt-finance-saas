@@ -22,9 +22,17 @@ export default async function BudgetPage() {
   const baseCurrency = await getBaseCurrency(organizationId);
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const fmtM = (n: number) => fmtMoney(n, locale);
-  const budgets = await db.budget.findMany({ where: { year: 2026, organizationId }, include: { subsidiary: true }, orderBy: { subsidiary: { sortOrder: "asc" } } });
-  const monthly = await db.monthlyFinancial.findMany({ where: { year: 2026, organizationId } });
-  const monthCount = monthly.length ? Math.max(...monthly.map((m) => m.month)) : 0;
+  const currentYear = new Date().getFullYear();
+  const budgets = await db.budget.findMany({ where: { year: currentYear, organizationId }, include: { subsidiary: true }, orderBy: { subsidiary: { sortOrder: "asc" } } });
+  const monthly = await db.monthlyFinancial.findMany({ where: { year: currentYear, organizationId } });
+  // Per-entity, not a single count shared across the whole org — entities don't necessarily have
+  // data entered through the same month (a newly onboarded subsidiary, or one whose sync lagged,
+  // would otherwise get pro-rated against months of budget it was never expected to have hit yet).
+  const monthCountFor = (subsidiaryId: string | null) => {
+    const rows = monthly.filter((m) => m.subsidiaryId === subsidiaryId);
+    return rows.length ? Math.max(...rows.map((m) => m.month)) : 0;
+  };
+  const orgMonthCount = monthly.length ? Math.max(...monthly.map((m) => m.month)) : 0;
 
   const subOrHqName = (sub: { nameZh: string; nameZhTw: string; nameEn: string; nameMs: string; nameId: string } | null) =>
     sub ? localizedName(sub, locale) : isZh ? "集团总部" : "Group HQ";
@@ -33,7 +41,7 @@ export default async function BudgetPage() {
     const actual = monthly.filter((m) => m.subsidiaryId === b.subsidiaryId).reduce((a, r) => a + Number(r.revenue), 0);
     const budget = Number(b.revenueBudget);
     const rate = budget > 0 ? (actual / budget) * 100 : 0;
-    const proRatedBudget = budget * (monthCount / 12);
+    const proRatedBudget = budget * (monthCountFor(b.subsidiaryId) / 12);
     const variance = actual - proRatedBudget;
     return { sub: b.subsidiary, budget, actual, rate, variance, costRate: Number(b.costBudgetRate), expRate: Number(b.expenseBudgetRate) };
   });
@@ -43,7 +51,7 @@ export default async function BudgetPage() {
   const revBudgetRate = totalBudget > 0 ? (totalActual / totalBudget) * 100 : 0;
   const avgCostRate = rows.length ? rows.reduce((a, r) => a + r.costRate, 0) / rows.length : 0;
   const avgExpRate = rows.length ? rows.reduce((a, r) => a + r.expRate, 0) / rows.length : 0;
-  const forecast = monthCount > 0 ? (totalActual / monthCount) * 12 : 0;
+  const forecast = orgMonthCount > 0 ? (totalActual / orgMonthCount) * 12 : 0;
 
   return (
     <>
@@ -103,10 +111,10 @@ export default async function BudgetPage() {
               <p>{isZh ? "· 80%~95% 为正常波动区间（蓝色）" : "· 80%–95% is within normal range (blue)"}</p>
               <p>{isZh ? "· <80% 需关注差异原因并跟踪整改（黄色）" : "· <80% needs review and follow-up (amber)"}</p>
               <p>
-                {monthCount > 0
+                {orgMonthCount > 0
                   ? isZh
-                    ? `· 本页数据口径为 1-${monthCount} 月累计，按年度预算的 ${monthCount}/12 折算比较`
-                    : `· This page compares Jan–month ${monthCount} actuals to ${monthCount}/12 of the annual budget`
+                    ? `· 每个主体按其自身最新已录入月份折算年度预算比较（集团整体口径为 1-${orgMonthCount} 月累计）`
+                    : `· Each entity's budget is pro-rated against its own latest month on file (group total shown is Jan–month ${orgMonthCount})`
                   : isZh
                     ? "· 暂无月度实际数据，进度按 0 计算"
                     : "· No monthly actuals entered yet — progress shows as 0"}
