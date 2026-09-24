@@ -64,6 +64,8 @@ export default function SettingsClient({
   xeroConnections,
   xeroGroupConnected,
   xeroGroupTenantName,
+  xeroGroupLastSyncAt,
+  xeroGroupLastSyncError,
   xeroConfigured,
   expenseCategoryMappings,
 }: {
@@ -99,6 +101,8 @@ export default function SettingsClient({
   xeroConnections: XeroConnection[];
   xeroGroupConnected: boolean;
   xeroGroupTenantName: string | null;
+  xeroGroupLastSyncAt: string | null;
+  xeroGroupLastSyncError: string | null;
   xeroConfigured: boolean;
   expenseCategoryMappings: ExpenseCategoryMapping[];
 }) {
@@ -187,6 +191,8 @@ export default function SettingsClient({
           xeroConnections={xeroConnections}
           xeroGroupConnected={xeroGroupConnected}
           xeroGroupTenantName={xeroGroupTenantName}
+          xeroGroupLastSyncAt={xeroGroupLastSyncAt}
+          xeroGroupLastSyncError={xeroGroupLastSyncError}
           xeroConfigured={xeroConfigured}
           expenseCategoryMappings={expenseCategoryMappings}
         />
@@ -1445,6 +1451,8 @@ function DataTab({
   xeroConnections,
   xeroGroupConnected,
   xeroGroupTenantName,
+  xeroGroupLastSyncAt,
+  xeroGroupLastSyncError,
   xeroConfigured,
   expenseCategoryMappings,
 }: {
@@ -1455,6 +1463,8 @@ function DataTab({
   xeroConnections: XeroConnection[];
   xeroGroupConnected: boolean;
   xeroGroupTenantName: string | null;
+  xeroGroupLastSyncAt: string | null;
+  xeroGroupLastSyncError: string | null;
   xeroConfigured: boolean;
   expenseCategoryMappings: ExpenseCategoryMapping[];
 }) {
@@ -1507,12 +1517,12 @@ function DataTab({
     }
   }
 
-  async function syncAll(subsidiaryId: string) {
-    setSyncingId(subsidiaryId);
+  async function syncAll(subsidiaryId?: string) {
+    setSyncingId(subsidiaryId ?? "group");
     const res = await fetch("/api/admin/erp/xero/sync-all", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ subsidiaryId }),
+      body: JSON.stringify(subsidiaryId ? { subsidiaryId } : {}),
     });
     setSyncingId(null);
     if (res.ok) {
@@ -1569,30 +1579,57 @@ function DataTab({
           <div className="text-[11.5px] font-semibold" style={{ color: "var(--ink-400)" }}>
             {isZh ? "集团 / 总部" : "Group / HQ"}
           </div>
-          <div className="flex items-center justify-between gap-3 rounded-lg border px-3.5 py-2.5" style={{ borderColor: "var(--border)" }}>
-            <div className="flex items-center gap-2.5">
-              <span className="text-[13px] font-semibold" style={{ color: "var(--ink-900)" }}>
-                Xero
-              </span>
+          <div className="flex flex-col gap-1.5 rounded-lg border px-3.5 py-2.5" style={{ borderColor: "var(--border)" }}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <span className="text-[13px] font-semibold" style={{ color: "var(--ink-900)" }}>
+                  Xero
+                </span>
+                {xeroGroupConnected ? (
+                  <StatusPill tone="good" label={isZh ? `已连接${xeroGroupTenantName ? ` · ${xeroGroupTenantName}` : ""}` : `Connected${xeroGroupTenantName ? ` · ${xeroGroupTenantName}` : ""}`} />
+                ) : (
+                  <StatusPill tone="warning" label={isZh ? "未连接" : "Not connected"} />
+                )}
+              </div>
               {xeroGroupConnected ? (
-                <StatusPill tone="good" label={isZh ? `已连接${xeroGroupTenantName ? ` · ${xeroGroupTenantName}` : ""}` : `Connected${xeroGroupTenantName ? ` · ${xeroGroupTenantName}` : ""}`} />
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => syncAll()}
+                    disabled={syncingId === "group"}
+                    className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
+                    style={{ background: "var(--cat-1)" }}
+                  >
+                    {syncingId === "group" ? (isZh ? "同步中…" : "Syncing…") : isZh ? "全部同步" : "Sync all"}
+                  </button>
+                  <button
+                    onClick={() => disconnectXero()}
+                    disabled={disconnectingId === "group"}
+                    className="rounded-lg px-3 py-1.5 text-[12px] font-bold disabled:opacity-50"
+                    style={{ background: "var(--surface-2)", color: "var(--status-critical)" }}
+                  >
+                    {isZh ? "断开连接" : "Disconnect"}
+                  </button>
+                </div>
               ) : (
-                <StatusPill tone="warning" label={isZh ? "未连接" : "Not connected"} />
+                <a href="/api/admin/erp/xero/connect" className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white" style={{ background: "var(--cat-1)" }}>
+                  {isZh ? "连接 Xero" : "Connect Xero"}
+                </a>
               )}
             </div>
-            {xeroGroupConnected ? (
-              <button
-                onClick={() => disconnectXero()}
-                disabled={disconnectingId === "group"}
-                className="rounded-lg px-3 py-1.5 text-[12px] font-bold disabled:opacity-50"
-                style={{ background: "var(--surface-2)", color: "var(--status-critical)" }}
-              >
-                {isZh ? "断开连接" : "Disconnect"}
-              </button>
-            ) : (
-              <a href="/api/admin/erp/xero/connect" className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white" style={{ background: "var(--cat-1)" }}>
-                {isZh ? "连接 Xero" : "Connect Xero"}
-              </a>
+            {xeroGroupConnected && (
+              <div className="flex items-center gap-1.5 text-[11px]" style={{ color: xeroGroupLastSyncError ? "var(--status-critical)" : "var(--ink-400)" }}>
+                {xeroGroupLastSyncError
+                  ? isZh
+                    ? `上次同步失败（${relativeTime(xeroGroupLastSyncAt, isZh)}）：${xeroGroupLastSyncError}`
+                    : `Last sync failed (${relativeTime(xeroGroupLastSyncAt, isZh)}): ${xeroGroupLastSyncError}`
+                  : xeroGroupLastSyncAt
+                    ? isZh
+                      ? `每日自动同步 · 上次同步：${relativeTime(xeroGroupLastSyncAt, isZh)}`
+                      : `Auto-syncs daily · Last synced ${relativeTime(xeroGroupLastSyncAt, isZh)}`
+                    : isZh
+                      ? "每日自动同步 · 尚未同步过，请点击「全部同步」立即同步一次"
+                      : "Auto-syncs daily · Not synced yet — click \"Sync all\" to run it now"}
+              </div>
             )}
           </div>
           <div className="pt-1 text-[11.5px] font-semibold" style={{ color: "var(--ink-400)" }}>

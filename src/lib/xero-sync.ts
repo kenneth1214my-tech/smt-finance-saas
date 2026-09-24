@@ -10,7 +10,7 @@ import {
   fetchXeroBalanceSheet,
   type XeroContact,
 } from "@/lib/xero";
-import { getValidXeroAccessToken } from "@/lib/xero-token";
+import { getValidXeroAccessToken, getValidXeroGroupAccessToken } from "@/lib/xero-token";
 import { parseXeroPnl } from "@/lib/xero-pnl-parser";
 import { oldestDueAgingDays, statusFromAgingDays } from "@/lib/xero-aging-parser";
 import { parseXeroBudgetSummary, parseXeroBankSummary } from "@/lib/xero-budget-bank-parser";
@@ -18,7 +18,7 @@ import { parseXeroBalanceSheet } from "@/lib/xero-balance-sheet-parser";
 import { getBaseCurrency } from "@/lib/currency";
 import { computeSyncedRiskRating, worse, type RiskSeverity } from "@/lib/risk-rating";
 import { applyCategoryMapping, type ExpenseCategory } from "@/lib/expense-categories";
-import type { XeroConnection } from "@prisma/client";
+import type { XeroConnection, XeroGroupConnection } from "@prisma/client";
 
 function pad(n: number) {
   return String(n).padStart(2, "0");
@@ -253,4 +253,156 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
 
 async function markSyncResult(connection: XeroConnection, error: string | null) {
   await db.xeroConnection.update({ where: { id: connection.id }, data: { lastSyncAt: new Date(), lastSyncError: error } });
+}
+
+async function markGroupSyncResult(connection: XeroGroupConnection, error: string | null) {
+  await db.xeroGroupConnection.update({ where: { id: connection.id }, data: { lastSyncAt: new Date(), lastSyncError: error } });
+}
+
+// Group/HQ-level counterpart of syncSubsidiaryFromXero above — same four sync steps, but reads
+// from XeroGroupConnection and writes to the subsidiaryId: null ("HQ") rows of the shared tables
+// instead of a specific subsidiary. HQ upserts are done by hand (findFirst + create/update)
+// rather than via a generated compound-unique upsert, matching the established pattern in
+// /api/admin/import — the DB only has a partial unique index for "subsidiaryId IS NULL", which
+// Prisma's compound-unique input can't target directly. There's no group-level risk rating field
+// on Organization (unlike Subsidiary.riskRating), so that step is simply skipped.
+export async function syncGroupFromXero(organizationId: string, months = 3): Promise<XeroSyncResult> {
+  const errors: string[] = [];
+  const connection = await db.xeroGroupConnection.findUnique({ where: { organizationId } });
+  if (!connection || !connection.connectedAt || !connection.tenantId) {
+    return { ok: false, monthsSynced: 0, monthsFailed: 0, customersSynced: 0, payablesSynced: 0, bankAccountsSynced: 0, equity: null, debtRatio: null, riskRating: null, errors: ["not_connected"] };
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await getValidXeroGroupAccessToken(connection);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await markGroupSyncResult(connection, message);
+    return { ok: false, monthsSynced: 0, monthsFailed: 0, customersSynced: 0, payablesSynced: 0, bankAccountsSynced: 0, equity: null, debtRatio: null, riskRating: null, errors: [message] };
+  }
+  const tenantId = connection.tenantId;
+
+  const result = {
+    monthsSynced: 0,
+    monthsFailed: 0,
+    customersSynced: 0,
+    payablesSynced: 0,
+    bankAccountsSynced: 0,
+    equity: null as number | null,
+    debtRatio: null as number | null,
+  };
+
+  // 1. P&L — trailing N months, HQ row per (organizationId, year, month) with subsidiaryId: null.
+  const categoryMappingRows = await db.expenseCategoryMapping.findMany({ where: { organizationId } });
+  const categoryMapping = Object.fromEntries(categoryMappingRows.map((m) => [m.accountLabel, m.category as ExpenseCategory]));
+  const periods = trailingMonths(months);
+  for (let i = 0; i < periods.length; i += 2) {
+    const batch = periods.slice(i, i + 2);
+    await Promise.all(
+      batch.map(async ({ year, month }) => {
+        try {
+          const { from, to } = monthDateRange(year, month);
+          const report = await fetchXeroProfitAndLoss(accessToken, tenantId, from, to);
+          const { revenue, costOfSales, netProfit, expenseLineItems } = parseXeroPnl(report);
+          const grossMarginPct = revenue > 0 ? ((revenue - costOfSales) / revenue) * 100 : 0;
+          const { sellExp, adminExp, rndExp, financeExp } = applyCategoryMapping(expenseLineItems, categoryMapping);
+          const data = { revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp };
+          const existing = await db.monthlyFinancial.findFirst({ where: { organizationId, subsidiaryId: null, year, month } });
+          if (existing) await db.monthlyFinancial.update({ where: { id: existing.id }, data });
+          else await db.monthlyFinancial.create({ data: { ...data, organizationId, subsidiaryId: null, year, month } });
+          result.monthsSynced++;
+        } catch (err) {
+          result.monthsFailed++;
+          errors.push(`P&L ${year}-${month}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      })
+    );
+  }
+
+  // 2. AR/AP — HQ rows (subsidiaryId: null)
+  try {
+    const contacts = await fetchAllContacts(accessToken, tenantId);
+    const arContacts = contacts.filter((c) => c.IsCustomer && Number(c.Balances?.AccountsReceivable?.Outstanding ?? 0) > 0);
+    const apContacts = contacts.filter((c) => c.IsSupplier && Number(c.Balances?.AccountsPayable?.Outstanding ?? 0) > 0);
+
+    const arRows = await mapInBatches(arContacts, 2, async (c) => {
+      const report = await fetchXeroAgedReceivablesByContact(accessToken, tenantId, c.ContactID);
+      const agingDays = oldestDueAgingDays(report);
+      return { organizationId, nameZh: c.Name, nameEn: c.Name, subsidiaryId: null, balance: Number(c.Balances?.AccountsReceivable?.Outstanding ?? 0), agingDays, status: statusFromAgingDays(agingDays) };
+    });
+    const apRows = await mapInBatches(apContacts, 2, async (c) => {
+      const report = await fetchXeroAgedPayablesByContact(accessToken, tenantId, c.ContactID);
+      const agingDays = oldestDueAgingDays(report);
+      return { organizationId, nameZh: c.Name, nameEn: c.Name, subsidiaryId: null, balance: Number(c.Balances?.AccountsPayable?.Outstanding ?? 0), agingDays, status: statusFromAgingDays(agingDays) };
+    });
+
+    await db.$transaction([
+      db.aRCustomer.deleteMany({ where: { organizationId, subsidiaryId: null } }),
+      db.payable.deleteMany({ where: { organizationId, subsidiaryId: null } }),
+      ...(arRows.length ? [db.aRCustomer.createMany({ data: arRows })] : []),
+      ...(apRows.length ? [db.payable.createMany({ data: apRows })] : []),
+    ]);
+    result.customersSynced = arRows.length;
+    result.payablesSynced = apRows.length;
+  } catch (err) {
+    errors.push(`AR/AP: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // 3a. Budget — HQ row (subsidiaryId: null)
+  const year = new Date().getFullYear();
+  try {
+    const budgetReport = await fetchXeroBudgetSummary(accessToken, tenantId, `${year}-01-01`, 12);
+    const { revenueBudget, costBudgetRate, expenseBudgetRate } = parseXeroBudgetSummary(budgetReport);
+    const data = { revenueBudget, costBudgetRate, expenseBudgetRate };
+    const existing = await db.budget.findFirst({ where: { organizationId, subsidiaryId: null, year } });
+    if (existing) await db.budget.update({ where: { id: existing.id }, data });
+    else await db.budget.create({ data: { ...data, organizationId, subsidiaryId: null, year } });
+  } catch (err) {
+    errors.push(`Budget: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // 3b. Bank Accounts — HQ rows (subsidiaryId: null)
+  try {
+    const now = new Date();
+    const bankReport = await fetchXeroBankSummary(accessToken, tenantId, `${year}-01-01`, now.toISOString().slice(0, 10));
+    const bankAccounts = parseXeroBankSummary(bankReport);
+    const currency = await getBaseCurrency(organizationId);
+    for (const acct of bankAccounts) {
+      const existing = await db.bankAccount.findFirst({ where: { organizationId, subsidiaryId: null, bankEn: acct.name } });
+      if (existing) await db.bankAccount.update({ where: { id: existing.id }, data: { balance: acct.balance } });
+      else await db.bankAccount.create({ data: { organizationId, subsidiaryId: null, bankZh: acct.name, bankEn: acct.name, acctType: "general", balance: acct.balance, currency } });
+    }
+    result.bankAccountsSynced = bankAccounts.length;
+  } catch (err) {
+    errors.push(`Bank: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // 4. Balance Sheet -> Organization.equity/debtRatio (the group's own holdco figures)
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const report = await fetchXeroBalanceSheet(accessToken, tenantId, today);
+    const { totalAssets, totalLiabilities, totalEquity } = parseXeroBalanceSheet(report);
+    const debtRatio = totalAssets > 0 ? (totalLiabilities / totalAssets) * 100 : 0;
+    await db.organization.update({ where: { id: organizationId }, data: { equity: totalEquity, debtRatio } });
+    result.equity = totalEquity;
+    result.debtRatio = debtRatio;
+  } catch (err) {
+    errors.push(`Balance Sheet: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  await markGroupSyncResult(connection, errors.length ? errors.join("; ") : null);
+
+  return {
+    ok: errors.length === 0,
+    monthsSynced: result.monthsSynced,
+    monthsFailed: result.monthsFailed,
+    customersSynced: result.customersSynced,
+    payablesSynced: result.payablesSynced,
+    bankAccountsSynced: result.bankAccountsSynced,
+    equity: result.equity,
+    debtRatio: result.debtRatio,
+    riskRating: null,
+    errors,
+  };
 }

@@ -513,6 +513,10 @@ model XeroGroupConnection {
   refreshToken   String?      @db.Text
   expiresAt      DateTime?
   connectedAt    DateTime?
+  // Visibility into the automatic (cron) and manual "Sync all" runs — mirrors XeroConnection's
+  // lastSyncAt/lastSyncError, added once the group-level connection actually gained a sync path.
+  lastSyncAt     DateTime?
+  lastSyncError  String?      @db.Text
   updatedAt      DateTime     @updatedAt
 }
 

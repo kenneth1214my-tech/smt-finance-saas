@@ -108,6 +108,8 @@ export default async function SettingsPage() {
           xeroConnections={toPlain(xeroConnections)}
           xeroGroupConnected={Boolean(xeroGroupConnection?.connectedAt)}
           xeroGroupTenantName={xeroGroupConnection?.tenantName ?? null}
+          xeroGroupLastSyncAt={xeroGroupConnection?.lastSyncAt ? xeroGroupConnection.lastSyncAt.toISOString() : null}
+          xeroGroupLastSyncError={xeroGroupConnection?.lastSyncError ?? null}
           xeroConfigured={isXeroConfigured()}
           expenseCategoryMappings={toPlain(expenseCategoryMappings)}
         />
