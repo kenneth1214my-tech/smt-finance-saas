@@ -85,9 +85,18 @@ export interface XeroReport {
   Rows: XeroReportRow[];
 }
 
-// Xero enforces both a per-minute call quota and a concurrent-request cap per tenant; a
-// multi-month/multi-contact sync can burst past either. On 429, back off and retry a few times
-// (honoring Retry-After when Xero sends one) instead of failing the whole sync outright.
+// Xero enforces a per-minute call quota AND a per-day quota (5000 calls/day per app) per tenant;
+// a multi-month/multi-contact sync can burst past either. On 429, back off and retry a few times
+// (honoring Retry-After when Xero sends one) instead of failing the whole sync outright — but
+// Xero's Retry-After for a DAILY-quota breach can be minutes to hours (the limit resets on a
+// fixed schedule, not a rolling window like the per-minute one), and blindly sleeping for that
+// full duration inside a single serverless invocation just burns the entire function timeout in
+// silence — no error, no progress, nothing in the logs, indistinguishable from a genuine hang
+// (confirmed in production: a sync sat doing nothing for the full 300s platform limit with no
+// diagnostic at all). Cap the wait so a short per-minute throttle still gets a real retry, but a
+// long daily-quota wait fails fast with a clear, actionable error instead.
+const MAX_RETRY_WAIT_SEC = 10;
+
 async function xeroGet(accessToken: string, tenantId: string, url: string): Promise<unknown> {
   const maxAttempts = 4;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -96,6 +105,9 @@ async function xeroGet(accessToken: string, tenantId: string, url: string): Prom
     });
     if (res.status === 429 && attempt < maxAttempts) {
       const retryAfterSec = Number(res.headers.get("Retry-After")) || 2 ** attempt;
+      if (retryAfterSec > MAX_RETRY_WAIT_SEC) {
+        throw new Error(`Xero API call failed: 429 rate limited — Xero asked to wait ${retryAfterSec}s, too long to retry within this sync (likely the daily quota, which resets on a fixed schedule, not a short throttle)`);
+      }
       await new Promise((r) => setTimeout(r, retryAfterSec * 1000));
       continue;
     }

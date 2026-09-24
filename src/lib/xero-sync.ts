@@ -42,6 +42,19 @@ function trailingMonths(count: number): { year: number; month: number }[] {
   return list;
 }
 
+// Each contact needs its own Xero API call to fetch its aged-balance detail (Xero's Reports API
+// has no bulk "aged receivables for every contact" endpoint), and Xero rate-limits an app to 60
+// calls/minute per organisation — so beyond a few hundred contacts, fetching them live can no
+// longer finish inside one serverless invocation no matter how the batching/timeout is tuned
+// (confirmed in production: Kingston HQ's 2,475 contacts timed out repeatedly at the platform's
+// 300s hard limit, every single run, without ever completing the rest of the sync or recording
+// why). Past this many eligible contacts, skip the live fetch so the rest of the sync (P&L,
+// budget, bank, balance sheet) can still complete and the connection can still record a real
+// lastSyncAt/lastSyncError — existing AR/AP data is left untouched rather than wiped, and the
+// admin is pointed at the "Smart AR Aging import" bulk-file upload instead, which already handles
+// this volume.
+const MAX_LIVE_AGING_CONTACTS = 200;
+
 async function mapInBatches<T, R>(items: T[], batchSize: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = [];
   for (let i = 0; i < items.length; i += batchSize) {
@@ -145,6 +158,12 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
     const contacts = await fetchAllContacts(accessToken, tenantId);
     const arContacts = contacts.filter((c) => c.IsCustomer && Number(c.Balances?.AccountsReceivable?.Outstanding ?? 0) > 0);
     const apContacts = contacts.filter((c) => c.IsSupplier && Number(c.Balances?.AccountsPayable?.Outstanding ?? 0) > 0);
+
+    if (arContacts.length + apContacts.length > MAX_LIVE_AGING_CONTACTS) {
+      throw new Error(
+        `skipped — ${arContacts.length + apContacts.length} contacts is too many to fetch live within one sync; use the "Smart AR Aging import" upload instead`
+      );
+    }
 
     const arRows = await mapInBatches(arContacts, 2, async (c) => {
       const report = await fetchXeroAgedReceivablesByContact(accessToken, tenantId, c.ContactID);
@@ -282,6 +301,13 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
     return { ok: false, monthsSynced: 0, monthsFailed: 0, customersSynced: 0, payablesSynced: 0, bankAccountsSynced: 0, equity: null, debtRatio: null, riskRating: null, errors: [message] };
   }
   const tenantId = connection.tenantId;
+  // Timing instrumentation — Vercel streams console output as it's emitted, so even if the
+  // function is hard-killed at the platform timeout, these markers show up in `vercel logs` and
+  // reveal which step was in flight; the timeout error alone names no step. Earned its keep
+  // diagnosing a real incident (a 429 retry silently sleeping for the full 300s with zero other
+  // output — see xero.ts's MAX_RETRY_WAIT_SEC), kept permanently for the next one.
+  const t0 = Date.now();
+  const mark = (label: string) => console.log(`[syncGroupFromXero] ${label} at +${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
   const result = {
     monthsSynced: 0,
@@ -294,6 +320,7 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
   };
 
   // 1. P&L — trailing N months, HQ row per (organizationId, year, month) with subsidiaryId: null.
+  mark("start");
   const categoryMappingRows = await db.expenseCategoryMapping.findMany({ where: { organizationId } });
   const categoryMapping = Object.fromEntries(categoryMappingRows.map((m) => [m.accountLabel, m.category as ExpenseCategory]));
   const periods = trailingMonths(months);
@@ -320,11 +347,21 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
     );
   }
 
+  mark("P&L done");
+
   // 2. AR/AP — HQ rows (subsidiaryId: null)
   try {
+    mark("contacts fetch start");
     const contacts = await fetchAllContacts(accessToken, tenantId);
+    mark(`contacts fetch done (${contacts.length} contacts)`);
     const arContacts = contacts.filter((c) => c.IsCustomer && Number(c.Balances?.AccountsReceivable?.Outstanding ?? 0) > 0);
     const apContacts = contacts.filter((c) => c.IsSupplier && Number(c.Balances?.AccountsPayable?.Outstanding ?? 0) > 0);
+
+    if (arContacts.length + apContacts.length > MAX_LIVE_AGING_CONTACTS) {
+      throw new Error(
+        `skipped — ${arContacts.length + apContacts.length} contacts is too many to fetch live within one sync; use the "Smart AR Aging import" upload instead`
+      );
+    }
 
     const arRows = await mapInBatches(arContacts, 2, async (c) => {
       const report = await fetchXeroAgedReceivablesByContact(accessToken, tenantId, c.ContactID);
@@ -348,6 +385,7 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
   } catch (err) {
     errors.push(`AR/AP: ${err instanceof Error ? err.message : String(err)}`);
   }
+  mark("AR/AP step done");
 
   // 3a. Budget — HQ row (subsidiaryId: null)
   const year = new Date().getFullYear();
@@ -361,6 +399,7 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
   } catch (err) {
     errors.push(`Budget: ${err instanceof Error ? err.message : String(err)}`);
   }
+  mark("Budget step done");
 
   // 3b. Bank Accounts — HQ rows (subsidiaryId: null)
   try {
@@ -377,6 +416,7 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
   } catch (err) {
     errors.push(`Bank: ${err instanceof Error ? err.message : String(err)}`);
   }
+  mark("Bank step done");
 
   // 4. Balance Sheet -> Organization.equity/debtRatio (the group's own holdco figures), plus the
   // investmentInSubsidiaries/dueToSubsidiaries consolidation-elimination lines this sync can
@@ -392,8 +432,10 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
   } catch (err) {
     errors.push(`Balance Sheet: ${err instanceof Error ? err.message : String(err)}`);
   }
+  mark("Balance Sheet step done");
 
   await markGroupSyncResult(connection, errors.length ? errors.join("; ") : null);
+  mark("done, result recorded");
 
   return {
     ok: errors.length === 0,
