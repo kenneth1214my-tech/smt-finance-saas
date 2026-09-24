@@ -3,6 +3,11 @@ import { db } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
 import { syncSubsidiaryFromXero, syncGroupFromXero } from "@/lib/xero-sync";
 
+// A 24-month backfill (P&L calls, plus the full AR/AP contact list each needing its own aged-
+// report call) can easily take longer than Vercel's default function timeout — matches the cron
+// job's own maxDuration below for the same reason.
+export const maxDuration = 300;
+
 // Manual "Sync all" button — does a full 24-month P&L backfill, unlike the cron job's shorter
 // recent-months catch-up, since this is the one-time/occasional deep sync an admin triggers
 // on demand (e.g. right after first connecting). No subsidiaryId means the group/HQ-level
