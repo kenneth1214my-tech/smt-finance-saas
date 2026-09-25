@@ -167,7 +167,10 @@ export async function fetchXeroAgedPayablesByContact(accessToken: string, tenant
 // Budget Summary is a multi-period report (one column per month) rather than the single-value
 // rows other reports return — the parser sums across all period columns to get an annual total.
 export async function fetchXeroBudgetSummary(accessToken: string, tenantId: string, fromDate: string, periods: number): Promise<XeroReport> {
-  const url = `https://api.xero.com/api.xro/2.0/Reports/BudgetSummary?date=${fromDate}&periods=${periods}&timeframe=MONTH`;
+  // timeframe is the period LENGTH in months (1 = monthly, 3 = quarterly, 12 = yearly), not the
+  // string "MONTH" — Xero rejects a non-numeric value with "Report Parameter timeframe could not
+  // be parsed as an integer" (confirmed in production).
+  const url = `https://api.xero.com/api.xro/2.0/Reports/BudgetSummary?date=${fromDate}&periods=${periods}&timeframe=1`;
   const body = (await xeroGet(accessToken, tenantId, url)) as { Reports?: XeroReport[] };
   return body.Reports?.[0] ?? { Rows: [] };
 }
