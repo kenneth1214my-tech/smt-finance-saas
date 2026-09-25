@@ -37,7 +37,7 @@ export async function POST(req: Request) {
 
   if (reportKey === "consolidated_income_statement") await computeConsolidatedIncomeStatement(user.organizationId, year, locale);
   else if (reportKey === "consolidated_balance_sheet") await computeConsolidatedBalanceSheet(user.organizationId, year, locale);
-  else if (reportKey === "consolidated_cash_flow") await computeConsolidatedCashFlow(user.organizationId, year);
+  else if (reportKey === "consolidated_cash_flow") await computeConsolidatedCashFlow(user.organizationId, year, locale);
   else if (reportKey === "ar_aging") await computeARAgingReport(user.organizationId, year, locale);
   else if (reportKey === "monthly_risk") await computeMonthlyRiskReport(user.organizationId, year, month!, locale);
   else if (reportKey === "audit_report") await computeAuditReport(user.organizationId, year);

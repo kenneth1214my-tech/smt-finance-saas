@@ -119,14 +119,24 @@ export async function POST(req: Request) {
           break;
         }
         case "cashflow": {
-          const parsed = cashFlowMonthlySchema.safeParse(raw);
+          const subsidiaryId = resolveSubsidiaryId(raw.subsidiaryKey, subByKey);
+          const parsed = cashFlowMonthlySchema.safeParse({ ...raw, subsidiaryId });
           if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "invalid_input");
-          const { year, month } = parsed.data;
-          await db.cashFlowMonthly.upsert({
-            where: { organizationId_year_month: { organizationId, year, month } },
-            create: { ...parsed.data, organizationId },
-            update: parsed.data,
-          });
+          const { subsidiaryId: sid, year, month } = parsed.data;
+          if (sid) {
+            await db.cashFlowMonthly.upsert({
+              where: { subsidiaryId_year_month: { subsidiaryId: sid, year, month } },
+              create: { ...parsed.data, organizationId },
+              update: parsed.data,
+            });
+          } else {
+            // No compound-unique constraint covers (organizationId, year, month) WHERE
+            // subsidiaryId IS NULL at the Prisma level (only a DB-side partial index), so the
+            // HQ upsert is done by hand here instead of via a generated compound-unique upsert.
+            const existing = await db.cashFlowMonthly.findFirst({ where: { organizationId, subsidiaryId: null, year, month } });
+            if (existing) await db.cashFlowMonthly.update({ where: { id: existing.id }, data: parsed.data });
+            else await db.cashFlowMonthly.create({ data: { ...parsed.data, organizationId } });
+          }
           break;
         }
         case "arCustomer": {

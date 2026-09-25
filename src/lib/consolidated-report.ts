@@ -184,6 +184,15 @@ export async function computeConsolidatedBalanceSheet(organizationId: string, ye
   };
 }
 
+export interface ConsolidatedCashFlowEntityRow {
+  id: string;
+  name: string;
+  ocf: number;
+  icf: number;
+  fcf: number;
+  netChange: number;
+}
+
 export interface ConsolidatedCashFlow {
   companyName: string;
   year: number;
@@ -191,20 +200,41 @@ export interface ConsolidatedCashFlow {
   icf: number;
   fcf: number;
   netChange: number;
+  byEntity: ConsolidatedCashFlowEntityRow[];
   generatedAt: Date;
 }
 
-// CashFlowMonthly has no subsidiaryId — it's tracked at the group level only, so unlike the
-// Income Statement / Balance Sheet there's no per-entity breakdown available here.
-export async function computeConsolidatedCashFlow(organizationId: string, year: number): Promise<ConsolidatedCashFlow> {
-  const [organization, cashflow] = await Promise.all([
+// CashFlowMonthly rows are per-entity (subsidiaryId: null = HQ), same as MonthlyFinancial — the
+// Group total sums across every entity's rows, exactly like the Income Statement/Balance Sheet.
+export async function computeConsolidatedCashFlow(organizationId: string, year: number, locale: Locale): Promise<ConsolidatedCashFlow> {
+  const [organization, subsidiaries, cashflow] = await Promise.all([
     db.organization.findUniqueOrThrow({ where: { id: organizationId } }),
+    db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } }),
     db.cashFlowMonthly.findMany({ where: { organizationId, year } }),
   ]);
-  const ocf = cashflow.reduce((a, c) => a + Number(c.ocf), 0);
-  const icf = cashflow.reduce((a, c) => a + Number(c.icf), 0);
-  const fcf = cashflow.reduce((a, c) => a + Number(c.fcf), 0);
-  return { companyName: organization.name, year, ocf, icf, fcf, netChange: ocf + icf + fcf, generatedAt: new Date() };
+
+  const rowFor = (rows: typeof cashflow): { ocf: number; icf: number; fcf: number } => ({
+    ocf: rows.reduce((a, c) => a + Number(c.ocf), 0),
+    icf: rows.reduce((a, c) => a + Number(c.icf), 0),
+    fcf: rows.reduce((a, c) => a + Number(c.fcf), 0),
+  });
+
+  const byEntity: ConsolidatedCashFlowEntityRow[] = [];
+  for (const s of subsidiaries) {
+    const rows = cashflow.filter((c) => c.subsidiaryId === s.id);
+    if (rows.length === 0) continue;
+    const { ocf, icf, fcf } = rowFor(rows);
+    byEntity.push({ id: s.id, name: localizedName(s, locale), ocf, icf, fcf, netChange: ocf + icf + fcf });
+  }
+  const hqRows = cashflow.filter((c) => !c.subsidiaryId);
+  if (hqRows.length > 0) {
+    const { ocf, icf, fcf } = rowFor(hqRows);
+    byEntity.push({ id: "__hq__", name: locale === "en" ? "Group HQ" : "集团总部", ocf, icf, fcf, netChange: ocf + icf + fcf });
+  }
+  byEntity.sort((a, b) => b.netChange - a.netChange);
+
+  const { ocf, icf, fcf } = rowFor(cashflow);
+  return { companyName: organization.name, year, ocf, icf, fcf, netChange: ocf + icf + fcf, byEntity, generatedAt: new Date() };
 }
 
 // A single report packaging the same 4 statements a real Singapore statutory audited report
@@ -243,8 +273,8 @@ export async function computeAuditedFinancialStatements(organizationId: string, 
     computeConsolidatedIncomeStatement(organizationId, year, locale),
     computeConsolidatedIncomeStatement(organizationId, priorYear, locale),
     computeConsolidatedBalanceSheet(organizationId, year, locale),
-    computeConsolidatedCashFlow(organizationId, year),
-    computeConsolidatedCashFlow(organizationId, priorYear),
+    computeConsolidatedCashFlow(organizationId, year, locale),
+    computeConsolidatedCashFlow(organizationId, priorYear, locale),
   ]);
 
   const companyBalanceSheet = balanceSheet.byEntity.find((e) => e.id === "__hq__") ?? null;

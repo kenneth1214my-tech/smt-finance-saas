@@ -84,6 +84,7 @@ export const IMPORT_TYPES: ImportTypeConfig[] = [
     labelZh: "月度现金流",
     labelEn: "Monthly Cash Flow",
     columns: [
+      { key: "subsidiaryKey", required: true, example: "mfg (留空 = 集团总部 / blank = Group HQ)" },
       { key: "year", required: true, example: "2026" },
       { key: "month", required: true, example: "1" },
       { key: "ocf", required: true, example: "120.0" },

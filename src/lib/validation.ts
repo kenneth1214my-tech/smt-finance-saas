@@ -187,6 +187,8 @@ export const bankAccountSchema = z.object({
 });
 
 export const cashFlowMonthlySchema = z.object({
+  // null = group/HQ-level, not tied to any single subsidiary.
+  subsidiaryId: z.preprocess((v) => (v === "" ? null : v), z.string().trim().min(1).nullable().optional()),
   year: z.coerce.number().int().min(2000).max(2100),
   month: z.coerce.number().int().min(1).max(12),
   ocf: z.coerce.number(),

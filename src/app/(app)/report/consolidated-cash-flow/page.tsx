@@ -20,7 +20,7 @@ export default async function ConsolidatedCashFlowPage(props: PageProps<"/report
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const fmtM = (n: number) => fmtMoney(n, locale);
 
-  const report = await computeConsolidatedCashFlow(user.organizationId, year);
+  const report = await computeConsolidatedCashFlow(user.organizationId, year, locale);
 
   const title = isZh ? "合并现金流量表" : "Consolidated Cash Flow Statement";
 
@@ -80,11 +80,43 @@ export default async function ConsolidatedCashFlowPage(props: PageProps<"/report
           </div>
         </Card>
 
-        <div className="rounded-2xl border p-4 text-[12.5px]" style={{ borderColor: "var(--border)", color: "var(--ink-400)" }}>
-          {isZh
-            ? "现金流量按集团整体记录，暂无法按子公司/总部拆分明细。"
-            : "Cash flow is tracked at the group level only — no per-entity breakdown is available yet."}
-        </div>
+        <Card title={isZh ? "按主体拆分" : "Breakdown by Entity"} unit={dict.common.yi}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12.6px]">
+              <thead>
+                <tr className="text-left text-[11.3px] font-semibold" style={{ color: "var(--ink-400)" }}>
+                  <th className="pb-2">{isZh ? "主体" : "Entity"}</th>
+                  <th className="pb-2 text-right">{dict.m.ocf}</th>
+                  <th className="pb-2 text-right">{dict.m.icfNet}</th>
+                  <th className="pb-2 text-right">{dict.m.fcfNet}</th>
+                  <th className="pb-2 text-right">{isZh ? "现金净变动" : "Net Change"}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.byEntity.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="py-4 text-center text-[12px]" style={{ color: "var(--ink-400)" }}>
+                      {isZh ? "暂无现金流数据" : "No cash flow data on file yet"}
+                    </td>
+                  </tr>
+                )}
+                {report.byEntity.map((row) => (
+                  <tr key={row.id} className="border-t" style={{ borderColor: "var(--border)" }}>
+                    <td className="py-2.5 font-semibold" style={{ color: "var(--ink-900)" }}>
+                      {row.name}
+                    </td>
+                    <td className="tabular-nums py-2.5 text-right">{fmtM(row.ocf)}</td>
+                    <td className="tabular-nums py-2.5 text-right">{fmtM(row.icf)}</td>
+                    <td className="tabular-nums py-2.5 text-right">{fmtM(row.fcf)}</td>
+                    <td className="tabular-nums py-2.5 text-right font-bold" style={{ color: row.netChange < 0 ? "var(--status-critical)" : undefined }}>
+                      {fmtM(row.netChange)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       </div>
     </>
   );

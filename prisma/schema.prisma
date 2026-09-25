@@ -215,6 +215,7 @@ model Subsidiary {
   riskAlerts        RiskAlert[]
   xeroConnection    XeroConnection?
   bankAccounts      BankAccount[]
+  cashFlows         CashFlowMonthly[]
 
   @@unique([organizationId, key])
 }
@@ -325,13 +326,20 @@ model CashFlowMonthly {
   id             String       @id @default(cuid())
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
+  // null = group/HQ-level cash flow, not tied to any single subsidiary (mirrors
+  // MonthlyFinancial.subsidiaryId) — added because the org-wide-only version let two imports for
+  // the same period (one HQ, one a subsidiary) silently overwrite each other instead of summing,
+  // since the old unique key was just (organizationId, year, month) with no entity dimension.
+  subsidiaryId   String?
+  subsidiary     Subsidiary?  @relation(fields: [subsidiaryId], references: [id])
   year           Int
   month          Int
   ocf            Decimal      @db.Decimal(14, 2)
   icf            Decimal      @db.Decimal(14, 2)
   fcf            Decimal      @db.Decimal(14, 2)
 
-  @@unique([organizationId, year, month])
+  @@unique([subsidiaryId, year, month])
+  @@index([organizationId])
 }
 
 model ARCustomer {
