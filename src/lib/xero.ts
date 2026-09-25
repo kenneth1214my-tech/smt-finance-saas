@@ -85,17 +85,19 @@ export interface XeroReport {
   Rows: XeroReportRow[];
 }
 
-// Xero enforces a per-minute call quota AND a per-day quota (5000 calls/day per app) per tenant;
-// a multi-month/multi-contact sync can burst past either. On 429, back off and retry a few times
-// (honoring Retry-After when Xero sends one) instead of failing the whole sync outright — but
-// Xero's Retry-After for a DAILY-quota breach can be minutes to hours (the limit resets on a
-// fixed schedule, not a rolling window like the per-minute one), and blindly sleeping for that
-// full duration inside a single serverless invocation just burns the entire function timeout in
-// silence — no error, no progress, nothing in the logs, indistinguishable from a genuine hang
-// (confirmed in production: a sync sat doing nothing for the full 300s platform limit with no
-// diagnostic at all). Cap the wait so a short per-minute throttle still gets a real retry, but a
-// long daily-quota wait fails fast with a clear, actionable error instead.
-const MAX_RETRY_WAIT_SEC = 10;
+// Xero enforces a per-minute call quota (60/60s) AND a per-day quota (5000 calls/day per app) per
+// tenant; a multi-month/multi-contact sync can burst past either. On 429, back off and retry a
+// few times (honoring Retry-After when Xero sends one) instead of failing the whole sync
+// outright — but Xero's Retry-After for a DAILY-quota breach can be minutes to hours (it resets
+// on a fixed schedule, not a rolling window like the per-minute one), and blindly sleeping for
+// that full duration inside a single serverless invocation just burns the entire function
+// timeout in silence — no error, no progress, nothing in the logs, indistinguishable from a
+// genuine hang (confirmed in production: a sync sat doing nothing for the full 300s platform
+// limit with no diagnostic at all). Cap the wait comfortably above the per-minute window (60s) —
+// confirmed in production that a burst of P&L calls right before a later step can trigger a
+// ~45s Retry-After, which is worth actually waiting out — while a wait far beyond that (minutes
+// to hours) is clearly the daily quota instead and fails fast with a clear, actionable error.
+const MAX_RETRY_WAIT_SEC = 65;
 
 async function xeroGet(accessToken: string, tenantId: string, url: string): Promise<unknown> {
   const maxAttempts = 4;
