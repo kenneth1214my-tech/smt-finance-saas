@@ -68,6 +68,9 @@ export default function SettingsClient({
   xeroGroupTenantName,
   xeroGroupLastSyncAt,
   xeroGroupLastSyncError,
+  xeroGroupArApCycleStartedAt,
+  xeroGroupArApLastBatchAt,
+  xeroGroupArApLastBatchError,
   xeroConfigured,
   expenseCategoryMappings,
 }: {
@@ -107,6 +110,9 @@ export default function SettingsClient({
   xeroGroupTenantName: string | null;
   xeroGroupLastSyncAt: string | null;
   xeroGroupLastSyncError: string | null;
+  xeroGroupArApCycleStartedAt: string | null;
+  xeroGroupArApLastBatchAt: string | null;
+  xeroGroupArApLastBatchError: string | null;
   xeroConfigured: boolean;
   expenseCategoryMappings: ExpenseCategoryMapping[];
 }) {
@@ -199,6 +205,9 @@ export default function SettingsClient({
           xeroGroupTenantName={xeroGroupTenantName}
           xeroGroupLastSyncAt={xeroGroupLastSyncAt}
           xeroGroupLastSyncError={xeroGroupLastSyncError}
+          xeroGroupArApCycleStartedAt={xeroGroupArApCycleStartedAt}
+          xeroGroupArApLastBatchAt={xeroGroupArApLastBatchAt}
+          xeroGroupArApLastBatchError={xeroGroupArApLastBatchError}
           xeroConfigured={xeroConfigured}
           expenseCategoryMappings={expenseCategoryMappings}
         />
@@ -1498,6 +1507,9 @@ function DataTab({
   xeroGroupTenantName,
   xeroGroupLastSyncAt,
   xeroGroupLastSyncError,
+  xeroGroupArApCycleStartedAt,
+  xeroGroupArApLastBatchAt,
+  xeroGroupArApLastBatchError,
   xeroConfigured,
   expenseCategoryMappings,
 }: {
@@ -1510,6 +1522,9 @@ function DataTab({
   xeroGroupTenantName: string | null;
   xeroGroupLastSyncAt: string | null;
   xeroGroupLastSyncError: string | null;
+  xeroGroupArApCycleStartedAt: string | null;
+  xeroGroupArApLastBatchAt: string | null;
+  xeroGroupArApLastBatchError: string | null;
   xeroConfigured: boolean;
   expenseCategoryMappings: ExpenseCategoryMapping[];
 }) {
@@ -1544,6 +1559,20 @@ function DataTab({
         });
     }
     router.replace("/settings?tab=data");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Advances the AR/AP resumable-cursor sync by one batch per connection (see runArApBatch in
+  // xero-sync.ts). Vercel's Hobby plan caps cron jobs at once per day — far too slow to cycle
+  // through a large contact list — so this page view itself is the trigger instead; the route
+  // throttles to at most once every few minutes per connection, so repeat visits don't multiply
+  // real Xero API usage. Fire-and-forget: refreshes the page afterward so the status lines below
+  // pick up the new progress, but nothing here blocks the page from rendering immediately.
+  useEffect(() => {
+    if (!xeroGroupConnected && xeroConnections.every((c) => !c.connectedAt)) return;
+    fetch("/api/admin/erp/xero/ar-ap-batch-tick", { method: "POST" })
+      .then(() => router.refresh())
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1676,6 +1705,20 @@ function DataTab({
                       : "Auto-syncs daily · Not synced yet — click \"Sync all\" to run it now"}
               </div>
             )}
+            {xeroGroupConnected && (xeroGroupArApCycleStartedAt || xeroGroupArApLastBatchAt) && (
+              <div className="flex items-center gap-1.5 text-[11px]" style={{ color: xeroGroupArApLastBatchError ? "var(--status-critical)" : "var(--ink-400)" }}>
+                {isZh ? "应收/应付后台同步" : "AR/AP background sync"}
+                {": "}
+                {xeroGroupArApCycleStartedAt
+                  ? isZh
+                    ? `进行中，本轮开始于 ${relativeTime(xeroGroupArApCycleStartedAt, isZh)}（联系人数量较多，按批次每 5 分钟推进一次，无需人工操作）`
+                    : `in progress, this cycle started ${relativeTime(xeroGroupArApCycleStartedAt, isZh)} (too many contacts to sync live at once — advances one batch every 5 minutes, no manual step needed)`
+                  : isZh
+                    ? `已完成本轮，上次批次：${relativeTime(xeroGroupArApLastBatchAt, isZh)}`
+                    : `up to date, last batch ${relativeTime(xeroGroupArApLastBatchAt, isZh)}`}
+                {xeroGroupArApLastBatchError ? ` — ${xeroGroupArApLastBatchError}` : ""}
+              </div>
+            )}
           </div>
           <div className="pt-1 text-[11.5px] font-semibold" style={{ color: "var(--ink-400)" }}>
             {isZh ? "子公司" : "Subsidiaries"}
@@ -1743,6 +1786,20 @@ function DataTab({
                         : isZh
                           ? "每日自动同步 · 尚未同步过，请点击「全部同步」立即同步一次"
                           : "Auto-syncs daily · Not synced yet — click \"Sync all\" to run it now"}
+                  </div>
+                )}
+                {connected && (conn?.arApCycleStartedAt || conn?.arApLastBatchAt) && (
+                  <div className="flex items-center gap-1.5 text-[11px]" style={{ color: conn?.arApLastBatchError ? "var(--status-critical)" : "var(--ink-400)" }}>
+                    {isZh ? "应收/应付后台同步" : "AR/AP background sync"}
+                    {": "}
+                    {conn?.arApCycleStartedAt
+                      ? isZh
+                        ? `进行中，本轮开始于 ${relativeTime(conn.arApCycleStartedAt, isZh)}`
+                        : `in progress, this cycle started ${relativeTime(conn.arApCycleStartedAt, isZh)}`
+                      : isZh
+                        ? `已完成本轮，上次批次：${relativeTime(conn?.arApLastBatchAt, isZh)}`
+                        : `up to date, last batch ${relativeTime(conn?.arApLastBatchAt, isZh)}`}
+                    {conn?.arApLastBatchError ? ` — ${conn.arApLastBatchError}` : ""}
                   </div>
                 )}
               </div>

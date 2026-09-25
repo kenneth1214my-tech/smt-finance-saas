@@ -347,6 +347,16 @@ model ARCustomer {
   agingDays      Int
   status         RiskSeverity @default(GOOD)
   createdAt      DateTime     @default(now())
+  // Xero's own contact id — set only for rows the background AR/AP cursor sync wrote (see
+  // xero-sync.ts's syncArApBatch); null for manually-imported rows. Lets the batch cursor
+  // recognize "this specific Xero contact" reliably even if its display name is edited, instead
+  // of matching on nameZh alone the way the manual import path still does.
+  contactId      String?
+  // Last time the background AR/AP cursor sync touched this row — null for a row only the manual
+  // import has ever written. Compared against XeroConnection/XeroGroupConnection.arApCycleStartedAt
+  // to tell "already refreshed this cycle" apart from "still pending" without needing a separate
+  // page/offset cursor (see syncArApBatch).
+  syncedAt       DateTime?
 
   @@index([organizationId])
 }
@@ -366,6 +376,9 @@ model Payable {
   agingDays      Int
   status         RiskSeverity @default(GOOD)
   createdAt      DateTime     @default(now())
+  // See ARCustomer.contactId/syncedAt above — same purpose, mirrored for payables.
+  contactId      String?
+  syncedAt       DateTime?
 
   @@index([organizationId])
 }
@@ -512,6 +525,19 @@ model XeroConnection {
   // failing or never-running sync looked identical to a healthy one from the UI.
   lastSyncAt     DateTime?
   lastSyncError  String?      @db.Text
+  // When the current AR/AP background sweep began — see xero-sync.ts's syncArApBatch. A contact
+  // whose ARCustomer/Payable row has syncedAt before this timestamp (or no row at all) is still
+  // pending in the current cycle; once none remain, the cycle closes (pruning contacts Xero no
+  // longer reports a balance for) and this resets to start the next one. Exists because some
+  // entities have too many AR/AP contacts to refresh live within one request (Xero has no bulk
+  // per-contact aging endpoint, and rate-limits at 60 calls/minute) — this cursor spreads the
+  // full refresh across many small cron ticks instead of requiring a manual bulk-file import.
+  arApCycleStartedAt DateTime?
+  // Cheap, DB-only visibility into the AR/AP batch cron for the Settings UI — computing "how many
+  // contacts are pending" on every page load would itself require a live Xero contacts fetch, so
+  // instead the cron just records its own last tick's outcome here each time it runs.
+  arApLastBatchAt    DateTime?
+  arApLastBatchError String?      @db.Text
   updatedAt      DateTime     @updatedAt
 }
 
@@ -532,6 +558,11 @@ model XeroGroupConnection {
   // lastSyncAt/lastSyncError, added once the group-level connection actually gained a sync path.
   lastSyncAt     DateTime?
   lastSyncError  String?      @db.Text
+  // See XeroConnection.arApCycleStartedAt/arApLastBatchAt/arApLastBatchError — same AR/AP
+  // background-cursor mechanism, for HQ.
+  arApCycleStartedAt DateTime?
+  arApLastBatchAt    DateTime?
+  arApLastBatchError String?      @db.Text
   updatedAt      DateTime     @updatedAt
 }
 

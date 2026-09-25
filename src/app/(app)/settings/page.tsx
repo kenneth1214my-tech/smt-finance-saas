@@ -112,6 +112,9 @@ export default async function SettingsPage() {
           xeroGroupTenantName={xeroGroupConnection?.tenantName ?? null}
           xeroGroupLastSyncAt={xeroGroupConnection?.lastSyncAt ? xeroGroupConnection.lastSyncAt.toISOString() : null}
           xeroGroupLastSyncError={xeroGroupConnection?.lastSyncError ?? null}
+          xeroGroupArApCycleStartedAt={xeroGroupConnection?.arApCycleStartedAt ? xeroGroupConnection.arApCycleStartedAt.toISOString() : null}
+          xeroGroupArApLastBatchAt={xeroGroupConnection?.arApLastBatchAt ? xeroGroupConnection.arApLastBatchAt.toISOString() : null}
+          xeroGroupArApLastBatchError={xeroGroupConnection?.arApLastBatchError ?? null}
           xeroConfigured={isXeroConfigured()}
           expenseCategoryMappings={toPlain(expenseCategoryMappings)}
         />

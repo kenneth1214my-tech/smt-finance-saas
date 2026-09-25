@@ -450,3 +450,154 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
     errors,
   };
 }
+
+export interface ArApBatchResult {
+  ok: boolean;
+  processed: number;
+  pendingBefore: number;
+  cycleComplete: boolean;
+  errors: string[];
+}
+
+// Resumable AR/AP sync — the real fix for entities with too many contacts to fetch live within
+// one request (see MAX_LIVE_AGING_CONTACTS above and syncSubsidiaryFromXero/syncGroupFromXero's
+// AR/AP step, which just skips entirely past that cap). Xero has no bulk "aged balances for
+// every contact" endpoint, so refreshing N contacts always costs N API calls no matter how the
+// code is written — the fix isn't to make each call cheaper, it's to spread them across many
+// small, safe batches (one per cron tick) instead of requiring them all inside one HTTP request.
+//
+// Unlike the other sync steps, this does NOT delete-then-recreate every row on each run — that
+// would wipe out every contact not yet reached in the current pass. Instead it upserts one
+// contact's row at a time and stamps it with `syncedAt`, using `arApCycleStartedAt` (on the
+// connection) as the dividing line between "already refreshed this cycle" and "still pending".
+// Once nothing is left pending, the cycle closes: any row not touched this cycle is pruned (Xero
+// no longer reports a balance for that contact) and the cursor resets to start the next cycle
+// immediately — so, ticking every few minutes, this asymptotically approaches full, real,
+// per-contact freshness for every entity regardless of contact count, with no manual import step
+// and no permanent gap for older/smaller-balance contacts the way a "recent months only" or
+// "top N by balance" shortcut would leave behind.
+async function runArApBatch(
+  accessToken: string,
+  tenantId: string,
+  organizationId: string,
+  subsidiaryId: string | null,
+  cycleStartedAt: Date | null,
+  batchSize: number
+): Promise<ArApBatchResult & { newCycleStartedAt: Date | null }> {
+  const errors: string[] = [];
+  const batchStartedAt = new Date();
+  const effectiveCycleStart = cycleStartedAt ?? batchStartedAt;
+
+  const contacts = await fetchAllContacts(accessToken, tenantId);
+  const arContacts = contacts.filter((c) => c.IsCustomer && Number(c.Balances?.AccountsReceivable?.Outstanding ?? 0) > 0);
+  const apContacts = contacts.filter((c) => c.IsSupplier && Number(c.Balances?.AccountsPayable?.Outstanding ?? 0) > 0);
+
+  const [existingAr, existingAp] = await Promise.all([
+    db.aRCustomer.findMany({ where: { organizationId, subsidiaryId } }),
+    db.payable.findMany({ where: { organizationId, subsidiaryId } }),
+  ]);
+  const arByContactId = new Map(existingAr.filter((r) => r.contactId).map((r) => [r.contactId as string, r]));
+  const apByContactId = new Map(existingAp.filter((r) => r.contactId).map((r) => [r.contactId as string, r]));
+  // Manually-imported rows (e.g. the "Smart AR Aging import" upload) have no contactId yet — fall
+  // back to matching by name so the first live-synced pass merges into that existing row instead
+  // of creating a duplicate, same natural key the manual import path itself uses.
+  const arByName = new Map(existingAr.filter((r) => !r.contactId).map((r) => [r.nameZh, r]));
+  const apByName = new Map(existingAp.filter((r) => !r.contactId).map((r) => [r.nameZh, r]));
+
+  const isDone = (row: { syncedAt: Date | null } | undefined) => Boolean(row?.syncedAt && row.syncedAt >= effectiveCycleStart);
+  const pendingAr = arContacts.filter((c) => !isDone(arByContactId.get(c.ContactID)));
+  const pendingAp = apContacts.filter((c) => !isDone(apByContactId.get(c.ContactID)));
+  const pendingBefore = pendingAr.length + pendingAp.length;
+
+  const arBatch = pendingAr.slice(0, batchSize);
+  const apBatch = pendingAp.slice(0, Math.max(0, batchSize - arBatch.length));
+
+  let processed = 0;
+  for (const c of arBatch) {
+    try {
+      const report = await fetchXeroAgedReceivablesByContact(accessToken, tenantId, c.ContactID);
+      const agingDays = oldestDueAgingDays(report);
+      const data = {
+        nameZh: c.Name,
+        nameEn: c.Name,
+        balance: Number(c.Balances?.AccountsReceivable?.Outstanding ?? 0),
+        agingDays,
+        status: statusFromAgingDays(agingDays),
+        contactId: c.ContactID,
+        syncedAt: batchStartedAt,
+      };
+      const existing = arByContactId.get(c.ContactID) ?? arByName.get(c.Name);
+      if (existing) await db.aRCustomer.update({ where: { id: existing.id }, data });
+      else await db.aRCustomer.create({ data: { ...data, organizationId, subsidiaryId } });
+      processed++;
+    } catch (err) {
+      errors.push(`AR contact "${c.Name}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  for (const c of apBatch) {
+    try {
+      const report = await fetchXeroAgedPayablesByContact(accessToken, tenantId, c.ContactID);
+      const agingDays = oldestDueAgingDays(report);
+      const data = {
+        nameZh: c.Name,
+        nameEn: c.Name,
+        balance: Number(c.Balances?.AccountsPayable?.Outstanding ?? 0),
+        agingDays,
+        status: statusFromAgingDays(agingDays),
+        contactId: c.ContactID,
+        syncedAt: batchStartedAt,
+      };
+      const existing = apByContactId.get(c.ContactID) ?? apByName.get(c.Name);
+      if (existing) await db.payable.update({ where: { id: existing.id }, data });
+      else await db.payable.create({ data: { ...data, organizationId, subsidiaryId } });
+      processed++;
+    } catch (err) {
+      errors.push(`AP contact "${c.Name}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  const cycleComplete = processed >= pendingBefore;
+  if (cycleComplete) {
+    // Prune rows this cycle should have refreshed but Xero no longer lists a balance for — only
+    // ones the live sync has ever owned (contactId set); a manual-import row never picked up by
+    // a live contact match stays untouched rather than being silently deleted.
+    await db.aRCustomer.deleteMany({ where: { organizationId, subsidiaryId, contactId: { not: null }, OR: [{ syncedAt: null }, { syncedAt: { lt: effectiveCycleStart } }] } });
+    await db.payable.deleteMany({ where: { organizationId, subsidiaryId, contactId: { not: null }, OR: [{ syncedAt: null }, { syncedAt: { lt: effectiveCycleStart } }] } });
+  }
+
+  return {
+    ok: errors.length === 0,
+    processed,
+    pendingBefore,
+    cycleComplete,
+    errors,
+    newCycleStartedAt: cycleComplete ? null : effectiveCycleStart,
+  };
+}
+
+// One safe batch per call — sized so a single tick's worth of API calls (contact list pagination
+// plus this many aged-report calls) stays comfortably under Xero's 60-calls/minute cap even
+// alongside whatever else is sharing that budget.
+const AR_AP_BATCH_SIZE = 40;
+
+export async function syncArApBatchForSubsidiary(subsidiaryId: string, organizationId: string): Promise<ArApBatchResult> {
+  const connection = await db.xeroConnection.findUnique({ where: { subsidiaryId } });
+  if (!connection || !connection.connectedAt || !connection.tenantId) {
+    return { ok: false, processed: 0, pendingBefore: 0, cycleComplete: false, errors: ["not_connected"] };
+  }
+  const accessToken = await getValidXeroAccessToken(connection);
+  const result = await runArApBatch(accessToken, connection.tenantId, organizationId, subsidiaryId, connection.arApCycleStartedAt, AR_AP_BATCH_SIZE);
+  await db.xeroConnection.update({ where: { id: connection.id }, data: { arApCycleStartedAt: result.newCycleStartedAt } });
+  return result;
+}
+
+export async function syncArApBatchForGroup(organizationId: string): Promise<ArApBatchResult> {
+  const connection = await db.xeroGroupConnection.findUnique({ where: { organizationId } });
+  if (!connection || !connection.connectedAt || !connection.tenantId) {
+    return { ok: false, processed: 0, pendingBefore: 0, cycleComplete: false, errors: ["not_connected"] };
+  }
+  const accessToken = await getValidXeroGroupAccessToken(connection);
+  const result = await runArApBatch(accessToken, connection.tenantId, organizationId, null, connection.arApCycleStartedAt, AR_AP_BATCH_SIZE);
+  await db.xeroGroupConnection.update({ where: { id: connection.id }, data: { arApCycleStartedAt: result.newCycleStartedAt } });
+  return result;
+}
