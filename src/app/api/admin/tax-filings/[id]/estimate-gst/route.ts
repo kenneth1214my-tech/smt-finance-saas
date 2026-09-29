@@ -5,6 +5,13 @@ import { getValidXeroAccessToken, getValidXeroGroupAccessToken } from "@/lib/xer
 import { fetchXeroGstTaxTotal } from "@/lib/xero";
 import { parseGstPeriodLabel } from "@/lib/tax";
 
+// BLOCKED: this route has no UI entry point right now, and will always fail if called. It needs
+// the accounting.transactions.read scope, which Xero's authorize endpoint rejects outright with
+// invalid_scope for this app's current registration (confirmed live — see the comment on SCOPES
+// in xero.ts). Fixing that requires reconfiguring the app in the Xero Developer Portal, which is
+// outside what application code can do. Left in place (dormant, not wired into any button) in
+// case that gets reconfigured later — delete this route and fetchXeroGstTaxTotal together if not.
+//
 // Covers a quarter's worth of paginated Invoices fetches (two types x however many pages), plus
 // Xero's own 429 backoff — same headroom as the other Xero sync routes.
 export const maxDuration = 120;
