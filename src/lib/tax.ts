@@ -45,6 +45,41 @@ export function computeCorporateTax(chargeableIncomeInput: number, taxRatePct: n
   return { chargeableIncome: chargeableIncomeInput, exemptAmount, taxableAfterExemption, grossTax, rebateAmount, netTaxPayable, effectiveRatePct };
 }
 
+export interface GstQuarter {
+  periodLabel: string;
+  quarterStart: Date;
+  quarterEnd: Date;
+  dueDate: Date;
+}
+
+// Singapore's default GST filing cycle is quarterly, due on the last day of the month following
+// the quarter's end (e.g. Q1 Jan-Mar due 30 Apr). Some businesses file monthly/half-yearly
+// instead (not modelled here) — this only drives an auto-created DRAFT TaxFiling row, which stays
+// fully editable/deletable like any other filing, so a wrong cadence for a given entity is a
+// one-click fix, not a silent bad number.
+export function gstQuarterFor(year: number, quarterNum: 1 | 2 | 3 | 4): GstQuarter {
+  const q = quarterNum - 1;
+  const quarterStart = new Date(year, q * 3, 1);
+  const quarterEnd = new Date(year, q * 3 + 3, 0); // day 0 of the month after the quarter = its last day
+  const dueDate = new Date(year, q * 3 + 4, 0); // one month later again
+  return { periodLabel: `${year} Q${quarterNum}`, quarterStart, quarterEnd, dueDate };
+}
+
+export function currentGstQuarter(now: Date = new Date()): GstQuarter {
+  const quarterNum = (Math.floor(now.getMonth() / 3) + 1) as 1 | 2 | 3 | 4;
+  return gstQuarterFor(now.getFullYear(), quarterNum);
+}
+
+// Recovers a quarter's date range from a TaxFiling.periodLabel written in the "YYYY QN" format
+// currentGstQuarter produces — used to know which date range to pull Xero transactions for when
+// estimating a filing's tax figures after the fact. Returns null for a custom/manually-typed
+// period label (e.g. a half-yearly or monthly filer), since there's nothing safe to assume then.
+export function parseGstPeriodLabel(periodLabel: string): GstQuarter | null {
+  const m = /^(\d{4})\s+Q([1-4])$/.exec(periodLabel.trim());
+  if (!m) return null;
+  return gstQuarterFor(Number(m[1]), Number(m[2]) as 1 | 2 | 3 | 4);
+}
+
 export type TaxFilingStatusComputed = "UPCOMING" | "FILED" | "OVERDUE" | "PAID";
 
 // A filing's stored `status` is the source of truth once it's FILED or PAID (a human action, not

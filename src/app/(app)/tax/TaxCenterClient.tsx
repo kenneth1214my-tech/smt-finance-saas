@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Sparkles } from "lucide-react";
 import type { Subsidiary, CorporateTaxProvision, TaxFiling, DeferredTaxItem } from "@prisma/client";
 import type { Locale, DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { fmtMoney } from "@/lib/i18n/dictionaries";
@@ -41,6 +43,7 @@ export default function TaxCenterClient({
   provisions,
   filings,
   deferredItems,
+  netProfitByEntity,
 }: {
   locale: Locale;
   unit: string;
@@ -49,10 +52,78 @@ export default function TaxCenterClient({
   provisions: ProvisionRow[];
   filings: FilingRow[];
   deferredItems: DeferredRow[];
+  netProfitByEntity: Record<string, Record<number, number>>;
 }) {
   const isZh = locale === "zh" || locale === "zh-Hant";
   const [tab, setTab] = useState<"provision" | "filing" | "deferred">("provision");
   const fmtM = (n: number) => fmtMoney(n, locale);
+  const router = useRouter();
+  const [genYear, setGenYear] = useState(String(new Date().getFullYear()));
+  const [genBusy, setGenBusy] = useState(false);
+  const [genMessage, setGenMessage] = useState("");
+  const [estimatingId, setEstimatingId] = useState<string | null>(null);
+  const [estimateError, setEstimateError] = useState("");
+
+  async function estimateGst(filingId: string, refresh: () => void) {
+    setEstimatingId(filingId);
+    setEstimateError("");
+    const res = await fetch(`/api/admin/tax-filings/${filingId}/estimate-gst`, { method: "POST" });
+    setEstimatingId(null);
+    if (res.ok) {
+      refresh();
+      return;
+    }
+    const body = await res.json().catch(() => ({}));
+    setEstimateError(
+      body.error === "xero_not_connected"
+        ? isZh
+          ? "该主体尚未连接Xero，或需要重新连接以授权新增的交易读取权限"
+          : "Xero isn't connected for this entity, or needs reconnecting to grant the new transactions permission"
+        : body.error === "unrecognized_period"
+          ? isZh
+            ? "期间格式无法识别（非自动生成的\"YYYY QN\"格式），无法自动估算"
+            : 'Period label isn\'t in the auto-generated "YYYY QN" format, so it can\'t be auto-estimated'
+          : (body.message as string | undefined) || (isZh ? "估算失败" : "Estimate failed")
+    );
+  }
+
+  async function generateDraftProvisions() {
+    const year = Number(genYear);
+    if (!Number.isInteger(year)) return;
+    setGenBusy(true);
+    setGenMessage("");
+    const entities = [{ subsidiaryId: null as string | null }, ...subsidiaries.map((s) => ({ subsidiaryId: s.id }))];
+    const existingKeys = new Set(provisions.filter((p) => p.year === year).map((p) => p.subsidiaryId ?? "HQ"));
+    let created = 0;
+    let skippedNoData = 0;
+    for (const e of entities) {
+      const key = e.subsidiaryId ?? "HQ";
+      if (existingKeys.has(key)) continue;
+      const netProfit = netProfitByEntity[key]?.[year];
+      if (netProfit === undefined) {
+        skippedNoData++;
+        continue;
+      }
+      const res = await fetch("/api/admin/corporate-tax-provisions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subsidiaryId: e.subsidiaryId ?? "",
+          year,
+          chargeableIncome: netProfit,
+          notes: isZh ? "根据Xero已同步的净利润(税前)自动生成草稿，请核对税务调整项后再确认" : "Draft generated from Xero-synced net profit before tax — review tax adjustments before relying on this figure",
+        }),
+      });
+      if (res.ok) created++;
+    }
+    setGenBusy(false);
+    setGenMessage(
+      isZh
+        ? `已生成 ${created} 条草稿记录${skippedNoData > 0 ? `，${skippedNoData} 个主体暂无该年度的Xero同步数据` : ""}`
+        : `Generated ${created} draft row(s)${skippedNoData > 0 ? `; ${skippedNoData} entit${skippedNoData === 1 ? "y has" : "ies have"} no Xero-synced data for that year` : ""}`
+    );
+    if (created > 0) router.refresh();
+  }
 
   // null subsidiaryId = a group/HQ-level filing obligation (Singapore doesn't allow a group
   // tax return — every entity, HQ included, files its own).
@@ -211,24 +282,88 @@ export default function TaxCenterClient({
         </div>
 
         {tab === "provision" && (
-          <CrudTable
-            apiBase="/api/admin/corporate-tax-provisions"
-            fields={provisionFields}
-            tableKeys={provisionTableKeys}
-            initialRows={provisions as unknown as Row[]}
-            emptyLabel={dict.m.taxNoProvisionData}
-            addLabel={isZh ? "新增预提记录" : "Add provision"}
-          />
+          <>
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border p-2.5" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
+              <Sparkles size={14} style={{ color: "var(--cat-1)" }} />
+              <span className="text-[12px] font-semibold" style={{ color: "var(--ink-900)" }}>
+                {isZh ? "从Xero已同步财务数据生成草稿" : "Generate drafts from Xero-synced financials"}
+              </span>
+              <input
+                type="number"
+                value={genYear}
+                onChange={(e) => setGenYear(e.target.value)}
+                className="w-[90px] rounded-lg border py-1.5 px-2.5 text-[12.3px]"
+                style={{ borderColor: "var(--border-strong)", background: "var(--surface)", color: "var(--ink-900)" }}
+              />
+              <button
+                onClick={generateDraftProvisions}
+                disabled={genBusy}
+                className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
+                style={{ background: "var(--cat-1)" }}
+              >
+                {isZh ? "生成" : "Generate"}
+              </button>
+              {genMessage && (
+                <span className="text-[11.5px]" style={{ color: "var(--ink-400)" }}>
+                  {genMessage}
+                </span>
+              )}
+              <span className="basis-full text-[11px]" style={{ color: "var(--ink-400)" }}>
+                {isZh
+                  ? "为尚未有记录的主体，以该年度Xero已同步的净利润(税前)作为应纳税所得额估算值创建草稿 — 仅为起点，请审阅税务调整项后再核实。"
+                  : "Creates a draft provision (chargeable income = that entity's Xero-synced net profit before tax for the year) for any entity that doesn't already have one — a starting point only, review tax adjustments before relying on it."}
+              </span>
+            </div>
+            <CrudTable
+              apiBase="/api/admin/corporate-tax-provisions"
+              fields={provisionFields}
+              tableKeys={provisionTableKeys}
+              initialRows={provisions as unknown as Row[]}
+              emptyLabel={dict.m.taxNoProvisionData}
+              addLabel={isZh ? "新增预提记录" : "Add provision"}
+            />
+          </>
         )}
         {tab === "filing" && (
-          <CrudTable
-            apiBase="/api/admin/tax-filings"
-            fields={filingFields}
-            tableKeys={filingTableKeys}
-            initialRows={filings as unknown as Row[]}
-            emptyLabel={dict.m.taxNoFilingData}
-            addLabel={isZh ? "新增申报记录" : "Add filing"}
-          />
+          <>
+            <div className="mb-3 flex items-center gap-2 rounded-lg border p-2.5" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
+              <Sparkles size={14} style={{ color: "var(--cat-1)" }} />
+              <span className="text-[11.5px]" style={{ color: "var(--ink-400)" }}>
+                {isZh
+                  ? "点击 GST F5 行操作栏中的 图标，从Xero交易数据自动估算销项/进项税额（需已连接Xero，且已授权交易读取权限）。"
+                  : "Click the icon in a GST F5 row's actions to auto-estimate output/input tax from Xero transactions (requires Xero connected with the transactions-read permission granted)."}
+              </span>
+            </div>
+            {estimateError && (
+              <div className="mb-3 rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: "color-mix(in srgb,var(--status-critical) 12%,transparent)", color: "var(--status-critical)" }}>
+                {estimateError}
+              </div>
+            )}
+            <CrudTable
+              apiBase="/api/admin/tax-filings"
+              fields={filingFields}
+              tableKeys={filingTableKeys}
+              initialRows={filings as unknown as Row[]}
+              emptyLabel={dict.m.taxNoFilingData}
+              addLabel={isZh ? "新增申报记录" : "Add filing"}
+              rowActions={(row, refresh) => {
+                if (row.type !== "GST_F5") return null;
+                const busy = estimatingId === String(row.id);
+                return (
+                  <button
+                    key="estimate-gst"
+                    onClick={() => estimateGst(String(row.id), refresh)}
+                    disabled={busy}
+                    title={isZh ? "从Xero交易数据估算" : "Estimate from Xero transactions"}
+                    className="rounded-md p-1.5 disabled:opacity-50"
+                    style={{ background: "color-mix(in srgb, var(--cat-1) 14%, transparent)", color: "var(--cat-1)" }}
+                  >
+                    <Sparkles size={13} />
+                  </button>
+                );
+              }}
+            />
+          </>
         )}
         {tab === "deferred" && (
           <CrudTable

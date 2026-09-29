@@ -110,6 +110,7 @@ export default function CrudTable({
   addLabel,
   exportLabel,
   defaultSearch,
+  rowActions,
 }: {
   apiBase: string;
   fields: FieldConfig[];
@@ -124,6 +125,11 @@ export default function CrudTable({
   /** Prefills the search box — lets another page deep-link straight to a specific row (e.g. an
    * "Edit" link on the AR/AP dashboard) instead of landing on an unfiltered list. */
   defaultSearch?: string;
+  /** Extra buttons rendered before Edit/Delete in a row's action cell — e.g. a per-row automation
+   * trigger (return null for rows it doesn't apply to). Receives the plain row and a refresh
+   * callback for after it completes its own fetch (the row's own data isn't reloaded any other
+   * way, since this action bypasses buildPayload/submitEdit entirely). */
+  rowActions?: (row: Record<string, unknown>, refresh: () => void) => React.ReactNode;
 }) {
   const displayFields = tableKeys ? fields.filter((f) => tableKeys.includes(f.key)) : fields;
   const router = useRouter();
@@ -484,6 +490,7 @@ export default function CrudTable({
                   })}
                   <td className="whitespace-nowrap py-2 text-right">
                     <div className="flex justify-end gap-1.5">
+                      {rowActions?.(row, () => router.refresh())}
                       <button onClick={() => startEdit(row)} className="rounded-md p-1.5" style={{ background: "var(--surface-2)" }}>
                         <Pencil size={13} />
                       </button>

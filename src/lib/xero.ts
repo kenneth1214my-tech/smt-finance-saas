@@ -13,8 +13,16 @@ const CONNECTIONS_URL = "https://api.xero.com/connections";
 // Xero's authorize endpoint. /connections works fine without it: any valid access token can
 // query which tenants it's connected to. The rest covers what a future sync would need (P&L,
 // balance sheet, aged AR/AP, contact names).
+// accounting.transactions.read was added to support estimating GST F5 output/input tax from raw
+// Invoices (see fetchXeroGstTaxTotal) — Xero has no GST report endpoint at all (confirmed against
+// its own OpenAPI spec and official Node SDK: only 1099, AgedPayables/ReceivablesByContact,
+// BalanceSheet, BankSummary, BudgetSummary, ExecutiveSummary, ProfitAndLoss, TrialBalance exist).
+// Refreshing a token only renews its ORIGINALLY granted scopes — it can't add new ones — so every
+// existing connection must be manually reconnected (Settings -> Connect Xero) before this scope
+// actually takes effect; until then, fetchXeroGstTaxTotal will fail with an insufficient_scope
+// 401 for that connection specifically.
 const SCOPES =
-  "offline_access accounting.contacts.read accounting.reports.profitandloss.read accounting.reports.balancesheet.read accounting.reports.aged.read accounting.reports.budgetsummary.read accounting.reports.banksummary.read";
+  "offline_access accounting.contacts.read accounting.transactions.read accounting.reports.profitandloss.read accounting.reports.balancesheet.read accounting.reports.aged.read accounting.reports.budgetsummary.read accounting.reports.banksummary.read";
 
 export function isXeroConfigured(): boolean {
   return Boolean(process.env.XERO_CLIENT_ID && process.env.XERO_CLIENT_SECRET);
@@ -186,4 +194,30 @@ export async function fetchXeroBalanceSheet(accessToken: string, tenantId: strin
   const url = `https://api.xero.com/api.xro/2.0/Reports/BalanceSheet?date=${date}`;
   const body = (await xeroGet(accessToken, tenantId, url)) as { Reports?: XeroReport[] };
   return body.Reports?.[0] ?? { Rows: [] };
+}
+
+// Xero has no GST report endpoint (see the SCOPES comment above), so GST output/input tax is
+// estimated by summing the tax actually recorded on real invoices/bills instead — this is an
+// ESTIMATE, not a certified replacement for Xero's own GST F5 return: it uses invoice-date
+// (accrual) basis, not cash basis, and doesn't special-case reverse-charge imports (GSTONIMPORTS),
+// which the real F5 form reports in both box 6 and box 7. Every caller must label the result as
+// an estimate for the user to verify, not a final filing figure.
+// Type "ACCREC" = sales invoices (output tax); "ACCPAY" = purchase bills (input tax).
+// Status=="AUTHORISED" is Xero's approved/final state for both unpaid and fully-paid invoices —
+// it excludes DRAFT/SUBMITTED/VOIDED/DELETED, which correctly excludes anything not yet a real
+// supply. Zero-rated and exempt lines already carry $0 tax, so summing TotalTax naturally leaves
+// them out of the total without needing to filter by tax type explicitly.
+export async function fetchXeroGstTaxTotal(accessToken: string, tenantId: string, type: "ACCREC" | "ACCPAY", fromDate: Date, toDate: Date): Promise<number> {
+  const fmt = (d: Date) => `${d.getFullYear()},${d.getMonth() + 1},${d.getDate()}`;
+  const where = `Type=="${type}"&&Status=="AUTHORISED"&&Date>=DateTime(${fmt(fromDate)})&&Date<=DateTime(${fmt(toDate)})`;
+  let total = 0;
+  for (let page = 1; ; page++) {
+    const url = `https://api.xero.com/api.xro/2.0/Invoices?where=${encodeURIComponent(where)}&page=${page}`;
+    const body = (await xeroGet(accessToken, tenantId, url)) as { Invoices?: { TotalTax?: number }[] };
+    const invoices = body.Invoices ?? [];
+    if (invoices.length === 0) break;
+    total += invoices.reduce((sum, inv) => sum + (inv.TotalTax ?? 0), 0);
+    if (invoices.length < 100) break;
+  }
+  return total;
 }

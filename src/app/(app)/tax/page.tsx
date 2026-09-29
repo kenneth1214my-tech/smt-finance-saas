@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary, withBaseCurrency, fmtMoney } from "@/lib/i18n/dictionaries";
 import { getBaseCurrency } from "@/lib/currency";
-import { computeCorporateTax, effectiveFilingStatus } from "@/lib/tax";
+import { computeCorporateTax, effectiveFilingStatus, currentGstQuarter } from "@/lib/tax";
 import Topbar from "@/components/Topbar";
 import KpiTile from "@/components/ui/KpiTile";
 import TaxCenterClient from "./TaxCenterClient";
@@ -23,12 +23,45 @@ export default async function TaxPage() {
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const fmtM = (n: number) => fmtMoney(n, locale);
 
-  const [subsidiaries, provisions, filings, deferredItems] = await Promise.all([
+  const [subsidiaries, provisions, deferredItems, monthlyFinancials] = await Promise.all([
     db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } }),
     db.corporateTaxProvision.findMany({ where: { organizationId }, include: { subsidiary: true }, orderBy: [{ year: "desc" }] }),
-    db.taxFiling.findMany({ where: { organizationId }, include: { subsidiary: true }, orderBy: [{ dueDate: "asc" }] }),
     db.deferredTaxItem.findMany({ where: { organizationId }, include: { subsidiary: true }, orderBy: [{ year: "desc" }] }),
+    db.monthlyFinancial.findMany({ where: { organizationId }, select: { subsidiaryId: true, year: true, netProfit: true } }),
   ]);
+
+  // Net profit before tax, per entity per year, straight from Xero-synced P&L data already in
+  // the system (MonthlyFinancial) — feeds the "generate draft provisions" shortcut so chargeable
+  // income doesn't have to be retyped from a number that's already on file.
+  const netProfitByEntity: Record<string, Record<number, number>> = {};
+  for (const mf of monthlyFinancials) {
+    const key = mf.subsidiaryId ?? "HQ";
+    netProfitByEntity[key] ??= {};
+    netProfitByEntity[key][mf.year] = (netProfitByEntity[key][mf.year] ?? 0) + Number(mf.netProfit);
+  }
+
+  // Auto-create this quarter's GST F5 filing as a draft (due date only, figures left for the
+  // user to fill in — see currentGstQuarter's doc comment) so the obligation is on the tracker as
+  // soon as the quarter starts, not only once someone remembers to add it.
+  const gstQuarter = currentGstQuarter();
+  const entities: { subsidiaryId: string | null }[] = [{ subsidiaryId: null }, ...subsidiaries.map((s) => ({ subsidiaryId: s.id }))];
+  const existingGstThisQuarter = await db.taxFiling.findMany({ where: { organizationId, type: "GST_F5", periodLabel: gstQuarter.periodLabel } });
+  const existingGstKeys = new Set(existingGstThisQuarter.map((f) => f.subsidiaryId ?? "HQ"));
+  const missingGstEntities = entities.filter((e) => !existingGstKeys.has(e.subsidiaryId ?? "HQ"));
+  if (missingGstEntities.length > 0) {
+    await db.taxFiling.createMany({
+      data: missingGstEntities.map((e) => ({
+        organizationId,
+        subsidiaryId: e.subsidiaryId,
+        type: "GST_F5" as const,
+        periodLabel: gstQuarter.periodLabel,
+        dueDate: gstQuarter.dueDate,
+        status: "UPCOMING" as const,
+        notes: "Auto-created from the quarterly GST filing schedule — delete if this entity isn't GST-registered for this period.",
+      })),
+    });
+  }
+  const filings = await db.taxFiling.findMany({ where: { organizationId }, include: { subsidiary: true }, orderBy: [{ dueDate: "asc" }] });
 
   const currentYear = new Date().getFullYear();
   const netPayableCurrentYear = provisions
@@ -59,6 +92,7 @@ export default async function TaxPage() {
           provisions={toPlain(provisions)}
           filings={toPlain(filings)}
           deferredItems={toPlain(deferredItems)}
+          netProfitByEntity={netProfitByEntity}
         />
       </div>
     </>
