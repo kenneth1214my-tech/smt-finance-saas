@@ -28,6 +28,7 @@ const zh = {
     risk: "风险预警",
     report: "报表中心",
     audit: "内部审计",
+    tax: "税务中心",
     settings: "系统设置",
   },
   common: {
@@ -171,6 +172,14 @@ const zh = {
     auditDetailCriteria: "审计标准", auditDetailCondition: "实际情况", auditDetailEvidence: "证据来源", auditDetailRisk: "风险影响", auditDetailRecommendation: "建议整改措施",
     auditManagementResponse: "管理层说明", auditAuditorAssessment: "审计员评估", auditResponsibleOwner: "责任人", auditTargetDate: "目标完成日期", auditClosureEvidence: "结案证据",
     auditSaveDetail: "保存", auditCloseFinding: "结案", auditClosureRequired: "结案前必须填写结案证据",
+    taxPageDesc: "企业所得税预提、申报与缴款跟踪、递延所得税及消费税(GST)管理，按总部/子公司分主体记录",
+    taxKpiNetPayable: "本年度预计应缴税额(集团)", taxKpiUpcomingFilings: "待申报/待缴项数", taxKpiOverdueFilings: "逾期未处理项数", taxKpiDeferredTax: "递延所得税净额",
+    taxProvisionCard: "所得税预提估算", taxFilingCard: "申报与缴款跟踪", taxDeferredCard: "递延所得税项目",
+    taxEstimateDisclaimer: "本模块的应纳税所得额为管理层估算值(默认取自税前利润)，未计入应纳税调整项(不可扣除费用调整、免税收入扣除、资本免税额替代会计折旧等)；实际申报数以IRAS核定及税务顾问计算为准。",
+    taxProvisionBreakdownCard: "按主体拆分的预提估算",
+    taxEntity: "主体", taxYear: "年度", taxChargeableIncome: "应纳税所得额(估算)", taxExemptAmount: "免税额", taxGrossTax: "税前应缴税额", taxRebateAmount: "回扣", taxNetPayable: "预计净应缴税额", taxEffectiveRate: "实际税率",
+    taxGroupHQ: "集团总部",
+    taxNoProvisionData: "暂无预提数据", taxNoFilingData: "暂无申报记录", taxNoDeferredData: "暂无递延所得税项目",
   },
 };
 
@@ -193,6 +202,7 @@ const en: Dictionary = {
     risk: "Risk Alerts",
     report: "Report Center",
     audit: "Internal Audit",
+    tax: "Tax Center",
     settings: "Settings",
   },
   common: {
@@ -336,6 +346,14 @@ const en: Dictionary = {
     auditDetailCriteria: "Criteria", auditDetailCondition: "Condition", auditDetailEvidence: "Evidence", auditDetailRisk: "Risk / Impact", auditDetailRecommendation: "Recommendation",
     auditManagementResponse: "Management Response", auditAuditorAssessment: "Auditor Assessment", auditResponsibleOwner: "Responsible Owner", auditTargetDate: "Target Date", auditClosureEvidence: "Closure Evidence",
     auditSaveDetail: "Save", auditCloseFinding: "Close Finding", auditClosureRequired: "Closure evidence is required before closing a finding",
+    taxPageDesc: "Corporate tax provision, filing & payment tracking, deferred tax, and GST management — tracked per entity (HQ / subsidiary)",
+    taxKpiNetPayable: "Est. Net Tax Payable (Group, Current Year)", taxKpiUpcomingFilings: "Upcoming Filings", taxKpiOverdueFilings: "Overdue Filings", taxKpiDeferredTax: "Net Deferred Tax",
+    taxProvisionCard: "Corporate Tax Provision Estimate", taxFilingCard: "Filing & Payment Tracking", taxDeferredCard: "Deferred Tax Items",
+    taxEstimateDisclaimer: "Chargeable income here is a management ESTIMATE (defaults to accounting profit before tax) — it does not account for tax adjustments (disallowed expense add-backs, non-taxable income deductions, capital allowances in place of accounting depreciation). Actual filed figures are determined by IRAS assessment and your tax advisor.",
+    taxProvisionBreakdownCard: "Provision Estimate — Breakdown by Entity",
+    taxEntity: "Entity", taxYear: "Year", taxChargeableIncome: "Chargeable Income (est.)", taxExemptAmount: "Exempt Amount", taxGrossTax: "Gross Tax", taxRebateAmount: "Rebate", taxNetPayable: "Est. Net Tax Payable", taxEffectiveRate: "Effective Rate",
+    taxGroupHQ: "Group HQ",
+    taxNoProvisionData: "No provision data yet", taxNoFilingData: "No filing records yet", taxNoDeferredData: "No deferred tax items yet",
   },
 };
 
@@ -356,6 +374,7 @@ const zhHant: Dictionary = {
     risk: "風險預警",
     report: "報表中心",
     audit: "內部審計",
+    tax: "稅務中心",
     settings: "系統設置",
   },
   common: {
@@ -499,6 +518,14 @@ const zhHant: Dictionary = {
     auditDetailCriteria: "審計標準", auditDetailCondition: "實際情況", auditDetailEvidence: "證據來源", auditDetailRisk: "風險影響", auditDetailRecommendation: "建議整改措施",
     auditManagementResponse: "管理層說明", auditAuditorAssessment: "審計員評估", auditResponsibleOwner: "責任人", auditTargetDate: "目標完成日期", auditClosureEvidence: "結案證據",
     auditSaveDetail: "保存", auditCloseFinding: "結案", auditClosureRequired: "結案前必須填寫結案證據",
+    taxPageDesc: "企業所得稅預提、申報與繳款跟蹤、遞延所得稅及消費稅(GST)管理，按總部/子公司分主體記錄",
+    taxKpiNetPayable: "本年度預計應繳稅額(集團)", taxKpiUpcomingFilings: "待申報/待繳項數", taxKpiOverdueFilings: "逾期未處理項數", taxKpiDeferredTax: "遞延所得稅淨額",
+    taxProvisionCard: "所得稅預提估算", taxFilingCard: "申報與繳款跟蹤", taxDeferredCard: "遞延所得稅項目",
+    taxEstimateDisclaimer: "本模塊的應納稅所得額為管理層估算值(默認取自稅前利潤)，未計入應納稅調整項(不可扣除費用調整、免稅收入扣除、資本免稅額替代會計折舊等)；實際申報數以IRAS核定及稅務顧問計算為準。",
+    taxProvisionBreakdownCard: "按主體拆分的預提估算",
+    taxEntity: "主體", taxYear: "年度", taxChargeableIncome: "應納稅所得額(估算)", taxExemptAmount: "免稅額", taxGrossTax: "稅前應繳稅額", taxRebateAmount: "回扣", taxNetPayable: "預計淨應繳稅額", taxEffectiveRate: "實際稅率",
+    taxGroupHQ: "集團總部",
+    taxNoProvisionData: "暫無預提數據", taxNoFilingData: "暫無申報記錄", taxNoDeferredData: "暫無遞延所得稅項目",
   },
 };
 
@@ -519,6 +546,7 @@ const ms: Dictionary = {
     risk: "Amaran Risiko",
     report: "Pusat Laporan",
     audit: "Audit Dalaman",
+    tax: "Pusat Cukai",
     settings: "Tetapan Sistem",
   },
   common: {
@@ -662,6 +690,14 @@ const ms: Dictionary = {
     auditDetailCriteria: "Kriteria", auditDetailCondition: "Keadaan", auditDetailEvidence: "Bukti", auditDetailRisk: "Risiko / Kesan", auditDetailRecommendation: "Cadangan",
     auditManagementResponse: "Respons Pengurusan", auditAuditorAssessment: "Penilaian Juruaudit", auditResponsibleOwner: "Pemilik Bertanggungjawab", auditTargetDate: "Tarikh Sasaran", auditClosureEvidence: "Bukti Penutupan",
     auditSaveDetail: "Simpan", auditCloseFinding: "Tutup Penemuan", auditClosureRequired: "Bukti penutupan diperlukan sebelum menutup penemuan",
+    taxPageDesc: "Peruntukan cukai korporat, penjejakan pemfailan & bayaran, cukai tertunda, dan pengurusan GST — direkod mengikut entiti (HQ / anak syarikat)",
+    taxKpiNetPayable: "Anggaran Cukai Perlu Dibayar Bersih (Kumpulan, Tahun Semasa)", taxKpiUpcomingFilings: "Pemfailan Akan Datang", taxKpiOverdueFilings: "Pemfailan Tertunggak", taxKpiDeferredTax: "Cukai Tertunda Bersih",
+    taxProvisionCard: "Anggaran Peruntukan Cukai Korporat", taxFilingCard: "Penjejakan Pemfailan & Bayaran", taxDeferredCard: "Item Cukai Tertunda",
+    taxEstimateDisclaimer: "Pendapatan bercukai di sini adalah ANGGARAN pengurusan (lalai kepada keuntungan perakaunan sebelum cukai) — ia tidak mengambil kira pelarasan cukai (tambahan semula perbelanjaan tidak dibenarkan, potongan pendapatan tidak bercukai, elaun modal menggantikan susut nilai perakaunan). Angka sebenar difailkan ditentukan oleh penilaian IRAS dan penasihat cukai anda.",
+    taxProvisionBreakdownCard: "Anggaran Peruntukan — Pecahan Mengikut Entiti",
+    taxEntity: "Entiti", taxYear: "Tahun", taxChargeableIncome: "Pendapatan Bercukai (anggaran)", taxExemptAmount: "Jumlah Dikecualikan", taxGrossTax: "Cukai Kasar", taxRebateAmount: "Rebat", taxNetPayable: "Anggaran Cukai Bersih Perlu Dibayar", taxEffectiveRate: "Kadar Efektif",
+    taxGroupHQ: "Ibu Pejabat Kumpulan",
+    taxNoProvisionData: "Belum ada data peruntukan", taxNoFilingData: "Belum ada rekod pemfailan", taxNoDeferredData: "Belum ada item cukai tertunda",
   },
 };
 
@@ -682,6 +718,7 @@ const id: Dictionary = {
     risk: "Peringatan Risiko",
     report: "Pusat Laporan",
     audit: "Audit Internal",
+    tax: "Pusat Pajak",
     settings: "Pengaturan Sistem",
   },
   common: {
@@ -825,6 +862,14 @@ const id: Dictionary = {
     auditDetailCriteria: "Kriteria", auditDetailCondition: "Kondisi", auditDetailEvidence: "Bukti", auditDetailRisk: "Risiko / Dampak", auditDetailRecommendation: "Rekomendasi",
     auditManagementResponse: "Tanggapan Manajemen", auditAuditorAssessment: "Penilaian Auditor", auditResponsibleOwner: "Penanggung Jawab", auditTargetDate: "Tanggal Target", auditClosureEvidence: "Bukti Penutupan",
     auditSaveDetail: "Simpan", auditCloseFinding: "Tutup Temuan", auditClosureRequired: "Bukti penutupan diperlukan sebelum menutup temuan",
+    taxPageDesc: "Provisi pajak korporat, pelacakan pengajuan & pembayaran, pajak tangguhan, dan manajemen GST — dicatat per entitas (HQ / anak perusahaan)",
+    taxKpiNetPayable: "Estimasi Pajak Bersih Terutang (Grup, Tahun Berjalan)", taxKpiUpcomingFilings: "Pengajuan Mendatang", taxKpiOverdueFilings: "Pengajuan Terlambat", taxKpiDeferredTax: "Pajak Tangguhan Bersih",
+    taxProvisionCard: "Estimasi Provisi Pajak Korporat", taxFilingCard: "Pelacakan Pengajuan & Pembayaran", taxDeferredCard: "Item Pajak Tangguhan",
+    taxEstimateDisclaimer: "Penghasilan kena pajak di sini adalah ESTIMASI manajemen (default ke laba akuntansi sebelum pajak) — tidak memperhitungkan penyesuaian pajak (penambahan kembali beban yang tidak dapat dikurangkan, pengurangan penghasilan tidak kena pajak, tunjangan modal menggantikan penyusutan akuntansi). Angka pengajuan sebenarnya ditentukan oleh penilaian IRAS dan penasihat pajak Anda.",
+    taxProvisionBreakdownCard: "Estimasi Provisi — Rincian per Entitas",
+    taxEntity: "Entitas", taxYear: "Tahun", taxChargeableIncome: "Penghasilan Kena Pajak (est.)", taxExemptAmount: "Jumlah Dibebaskan", taxGrossTax: "Pajak Kotor", taxRebateAmount: "Rabat", taxNetPayable: "Estimasi Pajak Bersih Terutang", taxEffectiveRate: "Tarif Efektif",
+    taxGroupHQ: "Kantor Pusat Grup",
+    taxNoProvisionData: "Belum ada data provisi", taxNoFilingData: "Belum ada catatan pengajuan", taxNoDeferredData: "Belum ada item pajak tangguhan",
   },
 };
 

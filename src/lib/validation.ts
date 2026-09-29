@@ -294,3 +294,37 @@ export const expenseCategoryMappingSchema = z.object({
   accountLabel: z.string().trim().min(1).max(120),
   category: z.enum(["SELLING", "ADMIN", "RND", "FINANCE"]),
 });
+
+export const corporateTaxProvisionSchema = z.object({
+  // null = group/HQ-level, not tied to any single subsidiary.
+  subsidiaryId: z.preprocess((v) => (v === "" ? null : v), z.string().trim().min(1).nullable().optional()),
+  year: z.coerce.number().int().min(2000).max(2100),
+  chargeableIncome: z.coerce.number(),
+  taxRatePct: z.coerce.number().min(0).max(100).default(17),
+  rebatePct: z.coerce.number().min(0).max(100).default(0),
+  rebateCap: z.coerce.number().min(0).default(0),
+  notes: z.string().trim().max(2000).nullable().optional(),
+});
+
+export const taxFilingSchema = z.object({
+  subsidiaryId: z.preprocess((v) => (v === "" ? null : v), z.string().trim().min(1).nullable().optional()),
+  type: z.enum(["ECI", "FORM_C_S", "GST_F5"]),
+  periodLabel: z.string().trim().min(1).max(40),
+  dueDate: z.coerce.date(),
+  filedAt: z.coerce.date().nullable().optional(),
+  outputTax: z.coerce.number().nullable().optional(),
+  inputTax: z.coerce.number().nullable().optional(),
+  amount: z.coerce.number().nullable().optional(),
+  paidAt: z.coerce.date().nullable().optional(),
+  status: z.enum(["UPCOMING", "FILED", "OVERDUE", "PAID"]).default("UPCOMING"),
+  notes: z.string().trim().max(2000).nullable().optional(),
+});
+
+export const deferredTaxItemSchema = z.object({
+  subsidiaryId: z.preprocess((v) => (v === "" ? null : v), z.string().trim().min(1).nullable().optional()),
+  year: z.coerce.number().int().min(2000).max(2100),
+  description: z.string().trim().min(1).max(200),
+  temporaryDifference: z.coerce.number(),
+  deferredTaxAmount: z.coerce.number(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+});

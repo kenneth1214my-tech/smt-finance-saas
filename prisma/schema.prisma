@@ -127,6 +127,9 @@ model Organization {
   xeroGroupConnection XeroGroupConnection?
   auditFindings     AuditFinding[]
   expenseCategoryMappings ExpenseCategoryMapping[]
+  corporateTaxProvisions CorporateTaxProvision[]
+  taxFilings        TaxFiling[]
+  deferredTaxItems  DeferredTaxItem[]
 }
 
 // Email is unique platform-wide (not just per-org): one login belongs to exactly one
@@ -216,6 +219,9 @@ model Subsidiary {
   xeroConnection    XeroConnection?
   bankAccounts      BankAccount[]
   cashFlows         CashFlowMonthly[]
+  corporateTaxProvisions CorporateTaxProvision[]
+  taxFilings        TaxFiling[]
+  deferredTaxItems  DeferredTaxItem[]
 
   @@unique([organizationId, key])
 }
@@ -646,5 +652,103 @@ model AuditFinding {
   updatedAt          DateTime        @updatedAt
 
   @@unique([organizationId, findingRef])
+  @@index([organizationId])
+}
+
+// --- Corporate Taxation (Singapore) -----------------------------------------------------------
+// Every model here is per-entity (subsidiaryId: null = HQ, mirrors MonthlyFinancial/CashFlowMonthly
+// etc.) because Singapore doesn't consolidate corporate tax filings across a group by default —
+// each Pte Ltd files its own Estimated Chargeable Income, Form C-S/C, and GST return with IRAS
+// on its own numbers. A "Group" total is a display-only sum of each entity's own filing, never a
+// single combined filing (there is no such thing at IRAS).
+
+enum TaxFilingType {
+  ECI      // Estimated Chargeable Income — due within 3 months of financial year end
+  FORM_C_S // or FORM_C for larger companies — annual return, due 30 Nov of the Year of Assessment
+  GST_F5   // Quarterly (or monthly/half-yearly) GST return
+}
+
+enum TaxFilingStatus {
+  UPCOMING
+  FILED
+  OVERDUE
+  PAID
+}
+
+// A management ESTIMATE of corporate income tax payable, computed from accounting net profit —
+// not a certified tax computation. Real "chargeable income" requires tax adjustments (add back
+// non-deductible expenses, deduct non-taxable income, substitute capital allowances for
+// accounting depreciation) that this system has no data to perform; chargeableIncome here
+// defaults to accounting net profit and can be overridden once a real tax computation exists.
+// taxRatePct/rebatePct/rebateCap are stored per row (not hardcoded) because Singapore's Budget
+// changes the CIT Rebate every year — YA2026's is 50% capped at S$40,000, but that's a policy
+// choice, not a constant.
+model CorporateTaxProvision {
+  id               String        @id @default(cuid())
+  organizationId   String
+  organization     Organization  @relation(fields: [organizationId], references: [id])
+  subsidiaryId     String?
+  subsidiary       Subsidiary?   @relation(fields: [subsidiaryId], references: [id])
+  year             Int
+  chargeableIncome Decimal       @db.Decimal(14, 2)
+  taxRatePct       Decimal       @default(17) @db.Decimal(5, 2)
+  rebatePct        Decimal       @default(0) @db.Decimal(5, 2)
+  rebateCap        Decimal       @default(0) @db.Decimal(14, 2)
+  notes            String?       @db.Text
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@unique([subsidiaryId, year])
+  @@index([organizationId])
+}
+
+// Tracks a single compliance deadline (ECI, Form C-S/C, or a GST F5 period) per entity — covers
+// both "filing & payment tracking" and "GST tracking" with one flexible model rather than two
+// near-identical ones. outputTax/inputTax are only meaningful for GST_F5 rows; amount is the
+// bottom-line figure either way (tax assessed for ECI/FormC, net GST payable/refundable for GST_F5).
+model TaxFiling {
+  id             String          @id @default(cuid())
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  subsidiaryId   String?
+  subsidiary     Subsidiary?     @relation(fields: [subsidiaryId], references: [id])
+  type           TaxFilingType
+  // Human-readable period label — ECI/Form C-S/C use a Year of Assessment ("YA2026"), GST uses a
+  // quarter ("2026 Q1") — deliberately a free-text label rather than forcing both onto one shape.
+  periodLabel    String
+  dueDate        DateTime
+  filedAt        DateTime?
+  outputTax      Decimal?        @db.Decimal(14, 2)
+  inputTax       Decimal?        @db.Decimal(14, 2)
+  amount         Decimal?        @db.Decimal(14, 2)
+  paidAt         DateTime?
+  status         TaxFilingStatus @default(UPCOMING)
+  notes          String?         @db.Text
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([organizationId])
+}
+
+// Manually-entered deferred tax positions (from timing differences between accounting and tax
+// treatment, e.g. depreciation vs capital allowances) — computing these automatically would need
+// a fixed-asset register with tax written-down values this system doesn't hold, so real, known
+// figures (from the accountant/auditor) are recorded directly rather than estimated.
+model DeferredTaxItem {
+  id                  String       @id @default(cuid())
+  organizationId      String
+  organization        Organization @relation(fields: [organizationId], references: [id])
+  subsidiaryId        String?
+  subsidiary          Subsidiary?  @relation(fields: [subsidiaryId], references: [id])
+  year                Int
+  description         String
+  temporaryDifference Decimal      @db.Decimal(14, 2)
+  // Positive = deferred tax ASSET (future tax saving); negative = deferred tax LIABILITY (future
+  // tax owed).
+  deferredTaxAmount   Decimal      @db.Decimal(14, 2)
+  notes               String?      @db.Text
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
   @@index([organizationId])
 }

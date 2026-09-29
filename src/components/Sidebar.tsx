@@ -17,6 +17,7 @@ import {
   ShieldAlert,
   FileText,
   ClipboardCheck,
+  Calculator,
   Settings as SettingsIcon,
 } from "lucide-react";
 import type { Locale, DICTIONARIES } from "@/lib/i18n/dictionaries";
@@ -37,6 +38,7 @@ const NAV = [
   { id: "risk", href: "/risk", icon: ShieldAlert },
   { id: "report", href: "/report", icon: FileText },
   { id: "audit", href: "/audit", icon: ClipboardCheck },
+  { id: "tax", href: "/tax", icon: Calculator },
 ] as const;
 
 export default function Sidebar({ dict, companyName }: { dict: Dict; companyName: string }) {
