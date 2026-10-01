@@ -43,7 +43,7 @@ export default async function Topbar({
           </div>
         )}
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="ml-auto flex flex-wrap items-center gap-2">
         <GlobalSearch isZh={locale === "zh" || locale === "zh-Hant"} />
         <LanguageSwitcher current={locale} />
         <div className="flex items-center gap-1.5 whitespace-nowrap px-1 text-[11.5px]" style={{ color: "var(--ink-400)" }}>
