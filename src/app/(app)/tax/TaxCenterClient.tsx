@@ -61,6 +61,31 @@ export default function TaxCenterClient({
   const [genYear, setGenYear] = useState(String(new Date().getFullYear()));
   const [genBusy, setGenBusy] = useState(false);
   const [genMessage, setGenMessage] = useState("");
+  const [estimatingId, setEstimatingId] = useState<string | null>(null);
+  const [estimateError, setEstimateError] = useState("");
+
+  async function estimateGst(filingId: string, refresh: () => void) {
+    setEstimatingId(filingId);
+    setEstimateError("");
+    const res = await fetch(`/api/admin/tax-filings/${filingId}/estimate-gst`, { method: "POST" });
+    setEstimatingId(null);
+    if (res.ok) {
+      refresh();
+      return;
+    }
+    const body = await res.json().catch(() => ({}));
+    setEstimateError(
+      body.error === "xero_not_connected"
+        ? isZh
+          ? "该主体尚未连接Xero，或需要重新连接以授权新增的发票读取权限"
+          : "Xero isn't connected for this entity, or needs reconnecting to grant the new invoices permission"
+        : body.error === "unrecognized_period"
+          ? isZh
+            ? "期间格式无法识别（非自动生成的\"YYYY QN\"格式），无法自动估算"
+            : 'Period label isn\'t in the auto-generated "YYYY QN" format, so it can\'t be auto-estimated'
+          : (body.message as string | undefined) || (isZh ? "估算失败" : "Estimate failed")
+    );
+  }
 
   async function generateDraftProvisions() {
     const year = Number(genYear);
@@ -300,14 +325,45 @@ export default function TaxCenterClient({
           </>
         )}
         {tab === "filing" && (
-          <CrudTable
-            apiBase="/api/admin/tax-filings"
-            fields={filingFields}
-            tableKeys={filingTableKeys}
-            initialRows={filings as unknown as Row[]}
-            emptyLabel={dict.m.taxNoFilingData}
-            addLabel={isZh ? "新增申报记录" : "Add filing"}
-          />
+          <>
+            <div className="mb-3 flex items-center gap-2 rounded-lg border p-2.5" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
+              <Sparkles size={14} style={{ color: "var(--cat-1)" }} />
+              <span className="text-[11.5px]" style={{ color: "var(--ink-400)" }}>
+                {isZh
+                  ? "点击 GST F5 行操作栏中的 图标，从Xero发票/账单数据自动估算销项/进项税额（需已连接Xero，且已授权发票读取权限）。"
+                  : "Click the icon in a GST F5 row's actions to auto-estimate output/input tax from Xero invoices/bills (requires Xero connected with the invoices-read permission granted)."}
+              </span>
+            </div>
+            {estimateError && (
+              <div className="mb-3 rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: "color-mix(in srgb,var(--status-critical) 12%,transparent)", color: "var(--status-critical)" }}>
+                {estimateError}
+              </div>
+            )}
+            <CrudTable
+              apiBase="/api/admin/tax-filings"
+              fields={filingFields}
+              tableKeys={filingTableKeys}
+              initialRows={filings as unknown as Row[]}
+              emptyLabel={dict.m.taxNoFilingData}
+              addLabel={isZh ? "新增申报记录" : "Add filing"}
+              rowActions={(row, refresh) => {
+                if (row.type !== "GST_F5") return null;
+                const busy = estimatingId === String(row.id);
+                return (
+                  <button
+                    key="estimate-gst"
+                    onClick={() => estimateGst(String(row.id), refresh)}
+                    disabled={busy}
+                    title={isZh ? "从Xero发票数据估算" : "Estimate from Xero invoices"}
+                    className="rounded-md p-1.5 disabled:opacity-50"
+                    style={{ background: "color-mix(in srgb, var(--cat-1) 14%, transparent)", color: "var(--cat-1)" }}
+                  >
+                    <Sparkles size={13} />
+                  </button>
+                );
+              }}
+            />
+          </>
         )}
         {tab === "deferred" && (
           <CrudTable
