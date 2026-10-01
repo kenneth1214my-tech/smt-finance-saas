@@ -13,15 +13,15 @@ const CONNECTIONS_URL = "https://api.xero.com/connections";
 // Xero's authorize endpoint. /connections works fine without it: any valid access token can
 // query which tenants it's connected to. The rest covers what a future sync would need (P&L,
 // balance sheet, aged AR/AP, contact names).
-// accounting.transactions.read (attempted, to back fetchXeroGstTaxTotal / estimating GST F5
-// output/input tax from raw Invoices) is ALSO rejected outright with invalid_scope for this
-// app — confirmed by actually hitting Xero's authorize endpoint in production: it fails the
-// whole request atomically, breaking Connect/Reconnect Xero entirely, not just the new feature.
-// Reverted; fetchXeroGstTaxTotal and its estimate-gst route are dead code until this app's Xero
-// Developer Portal registration is reconfigured to allow that scope (same class of gate as the
-// Finance API cash-flow endpoint below) — not something fixable from application code alone.
+// accounting.transactions.read (first attempt at backing fetchXeroGstTaxTotal / estimating GST
+// F5 output/input tax from raw Invoices) was rejected outright with invalid_scope for this app
+// — confirmed by actually hitting Xero's authorize endpoint in production, which broke
+// Connect/Reconnect Xero entirely, not just the new feature. Root cause (per Xero's own granular
+// scopes FAQ): accounting.transactions is one of the OLD broad scopes being split up for apps
+// created after 2 March 2026 (this app's cohort) — Invoices now lives under its own
+// accounting.invoices[.read] scope instead. Using the correct granular name this time.
 const SCOPES =
-  "offline_access accounting.contacts.read accounting.reports.profitandloss.read accounting.reports.balancesheet.read accounting.reports.aged.read accounting.reports.budgetsummary.read accounting.reports.banksummary.read";
+  "offline_access accounting.contacts.read accounting.invoices.read accounting.reports.profitandloss.read accounting.reports.balancesheet.read accounting.reports.aged.read accounting.reports.budgetsummary.read accounting.reports.banksummary.read";
 
 export function isXeroConfigured(): boolean {
   return Boolean(process.env.XERO_CLIENT_ID && process.env.XERO_CLIENT_SECRET);
