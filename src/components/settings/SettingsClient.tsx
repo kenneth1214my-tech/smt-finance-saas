@@ -1497,6 +1497,21 @@ function relativeTime(date: Date | string | null | undefined, isZh: boolean): st
   return isZh ? `${diffDay} 天前` : `${diffDay}d ago`;
 }
 
+// A raw sync error can be several "<step>: Xero API call failed: <status> (<reason>) {...full
+// JSON body...}" segments joined with "; " — useful in logs, but as a one-line status under a
+// connection card it reads as a wall of noise. Collapse each segment to "<step>: <reason>" and
+// drop the JSON body; anything that doesn't match the known shape is just truncated.
+function shortSyncError(raw: string): string {
+  return raw
+    .split("; ")
+    .map((seg) => {
+      const m = /^([^:]+):\s*Xero API call failed:\s*\d+\s*\(([^)]+)\)/.exec(seg);
+      if (m) return `${m[1]}: ${m[2]}`;
+      return seg.length > 60 ? `${seg.slice(0, 60)}…` : seg;
+    })
+    .join(", ");
+}
+
 function DataTab({
   locale,
   onToast,
@@ -1691,11 +1706,11 @@ function DataTab({
               )}
             </div>
             {xeroGroupConnected && (
-              <div className="flex items-center gap-1.5 text-[11px]" style={{ color: xeroGroupLastSyncError ? "var(--status-critical)" : "var(--ink-400)" }}>
+              <div className="flex items-center gap-1.5 text-[11px]" style={{ color: xeroGroupLastSyncError ? "var(--status-warning)" : "var(--ink-400)" }}>
                 {xeroGroupLastSyncError
                   ? isZh
-                    ? `上次同步失败（${relativeTime(xeroGroupLastSyncAt, isZh)}）：${xeroGroupLastSyncError}`
-                    : `Last sync failed (${relativeTime(xeroGroupLastSyncAt, isZh)}): ${xeroGroupLastSyncError}`
+                    ? `上次同步失败（${relativeTime(xeroGroupLastSyncAt, isZh)}）：${shortSyncError(xeroGroupLastSyncError)}`
+                    : `Last sync failed (${relativeTime(xeroGroupLastSyncAt, isZh)}): ${shortSyncError(xeroGroupLastSyncError)}`
                   : xeroGroupLastSyncAt
                     ? isZh
                       ? `每日自动同步 · 上次同步：${relativeTime(xeroGroupLastSyncAt, isZh)}`
@@ -1774,11 +1789,11 @@ function DataTab({
                   )}
                 </div>
                 {connected && (
-                  <div className="flex items-center gap-1.5 text-[11px]" style={{ color: conn?.lastSyncError ? "var(--status-critical)" : "var(--ink-400)" }}>
+                  <div className="flex items-center gap-1.5 text-[11px]" style={{ color: conn?.lastSyncError ? "var(--status-warning)" : "var(--ink-400)" }}>
                     {conn?.lastSyncError
                       ? isZh
-                        ? `上次同步失败（${relativeTime(conn.lastSyncAt, isZh)}）：${conn.lastSyncError}`
-                        : `Last sync failed (${relativeTime(conn.lastSyncAt, isZh)}): ${conn.lastSyncError}`
+                        ? `上次同步失败（${relativeTime(conn.lastSyncAt, isZh)}）：${shortSyncError(conn.lastSyncError)}`
+                        : `Last sync failed (${relativeTime(conn.lastSyncAt, isZh)}): ${shortSyncError(conn.lastSyncError)}`
                       : conn?.lastSyncAt
                         ? isZh
                           ? `每日自动同步 · 上次同步：${relativeTime(conn.lastSyncAt, isZh)}`
