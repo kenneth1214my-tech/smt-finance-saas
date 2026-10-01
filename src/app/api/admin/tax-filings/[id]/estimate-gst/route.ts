@@ -58,7 +58,14 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
       fetchXeroGstTaxTotal(accessToken, tenantId, "ACCPAY", quarter.quarterStart, quarter.quarterEnd),
     ]);
   } catch (err) {
-    return NextResponse.json({ error: "xero_error", message: err instanceof Error ? err.message : String(err) }, { status: 502 });
+    const message = err instanceof Error ? err.message : String(err);
+    // This entity's connection predates the invoices.read scope being added — a refresh can't
+    // grant it, only a full reconnect (see the SCOPES comment in xero.ts). Surfaced as its own
+    // code so the client shows a short, actionable message instead of the raw Xero error JSON.
+    if (message.includes("insufficient_scope")) {
+      return NextResponse.json({ error: "insufficient_scope" }, { status: 400 });
+    }
+    return NextResponse.json({ error: "xero_error", message }, { status: 502 });
   }
 
   const row = await db.taxFiling.update({

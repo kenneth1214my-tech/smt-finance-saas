@@ -79,11 +79,15 @@ export default function TaxCenterClient({
         ? isZh
           ? "该主体尚未连接Xero，或需要重新连接以授权新增的发票读取权限"
           : "Xero isn't connected for this entity, or needs reconnecting to grant the new invoices permission"
-        : body.error === "unrecognized_period"
+        : body.error === "insufficient_scope"
           ? isZh
-            ? "期间格式无法识别（非自动生成的\"YYYY QN\"格式），无法自动估算"
-            : 'Period label isn\'t in the auto-generated "YYYY QN" format, so it can\'t be auto-estimated'
-          : (body.message as string | undefined) || (isZh ? "估算失败" : "Estimate failed")
+            ? "该主体的 Xero 连接权限不足（建立于新增发票读取权限之前）— 请在「数据导入与ERP」中断开并重新连接该主体的 Xero"
+            : "This entity's Xero connection predates the invoices-read permission — disconnect and reconnect it under Data Import & ERP"
+          : body.error === "unrecognized_period"
+            ? isZh
+              ? "期间格式无法识别（非自动生成的\"YYYY QN\"格式），无法自动估算"
+              : 'Period label isn\'t in the auto-generated "YYYY QN" format, so it can\'t be auto-estimated'
+            : (body.message as string | undefined) || (isZh ? "估算失败" : "Estimate failed")
     );
   }
 
