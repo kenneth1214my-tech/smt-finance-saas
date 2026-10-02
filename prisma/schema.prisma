@@ -727,6 +727,10 @@ model TaxFiling {
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
+  // At most one filing per entity per (type, period) — e.g. one GST F5 per quarter per entity.
+  // Postgres doesn't dedupe multiple NULL subsidiaryIds under this alone, so a partial unique
+  // index (see migration) separately enforces the same for HQ-level rows.
+  @@unique([subsidiaryId, type, periodLabel])
   @@index([organizationId])
 }
 

@@ -42,25 +42,24 @@ export default async function TaxPage() {
 
   // Auto-create this quarter's GST F5 filing as a draft (due date only, figures left for the
   // user to fill in — see currentGstQuarter's doc comment) so the obligation is on the tracker as
-  // soon as the quarter starts, not only once someone remembers to add it.
+  // soon as the quarter starts, not only once someone remembers to add it. skipDuplicates relies
+  // on TaxFiling's (subsidiaryId, type, periodLabel) unique constraint to stay correct under
+  // concurrent page loads — a plain "check then create" here raced and produced a real duplicate
+  // in production before that constraint existed.
   const gstQuarter = currentGstQuarter();
   const entities: { subsidiaryId: string | null }[] = [{ subsidiaryId: null }, ...subsidiaries.map((s) => ({ subsidiaryId: s.id }))];
-  const existingGstThisQuarter = await db.taxFiling.findMany({ where: { organizationId, type: "GST_F5", periodLabel: gstQuarter.periodLabel } });
-  const existingGstKeys = new Set(existingGstThisQuarter.map((f) => f.subsidiaryId ?? "HQ"));
-  const missingGstEntities = entities.filter((e) => !existingGstKeys.has(e.subsidiaryId ?? "HQ"));
-  if (missingGstEntities.length > 0) {
-    await db.taxFiling.createMany({
-      data: missingGstEntities.map((e) => ({
-        organizationId,
-        subsidiaryId: e.subsidiaryId,
-        type: "GST_F5" as const,
-        periodLabel: gstQuarter.periodLabel,
-        dueDate: gstQuarter.dueDate,
-        status: "UPCOMING" as const,
-        notes: "Auto-created from the quarterly GST filing schedule — delete if this entity isn't GST-registered for this period.",
-      })),
-    });
-  }
+  await db.taxFiling.createMany({
+    data: entities.map((e) => ({
+      organizationId,
+      subsidiaryId: e.subsidiaryId,
+      type: "GST_F5" as const,
+      periodLabel: gstQuarter.periodLabel,
+      dueDate: gstQuarter.dueDate,
+      status: "UPCOMING" as const,
+      notes: "Auto-created from the quarterly GST filing schedule — delete if this entity isn't GST-registered for this period.",
+    })),
+    skipDuplicates: true,
+  });
   const filings = await db.taxFiling.findMany({ where: { organizationId }, include: { subsidiary: true }, orderBy: [{ dueDate: "asc" }] });
 
   const currentYear = new Date().getFullYear();
