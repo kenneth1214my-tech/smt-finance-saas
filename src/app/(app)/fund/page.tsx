@@ -60,7 +60,7 @@ export default async function FundPage(props: PageProps<"/fund">) {
   // clearing accounts (see bank-classify.ts), and a -1.2M term loan was dragging cash negative.
   const totalBank = bankRows.filter((b) => b.kind === "cash").reduce((a, b) => a + b.converted, 0);
   const debtRows = bankRows.filter((b) => b.kind === "debt");
-  const totalBorrowings = -debtRows.reduce((a, b) => a + b.converted, 0);
+  const totalBorrowings = 0 - debtRows.reduce((a, b) => a + b.converted, 0); // 0 - x, not -x, so an empty list is 0 rather than -0
   // One row per loan: "<Loan>-Current" and "<Loan>-Non Current" accounts are the two portions of
   // the same loan, so group them. A loan with no current/non-current suffix lands in "unspecified"
   // (counted in the total, not forced into either bucket).
