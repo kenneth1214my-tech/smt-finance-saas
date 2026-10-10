@@ -112,15 +112,13 @@ export async function downloadPagePdf(opts: PdfOptions): Promise<void> {
     const container = doc.querySelector<HTMLElement>("main > div.mx-auto");
     if (!container) throw new Error("Nothing to export on this page");
 
-    const generated = new Date();
-    const stamp = `${generated.getFullYear()}-${String(generated.getMonth() + 1).padStart(2, "0")}-${String(generated.getDate()).padStart(2, "0")} ${String(generated.getHours()).padStart(2, "0")}:${String(generated.getMinutes()).padStart(2, "0")}`;
     const header = doc.createElement("div");
     header.style.cssText = "padding-bottom:10px;border-bottom:2px solid #1f6f54;margin-bottom:2px;font-family:inherit;";
     const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
     header.innerHTML = `
       <div style="font-size:11px;color:#6b7280;letter-spacing:.02em">${esc(opts.companyName)}</div>
       <div style="font-size:24px;font-weight:700;color:#111827;margin-top:2px">${esc(opts.title)}</div>
-      <div style="font-size:11.5px;color:#6b7280;margin-top:3px">${opts.subtitle ? esc(opts.subtitle) + " · " : ""}${opts.isZh ? "生成时间" : "Generated"} ${stamp}</div>`;
+      ${opts.subtitle ? `<div style="font-size:11.5px;color:#6b7280;margin-top:3px">${esc(opts.subtitle)}</div>` : ""}`;
     container.insertBefore(header, container.firstChild);
     container.style.paddingTop = "16px";
     await sleep(50);
@@ -204,7 +202,6 @@ export async function downloadPagePdf(opts: PdfOptions): Promise<void> {
       pdf.setPage(p);
       pdf.setFontSize(8);
       pdf.setTextColor(120);
-      pdf.text(`Generated ${stamp}`, MARGIN_X_MM, A4_H_MM - 7);
       pdf.text("© smt-finance. All rights reserved", A4_W_MM / 2, A4_H_MM - 7, { align: "center" });
       pdf.text(`Page ${p} / ${total}`, A4_W_MM - MARGIN_X_MM, A4_H_MM - 7, { align: "right" });
     }
