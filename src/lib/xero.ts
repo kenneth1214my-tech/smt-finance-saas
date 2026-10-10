@@ -205,7 +205,9 @@ export async function fetchXeroBalanceSheetSeries(accessToken: string, tenantId:
   let year = Number(newestMonthEnd.slice(0, 4));
   let month = Number(newestMonthEnd.slice(5, 7));
   while (remaining > 0) {
-    const periods = Math.min(11, remaining - 1);
+    // Xero requires periods to be 1..11, so a single leftover month-end still asks for one extra
+    // (earlier) column — harmless, the caller just doesn't use it.
+    const periods = Math.max(1, Math.min(11, remaining - 1));
     const date = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
     const url = `https://api.xero.com/api.xro/2.0/Reports/BalanceSheet?date=${date}&periods=${periods}&timeframe=MONTH`;
     const body = (await xeroGet(accessToken, tenantId, url)) as { Reports?: XeroReport[] };
