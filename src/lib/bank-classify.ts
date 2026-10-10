@@ -26,3 +26,14 @@ export function normalizeBankName(name: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+// Loans are often kept as two accounts — "<Loan>-Current" (due within 12 months) and
+// "<Loan>-Non Current" (long-term). Splitting the name lets the UI show one row per loan with the
+// two portions side by side instead of four unrelated-looking lines.
+export type LoanTerm = "current" | "noncurrent" | "unspecified";
+
+export function splitLoanTerm(name: string): { base: string; term: LoanTerm } {
+  const m = /^(.*?)[\s\-–]*\b(non[\s\-]*current|current)\s*$/i.exec((name || "").trim());
+  if (!m) return { base: (name || "").trim(), term: "unspecified" };
+  return { base: m[1].trim() || name.trim(), term: /^non/i.test(m[2]) ? "noncurrent" : "current" };
+}

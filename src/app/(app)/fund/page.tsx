@@ -5,7 +5,7 @@ import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary, withBaseCurrency, fmtMoney, scaleMoney } from "@/lib/i18n/dictionaries";
 import { monthLabels, localizedName } from "@/lib/localize";
 import { getBaseCurrency, getExchangeRates, convertToBase } from "@/lib/currency";
-import { classifyBankAccount, normalizeBankName } from "@/lib/bank-classify";
+import { classifyBankAccount, normalizeBankName, splitLoanTerm } from "@/lib/bank-classify";
 import Topbar from "@/components/Topbar";
 import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
@@ -44,6 +44,24 @@ export default async function FundPage() {
   const totalBank = bankRows.filter((b) => b.kind === "cash").reduce((a, b) => a + b.converted, 0);
   const debtRows = bankRows.filter((b) => b.kind === "debt");
   const totalBorrowings = -debtRows.reduce((a, b) => a + b.converted, 0);
+  // One row per loan: "<Loan>-Current" and "<Loan>-Non Current" accounts are the two portions of
+  // the same loan, so group them. A loan with no current/non-current suffix lands in "unspecified"
+  // (counted in the total, not forced into either bucket).
+  const loanMap = new Map<string, { key: string; base: string; owner: string; current: number; longTerm: number; unspecified: number }>();
+  for (const d of debtRows) {
+    const { base, term } = splitLoanTerm(d.bankEn);
+    const owner = d.subsidiary ? localizedName(d.subsidiary, locale) : isZh ? "集团总部" : "Group HQ";
+    const key = `${d.subsidiaryId ?? "HQ"}|${base.toLowerCase()}`;
+    const loan = loanMap.get(key) ?? { key, base, owner, current: 0, longTerm: 0, unspecified: 0 };
+    const owed = -d.converted;
+    if (term === "current") loan.current += owed;
+    else if (term === "noncurrent") loan.longTerm += owed;
+    else loan.unspecified += owed;
+    loanMap.set(key, loan);
+  }
+  const loans = [...loanMap.values()].sort((a, b) => b.current + b.longTerm + b.unspecified - (a.current + a.longTerm + a.unspecified));
+  const borrowingsCurrent = loans.reduce((a, l) => a + l.current, 0);
+  const borrowingsLongTerm = loans.reduce((a, l) => a + l.longTerm, 0);
   const excludedClearing = bankRows.filter((b) => b.kind === "clearing");
   const hasCashFlow = cashflow.length > 0;
 
@@ -94,7 +112,7 @@ export default async function FundPage() {
             label={isZh ? "银行借款余额" : "Bank Borrowings"}
             value={fmtM(totalBorrowings)}
             unit={dict.common.yi}
-            note={isZh ? `来自 Xero 的 ${debtRows.length} 个贷款账户` : `${debtRows.length} loan account(s) from Xero`}
+            note={isZh ? `一年内 ${fmtM(borrowingsCurrent)} · 长期 ${fmtM(borrowingsLongTerm)}` : `Current ${fmtM(borrowingsCurrent)} · Long-term ${fmtM(borrowingsLongTerm)}`}
           />
           <KpiTile icon={Scale} color="var(--status-warning)" label={isZh ? "净现金（现金 − 借款）" : "Net Cash (cash − borrowings)"} value={fmtM(totalBank - totalBorrowings)} unit={dict.common.yi} />
         </div>
@@ -122,16 +140,29 @@ export default async function FundPage() {
               <p className="py-6 text-[12.5px]" style={{ color: "var(--ink-400)" }}>{isZh ? "没有识别到贷款类账户" : "No loan-type accounts detected"}</p>
             ) : (
               <table className="w-full text-[12.6px]">
+                <thead>
+                  <tr className="text-left text-[11px] font-semibold" style={{ color: "var(--ink-400)" }}>
+                    <th className="pb-2">{isZh ? "贷款" : "Loan"}</th>
+                    <th className="pb-2">{isZh ? "所属主体" : "Owner"}</th>
+                    <th className="pb-2 text-right">{isZh ? "一年内到期" : "Current"}</th>
+                    <th className="pb-2 text-right">{isZh ? "长期" : "Long-term"}</th>
+                    <th className="pb-2 text-right">{isZh ? "合计" : "Total"}</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {debtRows.map((d) => (
-                    <tr key={d.id} className="border-t first:border-t-0" style={{ borderColor: "var(--border)" }}>
-                      <td className="py-2 font-semibold" style={{ color: "var(--ink-900)" }}>{d.bankEn}</td>
-                      <td className="py-2" style={{ color: "var(--ink-400)" }}>{d.subsidiary ? localizedName(d.subsidiary, locale) : isZh ? "集团总部" : "Group HQ"}</td>
-                      <td className="tabular-nums py-2 text-right">{fmtM(-d.converted)}</td>
+                  {loans.map((l) => (
+                    <tr key={l.key} className="border-t" style={{ borderColor: "var(--border)" }}>
+                      <td className="py-2 font-semibold" style={{ color: "var(--ink-900)" }}>{l.base}</td>
+                      <td className="py-2" style={{ color: "var(--ink-400)" }}>{l.owner}</td>
+                      <td className="tabular-nums py-2 text-right">{fmtM(l.current)}</td>
+                      <td className="tabular-nums py-2 text-right">{fmtM(l.longTerm)}</td>
+                      <td className="tabular-nums py-2 text-right font-semibold">{fmtM(l.current + l.longTerm + l.unspecified)}</td>
                     </tr>
                   ))}
                   <tr className="border-t" style={{ borderColor: "var(--border)" }}>
                     <td className="py-2 font-bold" colSpan={2}>{isZh ? "合计" : "Total"}</td>
+                    <td className="tabular-nums py-2 text-right font-bold">{fmtM(borrowingsCurrent)}</td>
+                    <td className="tabular-nums py-2 text-right font-bold">{fmtM(borrowingsLongTerm)}</td>
                     <td className="tabular-nums py-2 text-right font-bold">{fmtM(totalBorrowings)}</td>
                   </tr>
                 </tbody>
