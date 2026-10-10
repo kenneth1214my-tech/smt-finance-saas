@@ -8,6 +8,9 @@ import { getBaseCurrency } from "@/lib/currency";
 import { effectiveRiskRating } from "@/lib/risk-rating";
 import Topbar from "@/components/Topbar";
 import PdfDownloadButton from "@/components/PdfDownloadButton";
+import PeriodSelector from "@/components/PeriodSelector";
+import { parsePeriod, periodLabel } from "@/lib/period";
+import { getReportYears } from "@/lib/period-server";
 import { getCompanyName } from "@/lib/company";
 import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
@@ -18,33 +21,37 @@ import StatusPill from "@/components/ui/StatusPill";
 const fmt1 = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const RISK_TONE: Record<string, "good" | "warning" | "serious" | "critical"> = { GOOD: "good", WARNING: "warning", SERIOUS: "serious", CRITICAL: "critical" };
 
-export default async function ProfitPage() {
+export default async function ProfitPage(props: PageProps<"/profit">) {
   const user = await requireUser();
   const locale = await getServerLocale();
+  const period = parsePeriod(await props.searchParams);
   const isZh = locale === "zh" || locale === "zh-Hant";
 
   const organizationId = user.organizationId;
   const baseCurrency = await getBaseCurrency(organizationId);
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const companyName = await getCompanyName(user.organizationId);
+  const reportYears = await getReportYears(user.organizationId, period.year);
   const fmtM = (n: number) => fmtMoney(n, locale);
   const subsidiaries = await db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } });
   const organization = await db.organization.findUniqueOrThrow({ where: { id: organizationId } });
-  const currentYear = new Date().getFullYear();
-  const monthly = await db.monthlyFinancial.findMany({ where: { year: currentYear, organizationId }, orderBy: { month: "asc" } });
+  const currentYear = period.year;
+  // `monthly` runs Jan..toMonth (trend charts); `kpiRows` is the period itself (fromMonth..toMonth).
+  const monthly = await db.monthlyFinancial.findMany({ where: { year: currentYear, month: { lte: period.toMonth }, organizationId }, orderBy: { month: "asc" } });
+  const kpiRows = monthly.filter((r) => r.month >= period.fromMonth);
   // Prior-year revenue, fetched only to compute YoY for risk-rating escalation below — this
   // page's own KPIs/trends stay current-year-only.
-  const prevYearMonthly = await db.monthlyFinancial.findMany({ where: { year: currentYear - 1, organizationId } });
+  const prevYearMonthly = await db.monthlyFinancial.findMany({ where: { year: currentYear - 1, month: { gte: period.fromMonth, lte: period.toMonth }, organizationId } });
 
-  const totalRevenue = monthly.reduce((a, r) => a + Number(r.revenue), 0);
-  const totalCost = monthly.reduce((a, r) => a + Number(r.opCost), 0);
-  const totalNetProfit = monthly.reduce((a, r) => a + Number(r.netProfit), 0);
+  const totalRevenue = kpiRows.reduce((a, r) => a + Number(r.revenue), 0);
+  const totalCost = kpiRows.reduce((a, r) => a + Number(r.opCost), 0);
+  const totalNetProfit = kpiRows.reduce((a, r) => a + Number(r.netProfit), 0);
   const grossProfit = totalRevenue - totalCost;
   const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
   // Real period expenses (below the gross-profit line), summed from the same fields 经营分析
   // uses — previously this multiplied revenue by a hardcoded 18.7% ("estimated"), a leftover
   // from before sellExp/adminExp/rndExp/financeExp existed as real entered/synced figures.
-  const periodExpenses = monthly.reduce((a, r) => a + Number(r.sellExp) + Number(r.adminExp) + Number(r.rndExp) + Number(r.financeExp), 0);
+  const periodExpenses = kpiRows.reduce((a, r) => a + Number(r.sellExp) + Number(r.adminExp) + Number(r.rndExp) + Number(r.financeExp), 0);
   const opProfit = grossProfit - periodExpenses;
   const opMargin = totalRevenue > 0 ? (opProfit / totalRevenue) * 100 : 0;
   const netMargin = totalRevenue > 0 ? (totalNetProfit / totalRevenue) * 100 : 0;
@@ -78,7 +85,7 @@ export default async function ProfitPage() {
     nameId: "Group HQ",
     riskRating: "GOOD" as const,
   };
-  const hqRows = monthly.filter((m) => !m.subsidiaryId);
+  const hqRows = kpiRows.filter((m) => !m.subsidiaryId);
   const hqRevenue = hqRows.reduce((a, r) => a + Number(r.revenue), 0);
   const hqNetProfit = hqRows.reduce((a, r) => a + Number(r.netProfit), 0);
   const hqPrevRevenue = prevYearMonthly.filter((m) => !m.subsidiaryId).reduce((a, r) => a + Number(r.revenue), 0);
@@ -102,7 +109,7 @@ export default async function ProfitPage() {
   }
   const bySub = [
     ...subsidiaries.map((s) => {
-      const rows = monthly.filter((m) => m.subsidiaryId === s.id);
+      const rows = kpiRows.filter((m) => m.subsidiaryId === s.id);
       const prevRows = prevYearMonthly.filter((m) => m.subsidiaryId === s.id);
       return subRow(s, rows.reduce((a, r) => a + Number(r.revenue), 0), rows.reduce((a, r) => a + Number(r.netProfit), 0), Number(s.equity), prevRows.reduce((a, r) => a + Number(r.revenue), 0));
     }),
@@ -131,8 +138,9 @@ export default async function ProfitPage() {
     <>
       <Topbar dict={dict} locale={locale} title={dict.nav.profit} desc={dict.nav.profit} user={user} />
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
-        <div className="flex justify-end" data-pdf-hide>
-          <PdfDownloadButton companyName={companyName} title={dict.nav.profit} isZh={isZh} />
+        <div className="flex flex-wrap items-center justify-between gap-3" data-pdf-hide>
+          <PeriodSelector year={period.year} month={period.month} basis={period.basis} years={reportYears} isZh={isZh} />
+          <PdfDownloadButton companyName={companyName} title={dict.nav.profit} subtitle={periodLabel(period, isZh)} isZh={isZh} />
         </div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <KpiTile icon={Percent} color="var(--cat-1)" label={dict.m.grossMargin} value={fmt1(grossMargin)} unit="%" />

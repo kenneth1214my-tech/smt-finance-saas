@@ -8,27 +8,32 @@ import { getBaseCurrency, getExchangeRates, convertToBase } from "@/lib/currency
 import { classifyBankAccount } from "@/lib/bank-classify";
 import Topbar from "@/components/Topbar";
 import PdfDownloadButton from "@/components/PdfDownloadButton";
+import PeriodSelector from "@/components/PeriodSelector";
+import { parsePeriod, periodLabel, isHistoricalPeriod } from "@/lib/period";
+import { getReportYears } from "@/lib/period-server";
 import { getCompanyName } from "@/lib/company";
 import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
 
-export default async function OverviewPage() {
+export default async function OverviewPage(props: PageProps<"/overview">) {
   const user = await requireUser();
   const locale = await getServerLocale();
+  const period = parsePeriod(await props.searchParams);
 
-  const YEAR = new Date().getFullYear();
+  const YEAR = period.year;
+  const monthRange = { gte: period.fromMonth, lte: period.toMonth };
   const organizationId = user.organizationId;
 
   const [bySubsidiary, subsidiaries, organization, monthlyRows, cashflow, banks, arCustomers, baseCurrency, rates] = await Promise.all([
     db.monthlyFinancial.groupBy({
       by: ["subsidiaryId"],
-      where: { year: YEAR, organizationId },
+      where: { year: YEAR, month: monthRange, organizationId },
       _sum: { revenue: true, netProfit: true, opCost: true },
     }),
     db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } }),
     db.organization.findUniqueOrThrow({ where: { id: organizationId } }),
-    db.monthlyFinancial.findMany({ where: { year: YEAR, organizationId } }),
-    db.cashFlowMonthly.findMany({ where: { year: YEAR, organizationId } }),
+    db.monthlyFinancial.findMany({ where: { year: YEAR, month: monthRange, organizationId } }),
+    db.cashFlowMonthly.findMany({ where: { year: YEAR, month: monthRange, organizationId } }),
     db.bankAccount.findMany({ where: { organizationId } }),
     db.aRCustomer.findMany({ where: { organizationId } }),
     getBaseCurrency(organizationId),
@@ -37,6 +42,7 @@ export default async function OverviewPage() {
 
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const companyName = await getCompanyName(user.organizationId);
+  const reportYears = await getReportYears(user.organizationId, period.year);
   const isZh = locale === "zh" || locale === "zh-Hant";
 
   const totalRevenue = bySubsidiary.reduce((sum, r) => sum + Number(r._sum.revenue ?? 0), 0);
@@ -125,8 +131,9 @@ export default async function OverviewPage() {
     <>
       <Topbar dict={dict} locale={locale} title={dict.nav.overview} desc={dict.overview.pageDesc} user={user} />
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
-        <div className="flex justify-end" data-pdf-hide>
-          <PdfDownloadButton companyName={companyName} title={dict.nav.overview} isZh={isZh} signOff />
+        <div className="flex flex-wrap items-center justify-between gap-3" data-pdf-hide>
+          <PeriodSelector year={period.year} month={period.month} basis={period.basis} years={reportYears} isZh={isZh} />
+          <PdfDownloadButton companyName={companyName} title={dict.nav.overview} subtitle={periodLabel(period, isZh)} isZh={isZh} signOff />
         </div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <KpiTile icon={TrendingUp} color="var(--cat-1)" label={dict.overview.kpiRevenue} value={fmtM(totalRevenue)} unit={dict.common.yi} />
@@ -134,7 +141,7 @@ export default async function OverviewPage() {
           <KpiTile icon={CircleDollarSign} color="var(--status-good)" label={dict.overview.kpiOpProfit} value={fmtM(opProfit)} unit={dict.common.yi} />
           <KpiTile icon={Wallet} color="var(--cat-4)" label={dict.overview.kpiNetProfit} value={fmtM(totalNetProfit)} unit={dict.common.yi} />
           <KpiTile icon={Landmark} color="var(--cat-3)" label={dict.overview.kpiOcf} value={fmtM(totalOcf)} unit={dict.common.yi} />
-          <KpiTile icon={Building2} color="var(--cat-5)" label={dict.overview.kpiTotalAssets} value={fmtM(totalAssets)} unit={dict.common.yi} />
+          <KpiTile icon={Building2} color="var(--cat-5)" label={dict.overview.kpiTotalAssets} value={fmtM(totalAssets)} unit={dict.common.yi} note={isHistoricalPeriod(period) ? (isZh ? "资产负债表为最近一次同步的时点数，非所选月末" : "Balance sheet as of the latest sync, not the selected month-end") : undefined} />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">

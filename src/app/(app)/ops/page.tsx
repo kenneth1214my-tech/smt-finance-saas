@@ -7,6 +7,9 @@ import { localizedSegment, monthLabels } from "@/lib/localize";
 import { getBaseCurrency } from "@/lib/currency";
 import Topbar from "@/components/Topbar";
 import PdfDownloadButton from "@/components/PdfDownloadButton";
+import PeriodSelector from "@/components/PeriodSelector";
+import { parsePeriod, periodLabel } from "@/lib/period";
+import { getReportYears } from "@/lib/period-server";
 import { getCompanyName } from "@/lib/company";
 import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
@@ -15,24 +18,30 @@ import TrendChart from "@/components/ui/TrendChart";
 
 const fmt1 = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
-export default async function OpsPage() {
+export default async function OpsPage(props: PageProps<"/ops">) {
   const user = await requireUser();
   const locale = await getServerLocale();
+  const period = parsePeriod(await props.searchParams);
   const isZh = locale === "zh" || locale === "zh-Hant";
 
   const organizationId = user.organizationId;
   const baseCurrency = await getBaseCurrency(organizationId);
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const companyName = await getCompanyName(user.organizationId);
+  const reportYears = await getReportYears(user.organizationId, period.year);
   const fmtM = (n: number) => fmtMoney(n, locale);
   const [subsidiaries, monthly, org] = await Promise.all([
     db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } }),
-    db.monthlyFinancial.findMany({ where: { year: { in: [new Date().getFullYear() - 1, new Date().getFullYear()] }, organizationId }, orderBy: { month: "asc" } }),
+    db.monthlyFinancial.findMany({ where: { year: { in: [period.year - 1, period.year] }, month: { lte: period.toMonth }, organizationId }, orderBy: { month: "asc" } }),
     db.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { headcount: true } }),
   ]);
-  const currentYear = new Date().getFullYear();
+  const currentYear = period.year;
+  // mCur/mPrev run Jan..toMonth (trend charts); the headline figures use only fromMonth..toMonth, so a
+  // single-month period shows that month alone while the trend keeps its history.
   const mCur = monthly.filter((m) => m.year === currentYear);
   const mPrev = monthly.filter((m) => m.year === currentYear - 1);
+  const kpiCur = mCur.filter((m) => m.month >= period.fromMonth);
+  const kpiPrev = mPrev.filter((m) => m.month >= period.fromMonth);
 
   // A pseudo-entity standing in for the group/HQ-level bucket (subsidiaryId === null) in the
   // breakdown views below. Previously this page's KPI totals (revenue, cost, expense ratio,
@@ -64,10 +73,10 @@ export default async function OpsPage() {
     return { sub, revenue, cost, sellExp, adminExp, rndExp, financeExp, headcount, margin: revenue > 0 ? ((revenue - cost) / revenue) * 100 : 0, yoy };
   }
 
-  const hqCur = mCur.filter((m) => !m.subsidiaryId);
-  const hqPrev = mPrev.filter((m) => !m.subsidiaryId);
+  const hqCur = kpiCur.filter((m) => !m.subsidiaryId);
+  const hqPrev = kpiPrev.filter((m) => !m.subsidiaryId);
   const bySub = [
-    ...subsidiaries.map((s) => subRow(s, mCur.filter((m) => m.subsidiaryId === s.id), mPrev.filter((m) => m.subsidiaryId === s.id), s.headcount)),
+    ...subsidiaries.map((s) => subRow(s, kpiCur.filter((m) => m.subsidiaryId === s.id), kpiPrev.filter((m) => m.subsidiaryId === s.id), s.headcount)),
     // Only shown when there's actually HQ-level data on file — don't clutter the breakdown with an empty row.
     ...(hqCur.length || hqPrev.length ? [subRow(HQ_PSEUDO_SUB, hqCur, hqPrev, org.headcount)] : []),
   ];
@@ -106,8 +115,9 @@ export default async function OpsPage() {
     <>
       <Topbar dict={dict} locale={locale} title={dict.nav.ops} desc={dict.nav.ops} user={user} />
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
-        <div className="flex justify-end" data-pdf-hide>
-          <PdfDownloadButton companyName={companyName} title={dict.nav.ops} isZh={isZh} />
+        <div className="flex flex-wrap items-center justify-between gap-3" data-pdf-hide>
+          <PeriodSelector year={period.year} month={period.month} basis={period.basis} years={reportYears} isZh={isZh} />
+          <PdfDownloadButton companyName={companyName} title={dict.nav.ops} subtitle={periodLabel(period, isZh)} isZh={isZh} />
         </div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <KpiTile icon={TrendingUp} color="var(--cat-1)" label={dict.m.revenue} value={fmtM(totalRevenue)} unit={dict.common.yi} />
