@@ -6,7 +6,7 @@ import type { Locale } from "@/lib/i18n/dictionaries";
 export type EntityScope = "all" | "hq" | "subsidiary";
 
 const TABS: { value: EntityScope; zh: string; en: string }[] = [
-  { value: "all", zh: "全部", en: "All" },
+  { value: "all", zh: "合计", en: "Total" },
   { value: "hq", zh: "集团总部", en: "Group HQ" },
   { value: "subsidiary", zh: "子公司", en: "Subsidiaries" },
 ];

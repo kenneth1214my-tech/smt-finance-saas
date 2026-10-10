@@ -9,20 +9,37 @@ import { classifyBankAccount, normalizeBankName, splitLoanTerm } from "@/lib/ban
 import Topbar from "@/components/Topbar";
 import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
+import EntityScopeFilter, { type EntityScope } from "@/components/ui/EntityScopeFilter";
 import TrendChart from "@/components/ui/TrendChart";
 import BarChart from "@/components/ui/BarChart";
 
 const fmt1 = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const BANK_TYPE_KEY: Record<string, keyof ReturnType<typeof getDictionary>["m"]> = { main: "bankTypeMain", general: "bankTypeGeneral", fx: "bankTypeFx" };
 
-export default async function FundPage() {
+export default async function FundPage(props: PageProps<"/fund">) {
   const user = await requireUser();
   const locale = await getServerLocale();
   const isZh = locale === "zh" || locale === "zh-Hant";
+  const searchParams = await props.searchParams;
+  const scopeParam = typeof searchParams.scope === "string" ? searchParams.scope : "all";
+  const scope: EntityScope = scopeParam === "hq" || scopeParam === "subsidiary" ? scopeParam : "all";
+  // null subsidiaryId = Group HQ; "Total" is HQ + every subsidiary.
+  const subsidiaryFilter = scope === "hq" ? { subsidiaryId: null } : scope === "subsidiary" ? { subsidiaryId: { not: null } } : {};
 
   const organizationId = user.organizationId;
-  const banks = await db.bankAccount.findMany({ where: { organizationId }, include: { subsidiary: true }, orderBy: { balance: "desc" } });
-  const cashflow = await db.cashFlowMonthly.findMany({ where: { year: new Date().getFullYear(), organizationId }, orderBy: { month: "asc" } });
+  const banks = await db.bankAccount.findMany({ where: { organizationId, ...subsidiaryFilter }, include: { subsidiary: true }, orderBy: { balance: "desc" } });
+  const cashflowRows = await db.cashFlowMonthly.findMany({ where: { year: new Date().getFullYear(), organizationId, ...subsidiaryFilter }, orderBy: { month: "asc" } });
+  // Each entity records its own row per month, so "Total" must add them up per month rather than
+  // treating every row as its own month.
+  const cashflowByMonth = new Map<number, { month: number; ocf: number; icf: number; fcf: number }>();
+  for (const r of cashflowRows) {
+    const m = cashflowByMonth.get(r.month) ?? { month: r.month, ocf: 0, icf: 0, fcf: 0 };
+    m.ocf += Number(r.ocf);
+    m.icf += Number(r.icf);
+    m.fcf += Number(r.fcf);
+    cashflowByMonth.set(r.month, m);
+  }
+  const cashflow = [...cashflowByMonth.values()].sort((a, b) => a.month - b.month);
   const baseCurrency = await getBaseCurrency(organizationId);
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const fmtM = (n: number) => fmtMoney(n, locale);
@@ -72,12 +89,13 @@ export default async function FundPage() {
     dupGroups.set(key, [...(dupGroups.get(key) ?? []), b.bankEn]);
   }
   const probableDuplicates = [...dupGroups.values()].filter((names) => names.length > 1);
-  const totalOcf = cashflow.reduce((a, c) => a + Number(c.ocf), 0);
-  const totalIcf = cashflow.reduce((a, c) => a + Number(c.icf), 0);
-  const totalFcf = cashflow.reduce((a, c) => a + Number(c.fcf), 0);
+  const totalOcf = cashflow.reduce((a, c) => a + c.ocf, 0);
+  const totalIcf = cashflow.reduce((a, c) => a + c.icf, 0);
+  const totalFcf = cashflow.reduce((a, c) => a + c.fcf, 0);
 
-  const months = monthLabels(locale, cashflow.length);
-  const netFlows = cashflow.map((c) => Number(c.ocf) + Number(c.icf) + Number(c.fcf));
+  const allMonthLabels = monthLabels(locale, 12);
+  const months = cashflow.map((c) => allMonthLabels[c.month - 1]);
+  const netFlows = cashflow.map((c) => c.ocf + c.icf + c.fcf);
   const openingBalance = totalBank - netFlows.reduce((a, b) => a + b, 0);
   const balanceByMonth = netFlows.reduce<number[]>((acc, n) => {
     const prev = acc.length ? acc[acc.length - 1] : openingBalance;
@@ -94,6 +112,10 @@ export default async function FundPage() {
     <>
       <Topbar dict={dict} locale={locale} title={dict.nav.fund} desc={dict.nav.fund} user={user} />
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <EntityScopeFilter scope={scope} locale={locale} />
+        </div>
+
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <KpiTile
             icon={Wallet}
@@ -181,9 +203,9 @@ export default async function FundPage() {
                 labels={months}
                 height={230}
                 series={[
-                  { name: dict.m.ocfActivity, color: "var(--cat-3)", data: cashflow.map((c) => scaleMoney(Number(c.ocf), locale)) },
-                  { name: dict.m.icfActivity, color: "var(--cat-2)", data: cashflow.map((c) => scaleMoney(Math.abs(Number(c.icf)), locale)) },
-                  { name: dict.m.fcfActivity, color: "var(--cat-1)", data: cashflow.map((c) => scaleMoney(Math.abs(Number(c.fcf)), locale)) },
+                  { name: dict.m.ocfActivity, color: "var(--cat-3)", data: cashflow.map((c) => scaleMoney(c.ocf, locale)) },
+                  { name: dict.m.icfActivity, color: "var(--cat-2)", data: cashflow.map((c) => scaleMoney(Math.abs(c.icf), locale)) },
+                  { name: dict.m.fcfActivity, color: "var(--cat-1)", data: cashflow.map((c) => scaleMoney(Math.abs(c.fcf), locale)) },
                 ]}
               />
               <div className="mt-3 flex flex-wrap gap-4 text-xs font-medium" style={{ color: "var(--ink-600)" }}>
