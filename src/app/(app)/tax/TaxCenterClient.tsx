@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles } from "lucide-react";
+import { Sparkles, ListChecks } from "lucide-react";
 import type { Subsidiary, CorporateTaxProvision, TaxFiling, DeferredTaxItem } from "@prisma/client";
 import type { Locale, DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { fmtMoney } from "@/lib/i18n/dictionaries";
@@ -10,6 +10,7 @@ import { localizedName } from "@/lib/localize";
 import { computeCorporateTax, effectiveFilingStatus, type TaxFilingStatusComputed } from "@/lib/tax";
 import Card from "@/components/ui/Card";
 import CrudTable, { type FieldConfig } from "@/components/admin/CrudTable";
+import GstBreakdownPanel, { type GstBreakdownView } from "./GstBreakdownPanel";
 
 type Dict = (typeof DICTIONARIES)[Locale];
 type Row = Record<string, unknown>;
@@ -64,31 +65,58 @@ export default function TaxCenterClient({
   const [estimatingId, setEstimatingId] = useState<string | null>(null);
   const [estimateError, setEstimateError] = useState("");
 
+  const [breakdown, setBreakdown] = useState<GstBreakdownView | null>(null);
+  const [breakdownLoadingId, setBreakdownLoadingId] = useState<string | null>(null);
+
+  function explainGstError(body: { error?: string; message?: string }): string {
+    return body.error === "xero_not_connected"
+      ? isZh
+        ? "该主体尚未连接Xero，或需要重新连接以授权新增的发票读取权限"
+        : "Xero isn't connected for this entity, or needs reconnecting to grant the new invoices permission"
+      : body.error === "insufficient_scope"
+        ? isZh
+          ? "该主体的 Xero 连接权限不足（建立于新增发票读取权限之前）— 请在「数据导入与ERP」中断开并重新连接该主体的 Xero"
+          : "This entity's Xero connection predates the invoices-read permission — disconnect and reconnect it under Data Import & ERP"
+        : body.error === "unrecognized_period"
+          ? isZh
+            ? "期间格式无法识别（非自动生成的\"YYYY QN\"格式），无法自动估算"
+            : "Period label isn't in the auto-generated \"YYYY QN\" format, so it can't be auto-estimated"
+          : body.message || (isZh ? "估算失败" : "Estimate failed");
+  }
+
   async function estimateGst(filingId: string, refresh: () => void) {
     setEstimatingId(filingId);
     setEstimateError("");
-    const res = await fetch(`/api/admin/tax-filings/${filingId}/estimate-gst`, { method: "POST" });
-    setEstimatingId(null);
-    if (res.ok) {
-      refresh();
-      return;
+    try {
+      const res = await fetch(`/api/admin/tax-filings/${filingId}/estimate-gst`, { method: "POST" });
+      if (res.ok) {
+        refresh();
+        return;
+      }
+      setEstimateError(explainGstError(await res.json().catch(() => ({}))));
+    } catch {
+      setEstimateError(isZh ? "请求超时或网络错误，请稍后重试" : "Request timed out or network error — try again");
+    } finally {
+      setEstimatingId(null);
     }
-    const body = await res.json().catch(() => ({}));
-    setEstimateError(
-      body.error === "xero_not_connected"
-        ? isZh
-          ? "该主体尚未连接Xero，或需要重新连接以授权新增的发票读取权限"
-          : "Xero isn't connected for this entity, or needs reconnecting to grant the new invoices permission"
-        : body.error === "insufficient_scope"
-          ? isZh
-            ? "该主体的 Xero 连接权限不足（建立于新增发票读取权限之前）— 请在「数据导入与ERP」中断开并重新连接该主体的 Xero"
-            : "This entity's Xero connection predates the invoices-read permission — disconnect and reconnect it under Data Import & ERP"
-          : body.error === "unrecognized_period"
-            ? isZh
-              ? "期间格式无法识别（非自动生成的\"YYYY QN\"格式），无法自动估算"
-              : 'Period label isn\'t in the auto-generated "YYYY QN" format, so it can\'t be auto-estimated'
-            : (body.message as string | undefined) || (isZh ? "估算失败" : "Estimate failed")
-    );
+  }
+
+  async function viewBreakdown(filingId: string) {
+    setBreakdownLoadingId(filingId);
+    setEstimateError("");
+    try {
+      const res = await fetch(`/api/admin/tax-filings/${filingId}/gst-breakdown`, { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setEstimateError(explainGstError(body));
+        return;
+      }
+      setBreakdown({ entityName: body.entityName, periodLabel: body.periodLabel, quarterStart: body.quarterStart, quarterEnd: body.quarterEnd, data: body.breakdown });
+    } catch {
+      setEstimateError(isZh ? "请求超时或网络错误，请稍后重试" : "Request timed out or network error — try again");
+    } finally {
+      setBreakdownLoadingId(null);
+    }
   }
 
   async function generateDraftProvisions() {
@@ -334,8 +362,8 @@ export default function TaxCenterClient({
               <Sparkles size={14} style={{ color: "var(--cat-1)" }} />
               <span className="text-[11.5px]" style={{ color: "var(--ink-400)" }}>
                 {isZh
-                  ? "点击 GST F5 行操作栏中的 图标，从Xero发票/账单数据自动估算销项/进项税额（需已连接Xero，且已授权发票读取权限）。"
-                  : "Click the icon in a GST F5 row's actions to auto-estimate output/input tax from Xero invoices/bills (requires Xero connected with the invoices-read permission granted)."}
+                  ? "GST F5 行操作栏：闪光图标 = 从Xero发票/账单/贷项通知单自动估算销项/进项税额；清单图标 = 打开按 IRAS GST F5 栏位的明细清单，逐项核对（需已连接Xero并授权发票读取权限；大型主体可能需要1-3分钟）。"
+                  : "GST F5 row actions: sparkle = auto-estimate output/input tax from Xero invoices, bills and credit notes; checklist = open the IRAS GST F5 breakdown to double-check every figure (needs Xero connected with the invoices-read permission; large entities can take 1-3 minutes)."}
               </span>
             </div>
             {estimateError && (
@@ -352,21 +380,40 @@ export default function TaxCenterClient({
               addLabel={isZh ? "新增申报记录" : "Add filing"}
               rowActions={(row, refresh) => {
                 if (row.type !== "GST_F5") return null;
-                const busy = estimatingId === String(row.id);
+                const id = String(row.id);
+                const busy = estimatingId === id || breakdownLoadingId === id;
                 return (
-                  <button
-                    key="estimate-gst"
-                    onClick={() => estimateGst(String(row.id), refresh)}
-                    disabled={busy}
-                    title={isZh ? "从Xero发票数据估算" : "Estimate from Xero invoices"}
-                    className="rounded-md p-1.5 disabled:opacity-50"
-                    style={{ background: "color-mix(in srgb, var(--cat-1) 14%, transparent)", color: "var(--cat-1)" }}
-                  >
-                    <Sparkles size={13} />
-                  </button>
+                  <>
+                    <button
+                      key="gst-breakdown"
+                      onClick={() => viewBreakdown(id)}
+                      disabled={busy}
+                      title={isZh ? "IRAS GST F5 明细清单（核对用）" : "IRAS GST F5 breakdown (to double-check)"}
+                      className="rounded-md p-1.5 disabled:opacity-50"
+                      style={{ background: "color-mix(in srgb, var(--cat-2) 14%, transparent)", color: "var(--cat-2)" }}
+                    >
+                      <ListChecks size={13} />
+                    </button>
+                    <button
+                      key="estimate-gst"
+                      onClick={() => estimateGst(id, refresh)}
+                      disabled={busy}
+                      title={isZh ? "从Xero发票数据估算" : "Estimate from Xero invoices"}
+                      className="rounded-md p-1.5 disabled:opacity-50"
+                      style={{ background: "color-mix(in srgb, var(--cat-1) 14%, transparent)", color: "var(--cat-1)" }}
+                    >
+                      <Sparkles size={13} />
+                    </button>
+                  </>
                 );
               }}
             />
+            {(estimatingId || breakdownLoadingId) && (
+              <div className="mt-3 text-[12px]" style={{ color: "var(--ink-400)" }}>
+                {isZh ? "正在从Xero读取该季度的全部单据，请稍候（最长约5分钟）…" : "Reading the whole quarter's documents from Xero — please wait (up to ~5 minutes)…"}
+              </div>
+            )}
+            {breakdown && <GstBreakdownPanel isZh={isZh} breakdown={breakdown} unit={unit} fmtM={fmtM} onClose={() => setBreakdown(null)} />}
           </>
         )}
         {tab === "deferred" && (
