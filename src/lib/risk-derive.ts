@@ -18,7 +18,7 @@ export interface DerivedAlert {
   id: string;
   severity: RiskSeverity;
   category: "opRisk" | "costRisk" | "creditRisk" | "liquidityRisk" | "complianceRisk";
-  tag: "lossMaking" | "revDecline" | "costUp" | "grossMarginNeg" | "lowRunway" | "arRisk" | "creditConc" | "apAging" | "filingDue";
+  tag: "lossMaking" | "revDecline" | "costUp" | "grossMarginNeg" | "lowRunway" | "dataStale" | "arRisk" | "creditConc" | "apAging" | "filingDue";
   subsidiaryId: string | null;
   entityLabel: string;
   textZh: string;
@@ -49,7 +49,14 @@ export async function deriveRiskAlerts(organizationId: string, locale: Locale, n
   const isZh = locale === "zh" || locale === "zh-Hant";
   const lastDone = key(now.getFullYear(), now.getMonth() + 1) - 1; // latest completed month
 
-  const [monthly, cashFlows, balances, customers, payables, filings] = await Promise.all([
+  const [latestBooked, monthly, cashFlows, balances, customers, payables, filings] = await Promise.all([
+    // Newest month with real figures per entity, over ALL time (a placeholder row of zeros isn't "booked").
+    db.monthlyFinancial.findMany({
+      where: { organizationId, OR: [{ revenue: { not: 0 } }, { netProfit: { not: 0 } }] },
+      orderBy: [{ year: "desc" }, { month: "desc" }],
+      distinct: ["subsidiaryId"],
+      select: { subsidiaryId: true, year: true, month: true },
+    }),
     db.monthlyFinancial.findMany({ where: { organizationId, year: { gte: now.getFullYear() - 1 } } }),
     db.cashFlowMonthly.findMany({ where: { organizationId, year: { gte: now.getFullYear() - 1 } } }),
     db.balanceSheetMonthly.findMany({ where: { organizationId, year: { gte: now.getFullYear() - 1 } } }),
@@ -70,6 +77,21 @@ export async function deriveRiskAlerts(organizationId: string, locale: Locale, n
 
   for (const e of entities) {
     const base = { subsidiaryId: e.id, entityLabel: e.label };
+
+    // ---- Stale books: the latest completed month has no figures, so every other alert for this entity
+    // is judging old data. One month behind is normal closing lag; two or more is flagged. ----
+    const booked = latestBooked.find((r) => r.subsidiaryId === e.id);
+    if (booked) {
+      const behind = lastDone - key(booked.year, booked.month);
+      if (behind >= 2) {
+        const bookedLabel = `${booked.year}-${String(booked.month).padStart(2, "0")}`;
+        push({
+          ...base, severity: behind >= 6 ? "CRITICAL" : behind >= 4 ? "SERIOUS" : "WARNING", category: "complianceRisk", tag: "dataStale",
+          textEn: `No P&L booked after ${bookedLabel} — ${behind} completed months behind; other alerts for this entity reflect old data`,
+          textZh: `${bookedLabel} 之后没有利润表数据——已落后 ${behind} 个完整月份，该主体的其他预警基于旧数据`,
+        }, e.id);
+      }
+    }
 
     // ---- P&L (completed months only) ----
     const rows = monthly

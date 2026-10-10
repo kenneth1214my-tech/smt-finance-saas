@@ -35,6 +35,7 @@ const TAG_KEY: Record<string, keyof ReturnType<typeof getDictionary>["m"]> = {
   lowRunway: "riskTagRunway",
   apAging: "riskTagApAging",
   filingDue: "riskTagFiling",
+  dataStale: "riskTagStale",
 };
 const SEV_RANK: Record<string, number> = { CRITICAL: 0, SERIOUS: 1, WARNING: 2, GOOD: 3 };
 
