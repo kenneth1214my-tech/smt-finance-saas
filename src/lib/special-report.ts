@@ -1,3 +1,4 @@
+import { deriveRiskAlerts } from "@/lib/risk-derive";
 import "server-only";
 import { db } from "@/lib/db";
 import { localizedSegment, localizedName } from "@/lib/localize";
@@ -128,7 +129,29 @@ export async function computeMonthlyRiskReport(organizationId: string, year: num
 
   const monthStart = new Date(Date.UTC(year, month - 1, 1));
   const monthEnd = new Date(Date.UTC(year, month, 1));
-  const alertsThisMonth = alerts.filter((a) => a.occurredAt >= monthStart && a.occurredAt < monthEnd);
+  const entered = alerts.filter((a) => a.occurredAt >= monthStart && a.occurredAt < monthEnd);
+
+  // Alerts detected from the synced figures describe the position as of the latest completed month,
+  // so they belong in the report for that month (or a later one) — never in an older month's report,
+  // where they would show today's problems as if they were that month's.
+  const now = new Date();
+  const lastCompleted = now.getFullYear() * 12 + now.getMonth() - 1; // month index of the latest completed month
+  const detected = year * 12 + (month - 1) >= lastCompleted ? await deriveRiskAlerts(organizationId, locale) : [];
+  const alertsThisMonth = [
+    ...detected
+      .slice()
+      .sort((a, b) => ["CRITICAL", "SERIOUS", "WARNING", "GOOD"].indexOf(a.severity) - ["CRITICAL", "SERIOUS", "WARNING", "GOOD"].indexOf(b.severity))
+      .map((d) => ({ id: d.id, severity: d.severity as RiskSeverity, category: d.category as string, tag: d.tag as string, entityLabel: d.entityLabel, text: locale === "zh" || locale === "zh-Hant" ? d.textZh : d.textEn, occurredAt: monthStart })),
+    ...entered.map((a) => ({
+      id: a.id,
+      severity: a.severity,
+      category: a.category,
+      tag: a.tag,
+      entityLabel: a.entityLabel,
+      text: locale === "en" ? a.textEn : locale === "zh-Hant" ? a.textZhTw : locale === "ms" ? a.textMs : locale === "id" ? a.textId : a.textZh,
+      occurredAt: a.occurredAt,
+    })),
+  ];
 
   const catCounts = new Map<string, number>();
   for (const a of alertsThisMonth) catCounts.set(a.category, (catCounts.get(a.category) || 0) + 1);
@@ -179,15 +202,7 @@ export async function computeMonthlyRiskReport(organizationId: string, year: num
     year,
     month,
     generatedAt: new Date(),
-    alertsThisMonth: alertsThisMonth.map((a) => ({
-      id: a.id,
-      severity: a.severity,
-      category: a.category,
-      tag: a.tag,
-      entityLabel: a.entityLabel,
-      text: locale === "en" ? a.textEn : locale === "zh-Hant" ? a.textZhTw : locale === "ms" ? a.textMs : locale === "id" ? a.textId : a.textZh,
-      occurredAt: a.occurredAt,
-    })),
+    alertsThisMonth,
     alertCategoryCounts: Array.from(catCounts.entries()).map(([category, count]) => ({ category, count })),
     byEntity,
   };
