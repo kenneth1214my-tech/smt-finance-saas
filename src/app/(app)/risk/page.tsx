@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary } from "@/lib/i18n/dictionaries";
 import { localizedText } from "@/lib/localize";
+import { deriveRiskAlerts } from "@/lib/risk-derive";
 import Topbar from "@/components/Topbar";
 import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
@@ -29,7 +30,13 @@ const TAG_KEY: Record<string, keyof ReturnType<typeof getDictionary>["m"]> = {
   creditConc: "riskTagCreditConc",
   taxAudit: "riskTagTaxAudit",
   closed: "riskTagClosed",
+  lossMaking: "riskTagLoss",
+  grossMarginNeg: "riskTagMargin",
+  lowRunway: "riskTagRunway",
+  apAging: "riskTagApAging",
+  filingDue: "riskTagFiling",
 };
+const SEV_RANK: Record<string, number> = { CRITICAL: 0, SERIOUS: 1, WARNING: 2, GOOD: 3 };
 
 export default async function RiskPage() {
   const user = await requireUser();
@@ -37,7 +44,16 @@ export default async function RiskPage() {
   const dict = getDictionary(locale);
   const isZh = locale === "zh" || locale === "zh-Hant";
 
-  const alerts = await db.riskAlert.findMany({ where: { organizationId: user.organizationId }, orderBy: { occurredAt: "desc" } });
+  const [manual, derived] = await Promise.all([
+    db.riskAlert.findMany({ where: { organizationId: user.organizationId }, orderBy: { occurredAt: "desc" } }),
+    deriveRiskAlerts(user.organizationId, locale),
+  ]);
+  // Alerts detected from the synced figures come first (most severe on top), then anything entered by hand.
+  const detected = derived
+    .map((d) => ({ id: d.id, severity: d.severity, category: d.category, tag: d.tag as string, entityLabel: d.entityLabel, text: isZh ? d.textZh : d.textEn, occurredAt: new Date(), auto: true }))
+    .sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity]);
+  const entered = manual.map((a) => ({ id: a.id, severity: a.severity as string, category: a.category, tag: a.tag, entityLabel: a.entityLabel, text: localizedText(a, locale), occurredAt: a.occurredAt, auto: false }));
+  const alerts = [...detected, ...entered];
   const open = alerts.filter((a) => a.severity !== "GOOD");
   // No resolved/open status field exists — "closed" is a tag value entered like any other,
   // so we treat un-tagged-closed open alerts as the pending count rather than inventing one.
@@ -110,10 +126,10 @@ export default async function RiskPage() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="text-[12.8px] font-medium" style={{ color: "var(--ink-900)" }}>
-                    {localizedText(a, locale)}
+                    {a.text}
                   </div>
                   <div className="mt-1 text-[11px]" style={{ color: "var(--ink-400)" }}>
-                    {a.entityLabel} · {dict.m[CAT_KEY[a.category]] || a.category} · {a.occurredAt.toISOString().slice(5, 10).replace("-", "-")}
+                    {a.entityLabel} · {dict.m[CAT_KEY[a.category]] || a.category} · {a.auto ? (isZh ? "系统自动检测" : "Auto-detected") : a.occurredAt.toISOString().slice(5, 10)}
                   </div>
                 </div>
                 <StatusPill tone={RISK_TONE[a.severity]} label={severityLabel(a.severity)} />
