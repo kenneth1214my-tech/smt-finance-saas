@@ -7,6 +7,8 @@ import { localizedSegment } from "@/lib/localize";
 import { getBaseCurrency, getExchangeRates, convertToBase } from "@/lib/currency";
 import { classifyBankAccount } from "@/lib/bank-classify";
 import Topbar from "@/components/Topbar";
+import PdfDownloadButton from "@/components/PdfDownloadButton";
+import { getCompanyName } from "@/lib/company";
 import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
 
@@ -34,6 +36,8 @@ export default async function OverviewPage() {
   ]);
 
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
+  const companyName = await getCompanyName(user.organizationId);
+  const isZh = locale === "zh" || locale === "zh-Hant";
 
   const latestMonth = monthlyRows.length ? monthlyRows.reduce((a, b) => (b.month > a.month ? b : a)) : null;
 
@@ -120,6 +124,9 @@ export default async function OverviewPage() {
     <>
       <Topbar dict={dict} locale={locale} title={dict.nav.overview} desc={dict.overview.pageDesc} user={user} />
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
+        <div className="flex justify-end" data-pdf-hide>
+          <PdfDownloadButton companyName={companyName} title={dict.nav.overview} isZh={isZh} />
+        </div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <KpiTile icon={TrendingUp} color="var(--cat-1)" label={dict.overview.kpiRevenue} value={fmtM(totalRevenue)} unit={dict.common.yi} />
           <KpiTile icon={Percent} color="var(--cat-2)" label={dict.overview.kpiGrossMargin} value={fmt1(latestGrossMargin)} unit="%" />

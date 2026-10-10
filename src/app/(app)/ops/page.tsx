@@ -6,6 +6,8 @@ import { getDictionary, withBaseCurrency, fmtMoney } from "@/lib/i18n/dictionari
 import { localizedSegment, monthLabels } from "@/lib/localize";
 import { getBaseCurrency } from "@/lib/currency";
 import Topbar from "@/components/Topbar";
+import PdfDownloadButton from "@/components/PdfDownloadButton";
+import { getCompanyName } from "@/lib/company";
 import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
 import RankList from "@/components/ui/RankList";
@@ -21,6 +23,7 @@ export default async function OpsPage() {
   const organizationId = user.organizationId;
   const baseCurrency = await getBaseCurrency(organizationId);
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
+  const companyName = await getCompanyName(user.organizationId);
   const fmtM = (n: number) => fmtMoney(n, locale);
   const [subsidiaries, monthly, org] = await Promise.all([
     db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } }),
@@ -103,6 +106,9 @@ export default async function OpsPage() {
     <>
       <Topbar dict={dict} locale={locale} title={dict.nav.ops} desc={dict.nav.ops} user={user} />
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
+        <div className="flex justify-end" data-pdf-hide>
+          <PdfDownloadButton companyName={companyName} title={dict.nav.ops} isZh={isZh} />
+        </div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <KpiTile icon={TrendingUp} color="var(--cat-1)" label={dict.m.revenue} value={fmtM(totalRevenue)} unit={dict.common.yi} />
           <KpiTile icon={DollarSign} color="var(--cat-2)" label={dict.m.cost} value={fmtM(totalCost)} unit={dict.common.yi} />
