@@ -37,11 +37,19 @@ function classifyLine(section: "bank" | "asset" | "liability" | "equity", label:
 }
 
 export type MonthBalances = Record<Kind, number>;
+// Xero's own report totals for the column, kept alongside the grouped balances so a stored month-end
+// balance sheet can be checked against the report it came from.
+export interface BalanceTotals {
+  totalAssets: number;
+  totalLiabilities: number;
+  totalEquity: number;
+}
+export type MonthSnapshot = MonthBalances & BalanceTotals;
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
 // One report with N period columns -> balances per month-end column, keyed "yyyy-m".
-export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<string, MonthBalances>; warnings: string[] } {
+export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<string, MonthSnapshot>; warnings: string[] } {
   const rows = report.Rows ?? [];
   const warnings: string[] = [];
   const header = rows.find((r) => r.RowType === "Header");
@@ -51,8 +59,8 @@ export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<stri
     const mi = MONTHS.indexOf(m[2].toLowerCase());
     return mi < 0 ? null : `${m[3]}-${mi + 1}`;
   });
-  const blank = (): MonthBalances => ({ cash: 0, clearing: 0, loan: 0, opAsset: 0, fixed: 0, finAsset: 0, opLiab: 0, finLiab: 0, equity: 0 });
-  const byMonth = new Map<string, MonthBalances>();
+  const blank = (): MonthSnapshot => ({ cash: 0, clearing: 0, loan: 0, opAsset: 0, fixed: 0, finAsset: 0, opLiab: 0, finLiab: 0, equity: 0, totalAssets: 0, totalLiabilities: 0, totalEquity: 0 });
+  const byMonth = new Map<string, MonthSnapshot>();
   keys.forEach((k) => k && byMonth.set(k, blank()));
 
   for (const section of rows) {
@@ -73,6 +81,24 @@ export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<stri
       });
     }
   }
+  // The report's own "Total Assets / Liabilities / Equity" rows (they live in untitled sections or as
+  // summary rows, at any depth).
+  const totalField: Record<string, keyof BalanceTotals> = { "total assets": "totalAssets", "total liabilities": "totalLiabilities", "total equity": "totalEquity" };
+  const walkTotals = (rs: XeroReport["Rows"]) => {
+    for (const r of rs ?? []) {
+      if ((r.RowType === "Row" || r.RowType === "SummaryRow") && r.Cells) {
+        const field = totalField[(r.Cells[0]?.Value ?? "").trim().toLowerCase()];
+        if (field) {
+          keys.forEach((k, i) => {
+            const v = parseFloat(r.Cells?.[i + 1]?.Value ?? "");
+            if (k && !Number.isNaN(v)) byMonth.get(k)![field] = v;
+          });
+        }
+      }
+      if (r.Rows) walkTotals(r.Rows);
+    }
+  };
+  walkTotals(rows);
   return { byMonth, warnings };
 }
 

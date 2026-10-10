@@ -1,7 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { fetchXeroBalanceSheetSeries } from "@/lib/xero";
-import { parseBalanceSheetSeries, deriveMonth, type MonthBalances, type PnlMonth } from "@/lib/cashflow-derive";
+import { parseBalanceSheetSeries, deriveMonth, type MonthSnapshot, type PnlMonth } from "@/lib/cashflow-derive";
 
 export { depreciationOf, type PnlMonth } from "@/lib/cashflow-derive";
 
@@ -29,7 +29,7 @@ export async function syncDerivedCashFlow(args: {
   const ordered = [...months].sort((a, b) => a.year - b.year || a.month - b.month);
   const newest = ordered[ordered.length - 1];
   const needed = ordered.length + 1; // each flow needs the previous month-end too
-  const balances = new Map<string, MonthBalances>();
+  const balances = new Map<string, MonthSnapshot>();
   try {
     const reports = await fetchXeroBalanceSheetSeries(accessToken, tenantId, monthEnd(newest.year, newest.month), needed);
     for (const report of reports) {
@@ -39,6 +39,36 @@ export async function syncDerivedCashFlow(args: {
     }
   } catch (err) {
     return { stored: 0, errors: [`Cash flow (balance sheets): ${err instanceof Error ? err.message : String(err)}`] };
+  }
+
+  // Keep every month-end balance sheet we just fetched (including the opening one) — free, since the
+  // columns were needed for the cash flow anyway — so past month-ends can be reported as they stood.
+  for (const [key, b] of balances) {
+    const [y, m] = key.split("-").map(Number);
+    // The still-open current month is not a month-end yet — it would be overwritten on every sync and
+    // mislabelled as closed — so only completed months are stored.
+    if (new Date(Date.UTC(y, m, 0)) > new Date()) continue;
+    const data = {
+      totalAssets: r2(b.totalAssets), totalLiabilities: r2(b.totalLiabilities), totalEquity: r2(b.totalEquity),
+      cash: r2(b.cash), loans: r2(b.loan), clearing: r2(b.clearing), opAssets: r2(b.opAsset), fixedAssets: r2(b.fixed),
+      finAssets: r2(b.finAsset), opLiabilities: r2(b.opLiab), finLiabilities: r2(b.finLiab),
+    };
+    try {
+      if (subsidiaryId) {
+        await db.balanceSheetMonthly.upsert({
+          where: { subsidiaryId_year_month: { subsidiaryId, year: y, month: m } },
+          create: { organizationId, subsidiaryId, year: y, month: m, ...data },
+          update: data,
+        });
+      } else {
+        // NULL subsidiaryIds are distinct in the compound unique, so HQ rows can't use upsert.
+        const existing = await db.balanceSheetMonthly.findFirst({ where: { organizationId, subsidiaryId: null, year: y, month: m } });
+        if (existing) await db.balanceSheetMonthly.update({ where: { id: existing.id }, data });
+        else await db.balanceSheetMonthly.create({ data: { organizationId, subsidiaryId: null, year: y, month: m, ...data } });
+      }
+    } catch (err) {
+      errors.push(`Balance sheet ${y}-${m}: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   let stored = 0;

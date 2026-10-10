@@ -9,7 +9,7 @@ import { classifyBankAccount } from "@/lib/bank-classify";
 import Topbar from "@/components/Topbar";
 import PdfDownloadButton from "@/components/PdfDownloadButton";
 import PeriodSelector from "@/components/PeriodSelector";
-import { parsePeriod, periodLabel, isHistoricalPeriod } from "@/lib/period";
+import { parsePeriod, periodLabel, periodEndDate } from "@/lib/period";
 import { getReportYears } from "@/lib/period-server";
 import { getCompanyName } from "@/lib/company";
 import Card from "@/components/ui/Card";
@@ -88,9 +88,17 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
   // balance the same way. Eliminate both, mirroring computeConsolidatedBalanceSheet.
   const investmentInSubsidiariesEliminated = Number(organization.investmentInSubsidiaries);
   const dueToSubsidiaries = Number(organization.dueToSubsidiaries);
+  // For any month-end other than "now", use the balance sheet stored for that month-end (captured from
+  // Xero on each sync) instead of the latest-sync snapshot above. An entity with no stored snapshot
+  // for that month falls back to the latest figure and the tile says so.
+  const useSnapshot = period.basis !== "year" || period.year !== new Date().getFullYear();
+  const snapshots = useSnapshot ? await db.balanceSheetMonthly.findMany({ where: { organizationId, year: period.year, month: period.toMonth } }) : [];
+  const snapshotAssets = new Map(snapshots.map((r) => [r.subsidiaryId, Number(r.totalAssets)]));
+  const assetsFor = (subsidiaryId: string | null, equity: number, debtRatio: number) => snapshotAssets.get(subsidiaryId) ?? entityAssets(subsidiaryId, equity, debtRatio);
+  const snapshotIncomplete = useSnapshot && (!snapshotAssets.has(null) || subsidiaries.some((s) => !snapshotAssets.has(s.id)));
   const totalAssets =
-    subsidiaries.reduce((sum, s) => sum + entityAssets(s.id, Number(s.equity), Number(s.debtRatio)), 0) +
-    entityAssets(null, Number(organization.equity), Number(organization.debtRatio)) -
+    subsidiaries.reduce((sum, s) => sum + assetsFor(s.id, Number(s.equity), Number(s.debtRatio)), 0) +
+    assetsFor(null, Number(organization.equity), Number(organization.debtRatio)) -
     investmentInSubsidiariesEliminated -
     Math.max(0, -dueToSubsidiaries);
 
@@ -141,7 +149,7 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
           <KpiTile icon={CircleDollarSign} color="var(--status-good)" label={dict.overview.kpiOpProfit} value={fmtM(opProfit)} unit={dict.common.yi} />
           <KpiTile icon={Wallet} color="var(--cat-4)" label={dict.overview.kpiNetProfit} value={fmtM(totalNetProfit)} unit={dict.common.yi} />
           <KpiTile icon={Landmark} color="var(--cat-3)" label={dict.overview.kpiOcf} value={fmtM(totalOcf)} unit={dict.common.yi} />
-          <KpiTile icon={Building2} color="var(--cat-5)" label={dict.overview.kpiTotalAssets} value={fmtM(totalAssets)} unit={dict.common.yi} note={isHistoricalPeriod(period) ? (isZh ? "资产负债表为最近一次同步的时点数，非所选月末" : "Balance sheet as of the latest sync, not the selected month-end") : undefined} />
+          <KpiTile icon={Building2} color="var(--cat-5)" label={dict.overview.kpiTotalAssets} value={fmtM(totalAssets)} unit={dict.common.yi} note={useSnapshot ? (snapshotIncomplete ? (isZh ? "部分主体暂无该月末资产负债表，已用最近一次同步数" : "Some entities have no stored balance sheet for this month-end — latest sync used for them") : (isZh ? `截至 ${periodEndDate(period)} 月末资产负债表（Xero）` : `Month-end balance sheet as at ${periodEndDate(period)} (Xero)`)) : undefined} />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">

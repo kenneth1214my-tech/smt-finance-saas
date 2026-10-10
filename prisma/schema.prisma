@@ -128,6 +128,7 @@ model Organization {
   auditFindings     AuditFinding[]
   expenseCategoryMappings ExpenseCategoryMapping[]
   corporateTaxProvisions CorporateTaxProvision[]
+  balanceSheets          BalanceSheetMonthly[]
   taxFilings        TaxFiling[]
   deferredTaxItems  DeferredTaxItem[]
 }
@@ -220,6 +221,7 @@ model Subsidiary {
   bankAccounts      BankAccount[]
   cashFlows         CashFlowMonthly[]
   corporateTaxProvisions CorporateTaxProvision[]
+  balanceSheets          BalanceSheetMonthly[]
   taxFilings        TaxFiling[]
   deferredTaxItems  DeferredTaxItem[]
 
@@ -754,5 +756,39 @@ model DeferredTaxItem {
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
 
+  @@index([organizationId])
+}
+
+// Month-end balance sheet per entity, captured from Xero's balance sheet report (12 month-end
+// columns per request) — the same columns the derived cash flow already needs, so storing them costs
+// no extra Xero calls. Lets any past month-end be reported as it stood then, instead of only the
+// latest-sync snapshot on Subsidiary/Organization. Accounts are grouped by NAME (see
+// cashflow-derive.ts), not Xero's section headings; all balances are in the entity's own currency
+// with Xero's signs (assets +, liabilities +, equity +, loan accounts held in the Bank section -).
+model BalanceSheetMonthly {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  // null = group/HQ-level, not tied to any single subsidiary (same convention as MonthlyFinancial).
+  subsidiaryId   String?
+  subsidiary     Subsidiary?  @relation(fields: [subsidiaryId], references: [id])
+  year           Int
+  month          Int // 1-12; the balance is as at the last day of this month
+  totalAssets      Decimal @db.Decimal(14, 2)
+  totalLiabilities Decimal @db.Decimal(14, 2)
+  totalEquity      Decimal @db.Decimal(14, 2)
+  cash             Decimal @db.Decimal(14, 2) // cash accounts only (loans / clearing excluded)
+  loans            Decimal @db.Decimal(14, 2) // loan accounts held in the Bank section (negative = owed)
+  clearing         Decimal @db.Decimal(14, 2)
+  opAssets         Decimal @db.Decimal(14, 2)
+  fixedAssets      Decimal @db.Decimal(14, 2)
+  finAssets        Decimal @db.Decimal(14, 2)
+  opLiabilities    Decimal @db.Decimal(14, 2)
+  finLiabilities   Decimal @db.Decimal(14, 2)
+  updatedAt      DateTime     @updatedAt
+
+  // Postgres treats NULL subsidiaryIds as distinct, so a partial unique index (see migration)
+  // separately enforces one HQ row per (organizationId, year, month).
+  @@unique([subsidiaryId, year, month])
   @@index([organizationId])
 }
