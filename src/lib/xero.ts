@@ -196,6 +196,30 @@ export async function fetchXeroBalanceSheet(accessToken: string, tenantId: strin
   return body.Reports?.[0] ?? { Rows: [] };
 }
 
+// Month-end balance sheets in as few calls as possible: one request returns the given date plus up
+// to 11 earlier month-ends as extra columns, so `count` month-ends need ceil(count / 12) requests.
+// `newestMonthEnd` must itself be a month-end (yyyy-mm-dd). Returns one report per request, newest first.
+export async function fetchXeroBalanceSheetSeries(accessToken: string, tenantId: string, newestMonthEnd: string, count: number): Promise<XeroReport[]> {
+  const reports: XeroReport[] = [];
+  let remaining = count;
+  let year = Number(newestMonthEnd.slice(0, 4));
+  let month = Number(newestMonthEnd.slice(5, 7));
+  while (remaining > 0) {
+    const periods = Math.min(11, remaining - 1);
+    const date = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+    const url = `https://api.xero.com/api.xro/2.0/Reports/BalanceSheet?date=${date}&periods=${periods}&timeframe=MONTH`;
+    const body = (await xeroGet(accessToken, tenantId, url)) as { Reports?: XeroReport[] };
+    reports.push(body.Reports?.[0] ?? { Rows: [] });
+    remaining -= periods + 1;
+    month -= periods + 1;
+    while (month <= 0) {
+      month += 12;
+      year -= 1;
+    }
+  }
+  return reports;
+}
+
 // Xero has no GST report endpoint (see the SCOPES comment above), so GST output/input tax is
 // estimated by summing the tax actually recorded on real invoices/bills instead — this is an
 // ESTIMATE, not a certified replacement for Xero's own GST F5 return: it uses invoice-date

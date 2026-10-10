@@ -105,8 +105,11 @@ export default async function FundPage(props: PageProps<"/fund">) {
 
   const noCashFlowShort = isZh ? "暂无现金流数据" : "No cash-flow data";
   const noCashFlowLong = isZh
-    ? "本年度暂无现金流量数据。Xero 没有现金流量表接口，系统无法自动生成经营/投资/筹资活动明细；可通过「设置 → 批量导入 → 月度现金流」导入，导入后此处会自动显示（不再显示为 0）。"
-    : "No cash-flow data for this year. Xero has no cash-flow statement endpoint, so operating/investing/financing activity cannot be pulled automatically — import it under Settings → Bulk import → Monthly cash flow and it will appear here (instead of showing 0).";
+    ? "本年度暂无现金流量数据。系统会在每次 Xero 同步时，根据月末资产负债表与利润表自动推算经营/投资/筹资现金流（间接法）——请在「设置 → 数据导入与ERP」点击「全部同步」；如未连接 Xero，也可通过「批量导入 → 月度现金流」手动导入。"
+    : "No cash-flow data for this year yet. It is derived automatically on every Xero sync from month-end balance sheets and the P&L (indirect method) — click Sync all under Settings → Data Import & ERP, or import monthly cash flow manually if Xero isn't connected.";
+  const derivedNote = isZh
+    ? "说明：现金流量由 Xero 月末资产负债表与利润表按间接法推算（经营=净利润+折旧±营运资金变动；投资=固定资产变动；筹资=借款、租赁负债、权益变动），三项合计恒等于银行现金的实际变动；并非 Xero 官方现金流量表。"
+    : "Derived from Xero month-end balance sheets and the P&L (indirect method): operating = net profit + depreciation ± working-capital changes; investing = fixed-asset changes; financing = loans, lease liabilities and equity changes. The three always sum to the actual change in bank cash — this is not an official Xero statement.";
 
   return (
     <>
@@ -213,6 +216,7 @@ export default async function FundPage(props: PageProps<"/fund">) {
                 <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: "var(--cat-2)" }} />{dict.m.icfActivity} ({isZh ? "绝对值" : "abs"})</span>
                 <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: "var(--cat-1)" }} />{dict.m.fcfActivity} ({isZh ? "绝对值" : "abs"})</span>
               </div>
+              <p className="mt-2 text-[11px] leading-relaxed" style={{ color: "var(--ink-400)" }}>{derivedNote}</p>
             </>
           ) : (
             <p className="py-6 text-[12.5px] leading-relaxed" style={{ color: "var(--ink-400)" }}>{noCashFlowLong}</p>

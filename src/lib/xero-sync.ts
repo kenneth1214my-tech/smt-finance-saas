@@ -14,6 +14,7 @@ import { getValidXeroAccessToken, getValidXeroGroupAccessToken } from "@/lib/xer
 import { parseXeroPnl } from "@/lib/xero-pnl-parser";
 import { oldestDueAgingDays, statusFromAgingDays } from "@/lib/xero-aging-parser";
 import { parseXeroBudgetSummary, parseXeroBankSummary } from "@/lib/xero-budget-bank-parser";
+import { syncDerivedCashFlow, depreciationOf, type PnlMonth } from "@/lib/xero-cashflow";
 import { parseXeroBalanceSheet } from "@/lib/xero-balance-sheet-parser";
 import { getBaseCurrency } from "@/lib/currency";
 import { computeSyncedRiskRating, worse, type RiskSeverity } from "@/lib/risk-rating";
@@ -126,6 +127,7 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
   const categoryMappingRows = await db.expenseCategoryMapping.findMany({ where: { organizationId } });
   const categoryMapping = Object.fromEntries(categoryMappingRows.map((m) => [m.accountLabel, m.category as ExpenseCategory]));
   const periods = trailingMonths(months);
+  const pnlByMonth = new Map<string, PnlMonth>();
   for (let i = 0; i < periods.length; i += 2) {
     const batch = periods.slice(i, i + 2);
     await Promise.all(
@@ -134,6 +136,7 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
           const { from, to } = monthDateRange(year, month);
           const report = await fetchXeroProfitAndLoss(accessToken, tenantId, from, to);
           const { revenue, costOfSales, netProfit, expenseLineItems } = parseXeroPnl(report);
+          pnlByMonth.set(`${year}-${month}`, { netProfit, depreciation: depreciationOf(expenseLineItems) });
           const grossMarginPct = revenue > 0 ? ((revenue - costOfSales) / revenue) * 100 : 0;
           // Only mapped labels (plus the narrow finance-keyword auto-suggestion) contribute —
           // unmapped line items are simply not yet categorized, not silently dropped from the
@@ -151,6 +154,14 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
         }
       })
     );
+  }
+
+  // 1b. Cash flow — derived from month-end balance sheets + the P&L just synced (see xero-cashflow.ts).
+  try {
+    const cf = await syncDerivedCashFlow({ accessToken, tenantId, organizationId, subsidiaryId, months: periods, pnl: pnlByMonth });
+    errors.push(...cf.errors);
+  } catch (err) {
+    errors.push(`Cash flow: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // 2. AR/AP
@@ -324,6 +335,7 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
   const categoryMappingRows = await db.expenseCategoryMapping.findMany({ where: { organizationId } });
   const categoryMapping = Object.fromEntries(categoryMappingRows.map((m) => [m.accountLabel, m.category as ExpenseCategory]));
   const periods = trailingMonths(months);
+  const pnlByMonth = new Map<string, PnlMonth>();
   for (let i = 0; i < periods.length; i += 2) {
     const batch = periods.slice(i, i + 2);
     await Promise.all(
@@ -332,6 +344,7 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
           const { from, to } = monthDateRange(year, month);
           const report = await fetchXeroProfitAndLoss(accessToken, tenantId, from, to);
           const { revenue, costOfSales, netProfit, expenseLineItems } = parseXeroPnl(report);
+          pnlByMonth.set(`${year}-${month}`, { netProfit, depreciation: depreciationOf(expenseLineItems) });
           const grossMarginPct = revenue > 0 ? ((revenue - costOfSales) / revenue) * 100 : 0;
           const { sellExp, adminExp, rndExp, financeExp } = applyCategoryMapping(expenseLineItems, categoryMapping);
           const data = { revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp };
@@ -348,6 +361,15 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
   }
 
   mark("P&L done");
+
+  // 1b. Cash flow — derived from month-end balance sheets + the P&L just synced (see xero-cashflow.ts).
+  try {
+    const cf = await syncDerivedCashFlow({ accessToken, tenantId, organizationId, subsidiaryId: null, months: periods, pnl: pnlByMonth });
+    errors.push(...cf.errors);
+  } catch (err) {
+    errors.push(`Cash flow: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  mark("cash flow done");
 
   // 2. AR/AP — HQ rows (subsidiaryId: null)
   try {
