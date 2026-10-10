@@ -201,22 +201,34 @@ export async function fetchXeroBalanceSheet(accessToken: string, tenantId: strin
 // (accrual) basis, not cash basis, and doesn't special-case reverse-charge imports (GSTONIMPORTS),
 // which the real F5 form reports in both box 6 and box 7. Every caller must label the result as
 // an estimate for the user to verify, not a final filing figure.
-// Type "ACCREC" = sales invoices (output tax); "ACCPAY" = purchase bills (input tax).
-// Status=="AUTHORISED" is Xero's approved/final state for both unpaid and fully-paid invoices —
-// it excludes DRAFT/SUBMITTED/VOIDED/DELETED, which correctly excludes anything not yet a real
-// supply. Zero-rated and exempt lines already carry $0 tax, so summing TotalTax naturally leaves
-// them out of the total without needing to filter by tax type explicitly.
-export async function fetchXeroGstTaxTotal(accessToken: string, tenantId: string, type: "ACCREC" | "ACCPAY", fromDate: Date, toDate: Date): Promise<number> {
+// Type "ACCREC" = sales invoices (output tax); "ACCPAY" = purchase bills (input tax). Credit notes
+// of the matching direction (ACCRECCREDIT / ACCPAYCREDIT) are netted off, as on the real return.
+// Status must be AUTHORISED *or PAID*: Xero moves an invoice from AUTHORISED to PAID once it is
+// fully settled, so filtering on AUTHORISED alone silently dropped every already-paid
+// invoice/bill — understating both output and input tax. DRAFT/SUBMITTED/VOIDED/DELETED stay
+// excluded (not a real supply). Zero-rated and exempt lines already carry $0 tax, so summing
+// TotalTax leaves them out without filtering by tax type. Foreign-currency documents report
+// TotalTax in their own currency; CurrencyRate is foreign-units-per-1-base-unit (1 for base
+// currency), so dividing converts to the organisation's base currency.
+async function sumDocumentTax(accessToken: string, tenantId: string, resource: "Invoices" | "CreditNotes", type: string, fromDate: Date, toDate: Date): Promise<number> {
   const fmt = (d: Date) => `${d.getFullYear()},${d.getMonth() + 1},${d.getDate()}`;
-  const where = `Type=="${type}"&&Status=="AUTHORISED"&&Date>=DateTime(${fmt(fromDate)})&&Date<=DateTime(${fmt(toDate)})`;
+  const where = `Type=="${type}"&&(Status=="AUTHORISED"||Status=="PAID")&&Date>=DateTime(${fmt(fromDate)})&&Date<=DateTime(${fmt(toDate)})`;
   let total = 0;
   for (let page = 1; ; page++) {
-    const url = `https://api.xero.com/api.xro/2.0/Invoices?where=${encodeURIComponent(where)}&page=${page}`;
-    const body = (await xeroGet(accessToken, tenantId, url)) as { Invoices?: { TotalTax?: number }[] };
-    const invoices = body.Invoices ?? [];
-    if (invoices.length === 0) break;
-    total += invoices.reduce((sum, inv) => sum + (inv.TotalTax ?? 0), 0);
-    if (invoices.length < 100) break;
+    const url = `https://api.xero.com/api.xro/2.0/${resource}?where=${encodeURIComponent(where)}&page=${page}`;
+    const body = (await xeroGet(accessToken, tenantId, url)) as Record<string, { TotalTax?: number; CurrencyRate?: number }[] | undefined>;
+    const docs = body[resource] ?? [];
+    if (docs.length === 0) break;
+    total += docs.reduce((sum, d) => sum + (d.TotalTax ?? 0) / (d.CurrencyRate && d.CurrencyRate > 0 ? d.CurrencyRate : 1), 0);
+    if (docs.length < 100) break;
   }
   return total;
+}
+
+export async function fetchXeroGstTaxTotal(accessToken: string, tenantId: string, type: "ACCREC" | "ACCPAY", fromDate: Date, toDate: Date): Promise<number> {
+  const [documents, credits] = await Promise.all([
+    sumDocumentTax(accessToken, tenantId, "Invoices", type, fromDate, toDate),
+    sumDocumentTax(accessToken, tenantId, "CreditNotes", `${type}CREDIT`, fromDate, toDate),
+  ]);
+  return documents - credits;
 }

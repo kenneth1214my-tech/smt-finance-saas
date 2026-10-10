@@ -176,7 +176,7 @@ export default function TaxCenterClient({
     },
     { key: "notes", label: isZh ? "备注" : "Notes", type: "textarea" },
   ];
-  const filingTableKeys = ["subsidiaryId", "type", "periodLabel", "dueDate", "amount", "status"];
+  const filingTableKeys = ["subsidiaryId", "type", "periodLabel", "dueDate", "outputTax", "inputTax", "amount", "status"];
 
   const deferredFields: FieldConfig[] = [
     { key: "subsidiaryId", label: dict.m.taxEntity, type: "select", options: subsidiaryOrHqOptions, displayValue: subsidiaryOrHqLabel },
