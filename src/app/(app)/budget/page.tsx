@@ -49,8 +49,12 @@ export default async function BudgetPage() {
   const totalActual = rows.reduce((a, r) => a + r.actual, 0);
   const totalBudget = rows.reduce((a, r) => a + r.budget, 0);
   const revBudgetRate = totalBudget > 0 ? (totalActual / totalBudget) * 100 : 0;
-  const avgCostRate = rows.length ? rows.reduce((a, r) => a + r.costRate, 0) / rows.length : 0;
-  const avgExpRate = rows.length ? rows.reduce((a, r) => a + r.expRate, 0) / rows.length : 0;
+  // Only entities that actually have a budget count — an entity with none is "not budgeted", not "0%".
+  const budgeted = rows.filter((r) => r.budget > 0);
+  const hasBudget = budgeted.length > 0;
+  const avgCostRate = hasBudget ? budgeted.reduce((a, r) => a + r.costRate, 0) / budgeted.length : 0;
+  const avgExpRate = hasBudget ? budgeted.reduce((a, r) => a + r.expRate, 0) / budgeted.length : 0;
+  const noBudgetNote = isZh ? "未设置年度预算 — 在 Xero 建立预算后将自动同步" : "No annual budget set — it syncs automatically once one is created in Xero";
   const forecast = orgMonthCount > 0 ? (totalActual / orgMonthCount) * 12 : 0;
 
   return (
@@ -58,9 +62,9 @@ export default async function BudgetPage() {
       <Topbar dict={dict} locale={locale} title={dict.nav.budget} desc={dict.nav.budget} user={user} />
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <KpiTile icon={Target} color="var(--cat-1)" label={dict.m.revBudgetRate} value={fmt1(revBudgetRate)} unit="%" note={`${isZh ? "年度目标" : "Annual target"} ${fmtM(totalBudget)} ${dict.common.yi}`} />
-          <KpiTile icon={TrendingDown} color="var(--cat-2)" label={dict.m.costBudgetRate} value={fmt1(avgCostRate)} unit="%" />
-          <KpiTile icon={Wallet} color="var(--cat-4)" label={dict.m.expBudgetRate} value={fmt1(avgExpRate)} unit="%" />
+          <KpiTile icon={Target} color="var(--cat-1)" label={dict.m.revBudgetRate} value={hasBudget ? fmt1(revBudgetRate) : "—"} unit={hasBudget ? "%" : undefined} note={hasBudget ? `${isZh ? "年度目标" : "Annual target"} ${fmtM(totalBudget)} ${dict.common.yi}` : noBudgetNote} />
+          <KpiTile icon={TrendingDown} color="var(--cat-2)" label={dict.m.costBudgetRate} value={hasBudget ? fmt1(avgCostRate) : "—"} unit={hasBudget ? "%" : undefined} />
+          <KpiTile icon={Wallet} color="var(--cat-4)" label={dict.m.expBudgetRate} value={hasBudget ? fmt1(avgExpRate) : "—"} unit={hasBudget ? "%" : undefined} />
           <KpiTile icon={TrendingUp} color="var(--status-good)" label={dict.m.revForecast} value={fmtM(forecast)} unit={dict.common.yi} />
         </div>
 
@@ -92,7 +96,13 @@ export default async function BudgetPage() {
                 const color = r.rate >= 95 ? "var(--status-good)" : r.rate >= 80 ? "var(--cat-1)" : "var(--status-warning)";
                 return (
                   <div key={r.sub?.id ?? "hq"} className="flex flex-col items-center gap-2 text-center">
-                    <Ring pct={r.rate} color={color} size={84} />
+                    {r.budget > 0 ? (
+                      <Ring pct={r.rate} color={color} size={84} />
+                    ) : (
+                      <div className="flex items-center justify-center text-[18px] font-extrabold" style={{ width: 84, height: 84, color: "var(--ink-400)" }}>
+                        —
+                      </div>
+                    )}
                     <div className="text-[12px] font-semibold" style={{ color: "var(--ink-900)" }}>
                       {subOrHqName(r.sub)}
                     </div>
@@ -141,13 +151,12 @@ export default async function BudgetPage() {
                     <td className="py-2.5 font-semibold" style={{ color: "var(--ink-900)" }}>
                       {subOrHqName(r.sub)}
                     </td>
-                    <td className="tabular-nums py-2.5 text-right">{fmtM(r.budget)}</td>
+                    <td className="tabular-nums py-2.5 text-right">{r.budget > 0 ? fmtM(r.budget) : "—"}</td>
                     <td className="tabular-nums py-2.5 text-right">{fmtM(r.actual)}</td>
-                    <td className="tabular-nums py-2.5 text-right font-bold" style={{ color: r.variance >= 0 ? "var(--delta-up)" : "var(--delta-down)" }}>
-                      {r.variance >= 0 ? "+" : ""}
-                      {fmtM(r.variance)}
+                    <td className="tabular-nums py-2.5 text-right font-bold" style={{ color: r.budget <= 0 ? "var(--ink-400)" : r.variance >= 0 ? "var(--delta-up)" : "var(--delta-down)" }}>
+                      {r.budget > 0 ? `${r.variance >= 0 ? "+" : ""}${fmtM(r.variance)}` : "—"}
                     </td>
-                    <td className="tabular-nums py-2.5 text-right">{fmt1(r.rate)}%</td>
+                    <td className="tabular-nums py-2.5 text-right">{r.budget > 0 ? `${fmt1(r.rate)}%` : "—"}</td>
                   </tr>
                 ))}
               </tbody>

@@ -55,9 +55,9 @@ export default async function ARPage(props: PageProps<"/ar">) {
   // DSO = AR balance ÷ (revenue ÷ days elapsed YTD) — standard formula, computed from real data.
   const daysElapsed = monthCount * 30.4;
   const dso = totalRevenue > 0 ? Math.round((totalAR / totalRevenue) * daysElapsed) : 0;
-  // No bad-debt provisioning or a collections ledger exists in the schema yet — shown as 0 rather than invented numbers.
-  const badDebt = 0;
-  const collections = 0;
+  // No bad-debt provisioning or collections ledger exists in the schema — those two tiles show "—"
+  // (not tracked) instead of a 0 that reads like a measured result.
+  const notTracked = isZh ? "系统暂未记录" : "Not tracked yet";
 
   const statusLabel = (s: string) =>
     s === "GOOD" ? (isZh ? "正常" : "Normal") : s === "WARNING" ? (isZh ? "关注" : "Watch") : s === "SERIOUS" ? (isZh ? "预警" : "Alert") : isZh ? "严重逾期" : "Severely overdue";
@@ -70,8 +70,8 @@ export default async function ARPage(props: PageProps<"/ar">) {
           <KpiTile icon={FileSpreadsheet} color="var(--cat-1)" label={dict.m.arBalance} value={fmtM(totalAR)} unit={dict.common.yi} />
           <KpiTile icon={Clock} color="var(--cat-2)" label={dict.m.dso} value={String(dso)} unit={dict.m.dayUnit} />
           <KpiTile icon={AlertTriangle} color="var(--status-critical)" label={dict.m.overdueAmt} value={fmtM(overdue)} unit={dict.common.yi} note={`${fmt1(totalAR > 0 ? (overdue / totalAR) * 100 : 0)}%`} />
-          <KpiTile icon={ShieldAlert} color="var(--cat-4)" label={dict.m.badDebt} value={fmtM(badDebt)} unit={dict.common.yi} />
-          <KpiTile icon={Banknote} color="var(--status-good)" label={dict.m.collections} value={fmtM(collections)} unit={dict.common.yi} />
+          <KpiTile icon={ShieldAlert} color="var(--cat-4)" label={dict.m.badDebt} value="—" note={notTracked} />
+          <KpiTile icon={Banknote} color="var(--status-good)" label={dict.m.collections} value="—" note={notTracked} />
         </div>
 
         <Card title={dict.m.arAgingCard} unit={`${dict.common.yi} · ${dict.m.total} ${fmtM(totalAR)} ${dict.common.yi}`}>

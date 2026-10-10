@@ -24,11 +24,25 @@ export default async function RegionPage() {
   const fmtM = (n: number) => fmtMoney(n, locale);
   const regions = await db.region.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } });
   const currentYear = new Date().getFullYear();
-  const monthly = await db.regionMonthlyFinancial.findMany({ where: { year: { in: [currentYear - 1, currentYear] }, organizationId } });
+  type RegionRow = { regionId: string; year: number; month: number; revenue: unknown; netProfit: unknown };
+  const years = { in: [currentYear - 1, currentYear] };
+  let monthly: RegionRow[] = await db.regionMonthlyFinancial.findMany({ where: { year: years, organizationId } });
+  // Region figures used to be typed in by hand, so with nobody entering them the page read 0. When the
+  // group operates in exactly one region, every entity (HQ included) belongs to it, so its figures are
+  // simply the sum of the entities' own synced monthly P&L. With several regions there is no entity →
+  // region mapping to derive from, so manually entered rows are still what is shown.
+  let derivedFromEntities = false;
+  if (regions.length === 1 && monthly.length === 0) {
+    const fin = await db.monthlyFinancial.findMany({ where: { year: years, organizationId } });
+    monthly = fin.map((f) => ({ regionId: regions[0].id, year: f.year, month: f.month, revenue: f.revenue, netProfit: f.netProfit }));
+    derivedFromEntities = fin.length > 0;
+  }
 
+  const latestMonth = Math.max(0, ...monthly.filter((m) => m.year === currentYear).map((m) => m.month));
   const rows = regions.map((r, i) => {
     const cur = monthly.filter((m) => m.regionId === r.id && m.year === currentYear);
-    const prev = monthly.filter((m) => m.regionId === r.id && m.year === currentYear - 1);
+    // Same months of last year only — year-to-date against a full prior year would always read as a collapse.
+    const prev = monthly.filter((m) => m.regionId === r.id && m.year === currentYear - 1 && m.month <= latestMonth);
     const revenue = cur.reduce((a, m) => a + Number(m.revenue), 0);
     const netProfit = cur.reduce((a, m) => a + Number(m.netProfit), 0);
     const prevRevenue = prev.reduce((a, m) => a + Number(m.revenue), 0);
@@ -40,9 +54,11 @@ export default async function RegionPage() {
   const totalRevenue = rows.reduce((a, r) => a + r.revenue, 0);
   const withYoy = rows.filter((r) => r.yoy !== null) as (Omit<(typeof rows)[number], "yoy"> & { yoy: number })[];
   const top = withYoy.slice().sort((a, b) => b.yoy - a.yoy)[0];
-  const bottom = withYoy.slice().sort((a, b) => a.yoy - b.yoy)[0];
+  // The "negative growth" tile only names a region that actually shrank.
+  const bottomRaw = withYoy.slice().sort((a, b) => a.yoy - b.yoy)[0];
+  const bottom = bottomRaw && bottomRaw.yoy < 0 ? bottomRaw : undefined;
   const sorted = rows.slice().sort((a, b) => b.revenue - a.revenue);
-  const concentration = sorted.length >= 2 && totalRevenue > 0 ? ((sorted[0].revenue + sorted[1].revenue) / totalRevenue) * 100 : 0;
+  const concentration = sorted.length >= 1 && totalRevenue > 0 ? (((sorted[0]?.revenue ?? 0) + (sorted[1]?.revenue ?? 0)) / totalRevenue) * 100 : 0;
 
   return (
     <>
@@ -113,6 +129,11 @@ export default async function RegionPage() {
             </table>
           </div>
         </Card>
+        {derivedFromEntities && (
+          <p className="text-[12px]" style={{ color: "var(--ink-400)" }}>
+            {isZh ? "· 集团仅在一个区域经营，区域数据由各主体（含总部）已同步的月度利润表自动汇总。" : "· The group operates in a single region, so these figures are the sum of every entity's synced monthly P&L (HQ included)."}
+          </p>
+        )}
       </div>
     </>
   );
