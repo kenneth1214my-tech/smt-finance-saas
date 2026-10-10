@@ -196,14 +196,6 @@ export default async function OverviewPage() {
           </Card>
         </div>
 
-        <div
-          className="rounded-2xl border p-4 text-xs"
-          style={{ background: "color-mix(in srgb, var(--cat-1) 6%, var(--surface))", borderColor: "var(--border-strong)", color: "var(--ink-600)" }}
-        >
-          {locale === "en"
-            ? "This is the production build: all 11 modules read live data from PostgreSQL via Prisma. Real ERP integration (e.g. Yonyou/Kingdee/SAP) is not connected yet."
-            : "这是正式系统:全部11个模块均通过 Prisma 从 PostgreSQL 实时读取数据。真实 ERP 系统对接(如用友/金蝶/SAP)尚未接入。"}
-        </div>
       </div>
     </>
   );
