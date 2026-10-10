@@ -888,34 +888,21 @@ export function getDictionary(locale: string | undefined | null): Dictionary {
   return DICTIONARIES[DEFAULT_LOCALE];
 }
 
-// "万元"/"'000"/etc. is a magnitude, not a currency — the dictionaries used to hardcode "RMB"
-// alongside it for en/ms/id, which was wrong for any org whose admin-configured base currency
-// isn't RMB. This derives the unit label from the real setting instead.
-//
-// zh/zh-Hant keep the Chinese 万/萬 (ten-thousands) convention — figures are entered and
-// stored in 万/萬-units at the source (see every "(万元)"-labeled field on the data-entry
-// forms), so they're shown as-is with that unit label, per management's confirmed decision.
-// en/ms/id show the true full-precision amount instead — comma thousands separators, 2
-// decimal places, plain currency code as the label (no "'000"/10K scaling — confirmed with
-// the user after an earlier "'000" convention was rejected in review).
-const WAN_SCALED_LOCALES = new Set<Locale>(["zh", "zh-Hant"]);
-const WAN_UNIT_LABEL: Partial<Record<Locale, string>> = { zh: "万元", "zh-Hant": "萬元" };
-
-export function unitLabel(locale: Locale, baseCurrency: string): string {
-  return WAN_SCALED_LOCALES.has(locale) ? `${baseCurrency} ${WAN_UNIT_LABEL[locale]}` : baseCurrency;
+// Amounts are shown as the plain base-currency figure in every language. This platform's figures
+// come from Xero in full currency units (e.g. SGD 2,789,169.20), so the old Chinese 万元 (ten-thousands)
+// label made every figure read 10,000x too large. The unit label is therefore just the currency code.
+export function unitLabel(_locale: Locale, baseCurrency: string): string {
+  return baseCurrency;
 }
 
-/** Scales a raw monetary figure for display per the locale's unit convention (see unitLabel).
- * No locale actually divides anymore — kept as a named pass-through so call sites stay
- * self-documenting and don't need to change if a scaled convention is reintroduced later. */
+/** Kept as a named pass-through so call sites stay self-documenting — no locale scales figures. */
 export function scaleMoney(n: number, _locale: Locale): number {
   return n;
 }
 
-/** Formats a raw monetary figure for display — decimal places follow the locale's unit convention. */
-export function fmtMoney(n: number, locale: Locale): string {
-  const decimals = WAN_SCALED_LOCALES.has(locale) ? 1 : 2;
-  return n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+/** Formats a raw monetary figure for display: thousands separators, 2 decimals (true precision). */
+export function fmtMoney(n: number, _locale: Locale): string {
+  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export function withBaseCurrency(dict: Dictionary, locale: Locale, baseCurrency: string): Dictionary {

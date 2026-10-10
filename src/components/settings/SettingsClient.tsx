@@ -1030,7 +1030,7 @@ function CurrencyTab({
         <div className="flex flex-wrap items-end gap-3">
           <label className="flex flex-col gap-1 text-[12.5px]">
             <span className="font-semibold" style={{ color: "var(--ink-600)" }}>
-              {isZh ? "股东权益(万元)" : "Equity"}
+              {isZh ? "股东权益" : "Equity"}
             </span>
             <input value={equity} onChange={(e) => setEquity(e.target.value)} className="w-40 rounded-lg border px-3 py-2 text-[12.8px]" style={{ borderColor: "var(--border)" }} />
           </label>
@@ -1136,7 +1136,7 @@ function OrgTab({ locale, subsidiaries, regions }: { locale: Locale; subsidiarie
   const subFields: FieldConfig[] = [
     { key: "nameZh", label: isZh ? "名称" : "Name", type: "text", required: true },
     { key: "segmentZh", label: isZh ? "板块（可选，默认同名称）" : "Segment (optional, defaults to name)", type: "text" },
-    { key: "equity", label: isZh ? "股东权益(万元，用于计算ROE，可选)" : "Equity (used to compute ROE, optional)", type: "number", step: "0.01" },
+    { key: "equity", label: isZh ? "股东权益(用于计算ROE，可选)" : "Equity (used to compute ROE, optional)", type: "number", step: "0.01" },
     { key: "debtRatio", label: isZh ? "资产负债率 % （可选）" : "Debt Ratio % (optional)", type: "number", step: "0.1" },
     { key: "headcount", label: isZh ? "员工人数（当前）" : "Headcount (current)", type: "number" },
     {
@@ -1243,14 +1243,14 @@ function FinancialsTab({
     { key: "subsidiaryId", label: isZh ? "子公司" : "Subsidiary", type: "select", options: subsidiaryOrHqOptions, displayValue: subsidiaryOrHqLabel },
     { key: "year", label: isZh ? "年度" : "Year", type: "number" },
     { key: "month", label: isZh ? "月份" : "Month", type: "number" },
-    { key: "revenue", label: isZh ? "营业收入(万元)" : "Revenue", type: "number", step: "0.01" },
-    { key: "netProfit", label: isZh ? "净利润(万元)" : "Net Profit", type: "number", step: "0.01" },
+    { key: "revenue", label: isZh ? "营业收入" : "Revenue", type: "number", step: "0.01" },
+    { key: "netProfit", label: isZh ? "净利润" : "Net Profit", type: "number", step: "0.01" },
     { key: "grossMarginPct", label: isZh ? "毛利率 %" : "Gross Margin %", type: "number", step: "0.1" },
-    { key: "opCost", label: isZh ? "营业成本(万元，销售成本)" : "Op. Cost (cost of sales)", type: "number", step: "0.01" },
-    { key: "sellExp", label: isZh ? "销售费用(万元)" : "Selling Expense", type: "number", step: "0.01" },
-    { key: "adminExp", label: isZh ? "管理费用(万元)" : "Admin Expense", type: "number", step: "0.01" },
-    { key: "rndExp", label: isZh ? "研发费用(万元)" : "R&D Expense", type: "number", step: "0.01" },
-    { key: "financeExp", label: isZh ? "财务费用(万元)" : "Finance Expense", type: "number", step: "0.01" },
+    { key: "opCost", label: isZh ? "营业成本(销售成本)" : "Op. Cost (cost of sales)", type: "number", step: "0.01" },
+    { key: "sellExp", label: isZh ? "销售费用" : "Selling Expense", type: "number", step: "0.01" },
+    { key: "adminExp", label: isZh ? "管理费用" : "Admin Expense", type: "number", step: "0.01" },
+    { key: "rndExp", label: isZh ? "研发费用" : "R&D Expense", type: "number", step: "0.01" },
+    { key: "financeExp", label: isZh ? "财务费用" : "Finance Expense", type: "number", step: "0.01" },
     { key: "headcount", label: isZh ? "员工人数（当月末）" : "Headcount (end of month)", type: "number" },
   ];
   const monthlyTableKeys = ["subsidiaryId", "year", "month", "revenue", "netProfit", "grossMarginPct", "opCost"];
@@ -1259,14 +1259,14 @@ function FinancialsTab({
     { key: "regionId", label: isZh ? "区域" : "Region", type: "select", options: regionOptions(regions, locale), displayValue: regionLabel },
     { key: "year", label: isZh ? "年度" : "Year", type: "number" },
     { key: "month", label: isZh ? "月份" : "Month", type: "number" },
-    { key: "revenue", label: isZh ? "营业收入(万元)" : "Revenue", type: "number", step: "0.01" },
-    { key: "netProfit", label: isZh ? "净利润(万元)" : "Net Profit", type: "number", step: "0.01" },
+    { key: "revenue", label: isZh ? "营业收入" : "Revenue", type: "number", step: "0.01" },
+    { key: "netProfit", label: isZh ? "净利润" : "Net Profit", type: "number", step: "0.01" },
   ];
 
   const budgetFields: FieldConfig[] = [
     { key: "subsidiaryId", label: isZh ? "子公司" : "Subsidiary", type: "select", options: subsidiaryOrHqOptions, displayValue: subsidiaryOrHqLabel },
     { key: "year", label: isZh ? "年度" : "Year", type: "number" },
-    { key: "revenueBudget", label: isZh ? "年度收入预算(万元)" : "Revenue Budget", type: "number", step: "0.01" },
+    { key: "revenueBudget", label: isZh ? "年度收入预算" : "Revenue Budget", type: "number", step: "0.01" },
     { key: "costBudgetRate", label: isZh ? "成本预算执行率 %" : "Cost Budget Rate %", type: "number", step: "0.1" },
     { key: "expenseBudgetRate", label: isZh ? "费用预算执行率 %" : "Expense Budget Rate %", type: "number", step: "0.1" },
   ];
@@ -1276,7 +1276,7 @@ function FinancialsTab({
     { key: "bankZh", label: isZh ? "银行(简)" : "Bank (ZH)", type: "text", uppercase: true },
     { key: "bankEn", label: "Bank (EN)", type: "text", uppercase: true },
     { key: "acctType", label: isZh ? "账户类型" : "Account Type", type: "select", options: [{ value: "main", label: "基本户/main" }, { value: "general", label: "一般户/general" }, { value: "fx", label: "外汇/fx" }] },
-    { key: "balance", label: isZh ? "余额(万元)" : "Balance", type: "number", step: "0.01" },
+    { key: "balance", label: isZh ? "余额" : "Balance", type: "number", step: "0.01" },
     { key: "currency", label: isZh ? "币种" : "Currency", type: "select", options: CURRENCY_OPTIONS },
     { key: "subsidiaryId", label: isZh ? "所属主体" : "Owner", type: "select", options: subsidiaryOrHqOptions, displayValue: subsidiaryOrHqLabel },
   ];
@@ -1386,7 +1386,7 @@ function BusinessTab({
     { key: "nameZh", label: isZh ? "客户(简)" : "Customer (ZH)", type: "text" },
     { key: "nameEn", label: "Customer (EN)", type: "text" },
     { key: "subsidiaryId", label: isZh ? "子公司" : "Subsidiary", type: "select", options: subsidiaryOrHqOptions, displayValue: subsidiaryOrHqLabel },
-    { key: "balance", label: isZh ? "余额(万元)" : "Balance", type: "number", step: "0.01" },
+    { key: "balance", label: isZh ? "余额" : "Balance", type: "number", step: "0.01" },
     { key: "agingDays", label: isZh ? "账龄(天)" : "Aging (days)", type: "number" },
     { key: "status", label: isZh ? "状态" : "Status", type: "select", options: RISK_LEVEL_OPTIONS },
   ];
@@ -1395,7 +1395,7 @@ function BusinessTab({
     { key: "nameZh", label: isZh ? "供应商(简)" : "Vendor (ZH)", type: "text" },
     { key: "nameEn", label: "Vendor (EN)", type: "text" },
     { key: "subsidiaryId", label: isZh ? "子公司" : "Subsidiary", type: "select", options: subsidiaryOrHqOptions, displayValue: subsidiaryOrHqLabel },
-    { key: "balance", label: isZh ? "余额(万元)" : "Balance", type: "number", step: "0.01" },
+    { key: "balance", label: isZh ? "余额" : "Balance", type: "number", step: "0.01" },
     { key: "agingDays", label: isZh ? "账龄(天)" : "Aging (days)", type: "number" },
     { key: "status", label: isZh ? "状态" : "Status", type: "select", options: RISK_LEVEL_OPTIONS },
   ];
@@ -1404,8 +1404,8 @@ function BusinessTab({
     { key: "nameZh", label: isZh ? "项目(简)" : "Project (ZH)", type: "text" },
     { key: "nameEn", label: "Project (EN)", type: "text" },
     { key: "subsidiaryId", label: isZh ? "子公司" : "Subsidiary", type: "select", options: subOptions(subsidiaries, locale), displayValue: subLabel },
-    { key: "budget", label: isZh ? "预算(万元)" : "Budget", type: "number", step: "0.01" },
-    { key: "spent", label: isZh ? "已投资(万元)" : "Spent", type: "number", step: "0.01" },
+    { key: "budget", label: isZh ? "预算" : "Budget", type: "number", step: "0.01" },
+    { key: "spent", label: isZh ? "已投资" : "Spent", type: "number", step: "0.01" },
     { key: "progressPct", label: isZh ? "进度 %" : "Progress %", type: "number" },
     { key: "status", label: isZh ? "状态" : "Status", type: "select", options: [{ value: "ON_TRACK", label: "ON_TRACK" }, { value: "AHEAD", label: "AHEAD" }, { value: "DELAYED", label: "DELAYED" }] },
     { key: "owner", label: isZh ? "负责人" : "Owner", type: "text" },
