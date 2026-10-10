@@ -125,7 +125,7 @@ export default async function OverviewPage() {
       <Topbar dict={dict} locale={locale} title={dict.nav.overview} desc={dict.overview.pageDesc} user={user} />
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
         <div className="flex justify-end" data-pdf-hide>
-          <PdfDownloadButton companyName={companyName} title={dict.nav.overview} isZh={isZh} />
+          <PdfDownloadButton companyName={companyName} title={dict.nav.overview} isZh={isZh} signOff />
         </div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <KpiTile icon={TrendingUp} color="var(--cat-1)" label={dict.overview.kpiRevenue} value={fmtM(totalRevenue)} unit={dict.common.yi} />

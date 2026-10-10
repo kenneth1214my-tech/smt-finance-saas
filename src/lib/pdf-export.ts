@@ -24,6 +24,8 @@ export interface PdfOptions {
   title: string;
   subtitle?: string;
   isZh: boolean;
+  /** Append a Prepared by / Approved by sign-off block, anchored to the bottom of the last page. */
+  signOff?: boolean;
 }
 
 export type PdfBlock = { heightMm: number };
@@ -124,6 +126,25 @@ export async function downloadPagePdf(opts: PdfOptions): Promise<void> {
     await sleep(50);
 
     // Not `instanceof HTMLElement` — these elements belong to the iframe's window, so that check fails.
+    let signOffEl: HTMLElement | null = null;
+    if (opts.signOff) {
+      const L = opts.isZh
+        ? { prepared: "编制人：", approved: "审批人：", name: "姓名：", title: "职务：", date: "日期：" }
+        : { prepared: "Prepared by:", approved: "Approved by:", name: "Name:", title: "Title:", date: "Date:" };
+      const column = (heading: string) => `
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:#111827">${esc(heading)}</div>
+          <div style="height:58px"></div>
+          <div style="border-top:1.5px solid #111827;margin-bottom:12px"></div>
+          ${[L.name, L.title, L.date].map((l) => `<div style="font-size:12.5px;color:#374151;padding:7px 0 4px;border-bottom:1px solid #d1d5db">${esc(l)}</div>`).join("")}
+        </div>`;
+      signOffEl = doc.createElement("div");
+      signOffEl.style.cssText = "display:flex;gap:56px;padding:18px 0 6px;font-family:inherit;";
+      signOffEl.innerHTML = column(L.prepared) + column(L.approved);
+      container.appendChild(signOffEl);
+      await sleep(30);
+    }
+
     const blocks = (Array.from(container.children) as HTMLElement[]).filter((el) => el.offsetHeight > 0);
     if (blocks.length === 0) throw new Error("Nothing to export on this page");
 
@@ -138,6 +159,12 @@ export async function downloadPagePdf(opts: PdfOptions): Promise<void> {
     }
     const heightsMm = canvases.map((c) => (c.height / PIXEL_RATIO) * mmPerPx);
     const placement = layoutBlocks(heightsMm.map((h) => ({ heightMm: h })), pageContentMm, BLOCK_GAP_MM);
+    if (signOffEl) {
+      // Last block: it already got its own page if it did not fit, so pinning it to the bottom of
+      // that page can only move it further from the content above, never onto it.
+      const i = blocks.indexOf(signOffEl);
+      if (i >= 0 && placement[i].slices === 1) placement[i].yMm = pageContentMm - heightsMm[i];
+    }
 
     const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
     let pagesUsed = 1;

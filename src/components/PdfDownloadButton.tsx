@@ -4,7 +4,7 @@ import { useState } from "react";
 import { FileDown, Loader2 } from "lucide-react";
 import { downloadPagePdf } from "@/lib/pdf-export";
 
-export default function PdfDownloadButton({ companyName, title, subtitle, isZh }: { companyName: string; title: string; subtitle?: string; isZh: boolean }) {
+export default function PdfDownloadButton({ companyName, title, subtitle, isZh, signOff }: { companyName: string; title: string; subtitle?: string; isZh: boolean; signOff?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -13,7 +13,7 @@ export default function PdfDownloadButton({ companyName, title, subtitle, isZh }
     setError("");
     try {
       const date = new Date().toISOString().slice(0, 10);
-      await downloadPagePdf({ filename: `${title.replace(/[\\/:*?"<>|\s]+/g, "_")}_${date}.pdf`, companyName, title, subtitle, isZh });
+      await downloadPagePdf({ filename: `${title.replace(/[\\/:*?"<>|\s]+/g, "_")}_${date}.pdf`, companyName, title, subtitle, isZh, signOff });
     } catch (err) {
       setError(err instanceof Error ? err.message : isZh ? "PDF 生成失败" : "PDF export failed");
     } finally {
