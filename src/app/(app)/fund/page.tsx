@@ -11,6 +11,9 @@ import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
 import EntityScopeFilter, { type EntityScope } from "@/components/ui/EntityScopeFilter";
 import TrendChart from "@/components/ui/TrendChart";
+import PeriodSelector from "@/components/PeriodSelector";
+import { parsePeriod, periodEndDate } from "@/lib/period";
+import { getReportYears } from "@/lib/period-server";
 import BarChart from "@/components/ui/BarChart";
 
 const fmt1 = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -21,6 +24,7 @@ export default async function FundPage(props: PageProps<"/fund">) {
   const locale = await getServerLocale();
   const isZh = locale === "zh" || locale === "zh-Hant";
   const searchParams = await props.searchParams;
+  const period = parsePeriod(searchParams);
   const scopeParam = typeof searchParams.scope === "string" ? searchParams.scope : "all";
   const scope: EntityScope = scopeParam === "hq" || scopeParam === "subsidiary" ? scopeParam : "all";
   // null subsidiaryId = Group HQ; "Total" is HQ + every subsidiary.
@@ -28,7 +32,7 @@ export default async function FundPage(props: PageProps<"/fund">) {
 
   const organizationId = user.organizationId;
   const banks = await db.bankAccount.findMany({ where: { organizationId, ...subsidiaryFilter }, include: { subsidiary: true }, orderBy: { balance: "desc" } });
-  const cashflowRows = await db.cashFlowMonthly.findMany({ where: { year: new Date().getFullYear(), organizationId, ...subsidiaryFilter }, orderBy: { month: "asc" } });
+  const cashflowRows = await db.cashFlowMonthly.findMany({ where: { year: period.year, month: { gte: period.fromMonth, lte: period.toMonth }, organizationId, ...subsidiaryFilter }, orderBy: { month: "asc" } });
   // Each entity records its own row per month, so "Total" must add them up per month rather than
   // treating every row as its own month.
   const cashflowByMonth = new Map<number, { month: number; ocf: number; icf: number; fcf: number }>();
@@ -44,6 +48,20 @@ export default async function FundPage(props: PageProps<"/fund">) {
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const fmtM = (n: number) => fmtMoney(n, locale);
   const rates = await getExchangeRates(organizationId);
+
+  // Same rule as the Overview: any month-end (or a past year) is reported from the balance sheet stored
+  // for that month-end, not from today's bank balances. Stored balances are in each entity's own
+  // (base) currency — the entities here share one — and have no per-account detail.
+  const reportYears = await getReportYears(organizationId, period.year);
+  const useSnapshot = period.basis !== "year" || period.year !== new Date().getFullYear();
+  const [snapshotRows, monthlyCashRows] = await Promise.all([
+    useSnapshot ? db.balanceSheetMonthly.findMany({ where: { organizationId, year: period.year, month: period.toMonth, ...subsidiaryFilter }, include: { subsidiary: true } }) : Promise.resolve([]),
+    db.balanceSheetMonthly.findMany({ where: { organizationId, year: period.year, month: { lte: period.toMonth }, ...subsidiaryFilter }, select: { month: true, cash: true } }),
+  ]);
+  const snapshotActive = useSnapshot && snapshotRows.length > 0;
+  const cashByMonth = new Map<number, number>();
+  for (const r of monthlyCashRows) cashByMonth.set(r.month, (cashByMonth.get(r.month) ?? 0) + Number(r.cash));
+  const cashTrendMonths = [...cashByMonth.keys()].sort((a, b) => a - b);
 
   // Bank balances are entered per-account currency; convert each to the base currency before
   // summing, rather than adding raw CNY+USD+HKD figures together. When a currency has no
@@ -89,6 +107,8 @@ export default async function FundPage(props: PageProps<"/fund">) {
     dupGroups.set(key, [...(dupGroups.get(key) ?? []), b.bankEn]);
   }
   const probableDuplicates = [...dupGroups.values()].filter((names) => names.length > 1);
+  const cashBalance = snapshotActive ? snapshotRows.reduce((a, r) => a + Number(r.cash), 0) : totalBank;
+  const borrowings = snapshotActive ? 0 - snapshotRows.reduce((a, r) => a + Number(r.loans), 0) : totalBorrowings;
   const totalOcf = cashflow.reduce((a, c) => a + c.ocf, 0);
   const totalIcf = cashflow.reduce((a, c) => a + c.icf, 0);
   const totalFcf = cashflow.reduce((a, c) => a + c.fcf, 0);
@@ -117,6 +137,7 @@ export default async function FundPage(props: PageProps<"/fund">) {
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <EntityScopeFilter scope={scope} locale={locale} />
+          <PeriodSelector year={period.year} month={period.month} basis={period.basis} years={reportYears} isZh={isZh} />
         </div>
 
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
@@ -124,9 +145,9 @@ export default async function FundPage(props: PageProps<"/fund">) {
             icon={Wallet}
             color="var(--cat-1)"
             label={dict.m.cashBalance}
-            value={fmtM(totalBank)}
+            value={fmtM(cashBalance)}
             unit={dict.common.yi}
-            note={`${isZh ? `折合 ${baseCurrency}` : `in ${baseCurrency}`}${debtRows.length + excludedClearing.length > 0 ? (isZh ? `，已剔除 ${debtRows.length + excludedClearing.length} 个贷款/过渡账户` : ` · excl. ${debtRows.length + excludedClearing.length} loan/clearing acct`) : ""}`}
+            note={snapshotActive ? (isZh ? `截至 ${periodEndDate(period)} 月末（Xero）` : `Month-end ${periodEndDate(period)} (Xero)`) : `${isZh ? `折合 ${baseCurrency}` : `in ${baseCurrency}`}${useSnapshot ? (isZh ? " · 该月末无存档，用最新余额" : " · no month-end stored, latest balances") : ""}${debtRows.length + excludedClearing.length > 0 ? (isZh ? `，已剔除 ${debtRows.length + excludedClearing.length} 个贷款/过渡账户` : ` · excl. ${debtRows.length + excludedClearing.length} loan/clearing acct`) : ""}`}
           />
           <KpiTile icon={TrendingUp} color="var(--cat-3)" label={dict.m.ocf} value={hasCashFlow ? fmtM(totalOcf) : "—"} unit={hasCashFlow ? dict.common.yi : undefined} note={hasCashFlow ? undefined : noCashFlowShort} />
           <KpiTile icon={TrendingDown} color="var(--cat-2)" label={dict.m.icfNet} value={hasCashFlow ? fmtM(totalIcf) : "—"} unit={hasCashFlow ? dict.common.yi : undefined} note={hasCashFlow ? undefined : noCashFlowShort} />
@@ -135,14 +156,14 @@ export default async function FundPage(props: PageProps<"/fund">) {
             icon={CreditCard}
             color="var(--cat-5)"
             label={isZh ? "银行借款余额" : "Bank Borrowings"}
-            value={fmtM(totalBorrowings)}
+            value={fmtM(borrowings)}
             unit={dict.common.yi}
-            note={isZh ? `一年内 ${fmtM(borrowingsCurrent)} · 长期 ${fmtM(borrowingsLongTerm)}` : `Current ${fmtM(borrowingsCurrent)} · Long-term ${fmtM(borrowingsLongTerm)}`}
+            note={snapshotActive ? (isZh ? "月末贷款账户余额" : "Loan accounts at month-end") : isZh ? `一年内 ${fmtM(borrowingsCurrent)} · 长期 ${fmtM(borrowingsLongTerm)}` : `Current ${fmtM(borrowingsCurrent)} · Long-term ${fmtM(borrowingsLongTerm)}`}
           />
-          <KpiTile icon={Scale} color="var(--status-warning)" label={isZh ? "净现金（现金 − 借款）" : "Net Cash (cash − borrowings)"} value={fmtM(totalBank - totalBorrowings)} unit={dict.common.yi} />
+          <KpiTile icon={Scale} color="var(--status-warning)" label={isZh ? "净现金（现金 − 借款）" : "Net Cash (cash − borrowings)"} value={fmtM(cashBalance - borrowings)} unit={dict.common.yi} />
         </div>
 
-        {probableDuplicates.length > 0 && (
+        {!snapshotActive && probableDuplicates.length > 0 && (
           <div className="flex items-start gap-2 rounded-lg px-3 py-2 text-[11.8px]" style={{ background: "color-mix(in srgb, var(--status-warning) 12%, transparent)", color: "var(--status-warning)" }}>
             <AlertTriangle size={14} className="mt-0.5 shrink-0" />
             <span>
@@ -154,12 +175,21 @@ export default async function FundPage(props: PageProps<"/fund">) {
 
         <div className="grid gap-4 lg:grid-cols-2">
           <Card title={dict.m.cashTrendCard} unit={hasCashFlow ? dict.common.yi : undefined}>
-            {hasCashFlow ? (
+            {cashTrendMonths.length > 0 ? (
+              <TrendChart labels={cashTrendMonths.map((m) => allMonthLabels[m - 1])} series={[{ name: dict.m.cashBalance, color: "var(--cat-1)", data: cashTrendMonths.map((m) => scaleMoney(Math.round(cashByMonth.get(m)! * 100) / 100, locale)) }]} />
+            ) : hasCashFlow ? (
               <TrendChart labels={months} series={[{ name: dict.m.cashBalance, color: "var(--cat-1)", data: balanceByMonth.map((v) => scaleMoney(v, locale)) }]} />
             ) : (
               <p className="py-6 text-[12.5px] leading-relaxed" style={{ color: "var(--ink-400)" }}>{noCashFlowLong}</p>
             )}
           </Card>
+          {snapshotActive ? (
+            <Card title={isZh ? "银行借款" : "Bank borrowings"} unit={dict.common.yi}>
+              <p className="py-6 text-[12.5px] leading-relaxed" style={{ color: "var(--ink-400)" }}>
+                {isZh ? "所选月末的借款合计见上方；按贷款明细（一年内 / 长期）仅提供最新余额。" : "The month-end total is shown above; the per-loan current / long-term split is only available for the latest balances."}
+              </p>
+            </Card>
+          ) : (
           <Card title={isZh ? "银行借款明细" : "Bank borrowings"} unit={dict.common.yi}>
             {debtRows.length === 0 ? (
               <p className="py-6 text-[12.5px]" style={{ color: "var(--ink-400)" }}>{isZh ? "没有识别到贷款类账户" : "No loan-type accounts detected"}</p>
@@ -197,6 +227,7 @@ export default async function FundPage(props: PageProps<"/fund">) {
               {isZh ? "授信额度（上限）未在系统中记录，因此不显示授信使用率。" : "Credit limits are not tracked, so no utilisation % is shown."}
             </p>
           </Card>
+          )}
         </div>
 
         <Card title={dict.m.cfActivityCard} unit={hasCashFlow ? dict.common.yi : undefined}>
@@ -223,6 +254,41 @@ export default async function FundPage(props: PageProps<"/fund">) {
           )}
         </Card>
 
+        {snapshotActive ? (
+          <Card title={isZh ? `月末现金与借款（${periodEndDate(period)}）` : `Month-end cash & borrowings (${periodEndDate(period)})`} unit={dict.common.yi}>
+            <table className="w-full text-[12.6px]">
+              <thead>
+                <tr className="text-left text-[11.3px] font-semibold" style={{ color: "var(--ink-400)" }}>
+                  <th className="pb-2">{isZh ? "主体" : "Entity"}</th>
+                  <th className="pb-2 text-right">{isZh ? "现金" : "Cash"}</th>
+                  <th className="pb-2 text-right">{isZh ? "借款" : "Borrowings"}</th>
+                  <th className="pb-2 text-right">{isZh ? "净现金" : "Net cash"}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...snapshotRows]
+                  .sort((x, y) => Number(y.cash) - Number(x.cash))
+                  .map((r) => (
+                    <tr key={r.id} className="border-t" style={{ borderColor: "var(--border)" }}>
+                      <td className="py-2.5 font-semibold" style={{ color: "var(--ink-900)" }}>{r.subsidiary ? localizedName(r.subsidiary, locale) : isZh ? "集团总部" : "Group HQ"}</td>
+                      <td className="tabular-nums py-2.5 text-right">{fmtM(Number(r.cash))}</td>
+                      <td className="tabular-nums py-2.5 text-right">{fmtM(0 - Number(r.loans))}</td>
+                      <td className="tabular-nums py-2.5 text-right font-semibold">{fmtM(Number(r.cash) + Number(r.loans))}</td>
+                    </tr>
+                  ))}
+                <tr className="border-t" style={{ borderColor: "var(--border)" }}>
+                  <td className="py-2.5 font-bold">{isZh ? "合计" : "Total"}</td>
+                  <td className="tabular-nums py-2.5 text-right font-bold">{fmtM(cashBalance)}</td>
+                  <td className="tabular-nums py-2.5 text-right font-bold">{fmtM(borrowings)}</td>
+                  <td className="tabular-nums py-2.5 text-right font-bold">{fmtM(cashBalance - borrowings)}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p className="mt-2 text-[11px]" style={{ color: "var(--ink-400)" }}>
+              {isZh ? "账户级明细仅提供最新余额；月末数据来自每次 Xero 同步存档的资产负债表。" : "Per-account detail exists for the latest balances only; month-end figures come from the balance sheet archived on each Xero sync."}
+            </p>
+          </Card>
+        ) : (
         <Card title={dict.m.bankTableCard}>
           {missingRateCurrencies.length > 0 && (
             <div className="mb-3 flex items-start gap-2 rounded-lg px-3 py-2 text-[11.8px]" style={{ background: "color-mix(in srgb, var(--status-warning) 12%, transparent)", color: "var(--status-warning)" }}>
@@ -279,6 +345,7 @@ export default async function FundPage(props: PageProps<"/fund">) {
             </table>
           </div>
         </Card>
+        )}
       </div>
     </>
   );
