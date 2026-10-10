@@ -31,6 +31,7 @@ export type GstClass =
   | "ES" // exempt supply                    -> Box 3
   | "TX" // standard-rated purchase, GST claimable -> Box 5 + 7
   | "ZP" // zero-rated purchase              -> Box 5
+  | "BDR" // bad debt relief (tax code BADDEBTRELIEF*) -> Box 11, and included in Box 7; NOT a Box 1/6 reduction
   | "BL" // blocked / non-claimable input tax -> excluded
   | "OUT" // out of scope / exempt purchase / no GST -> excluded
   | "UNK"; // 0% tax with a code this module doesn't recognise -> flagged, excluded
@@ -41,29 +42,34 @@ export const GST_CLASS_LABEL: Record<GstClass, { en: string; zh: string }> = {
   ES: { en: "Exempt supplies (Box 3)", zh: "豁免销售 (Box 3)" },
   TX: { en: "Taxable purchases, GST claimed (Box 5 & 7)", zh: "应税采购，进项税可抵扣 (Box 5 & 7)" },
   ZP: { en: "Zero-rated purchases (Box 5)", zh: "零税率采购 (Box 5)" },
+  BDR: { en: "Bad debt relief (Box 11, included in Box 7)", zh: "坏账减免 (Box 11，并计入 Box 7)" },
   BL: { en: "Blocked / non-claimable input tax (excluded)", zh: "不可抵扣进项税 (不计入)" },
   OUT: { en: "Out of scope / exempt purchase (excluded)", zh: "不在范围 / 豁免采购 (不计入)" },
   UNK: { en: "UNCLASSIFIED 0% code — check manually (excluded)", zh: "未识别的0%税码 — 请人工核对 (不计入)" },
 };
 
-// Xero Singapore tax codes are short codes (SR, ZR, ES33, ESN33, OS, DS, TX, TX-E33, TX-N33, TX-RE,
-// IM, ZP, EP, OP, NP, BL, ME …). Anything carrying real tax is classified by direction + whether
-// the input tax is claimable; 0%-tax lines fall back to the code. A code this doesn't recognise is
-// never guessed into a box — it lands in UNK so it shows up as a warning.
+// Xero tax-type codes vary by org and era — seen in production: OUTPUTY24, INPUTY24, BADDEBTRELIEFY24
+// and NONE; Xero's Singapore templates also use short codes (SR, ZR, ES33, OS, TX, ZP, EP, BL …).
+// So: lines carrying real tax are classified by direction (and bad-debt-relief / blocked codes are
+// pulled out first); 0%-tax lines fall back to matching the code by prefix or keyword. A code this
+// doesn't recognise is never guessed into a box — it lands in UNK so it shows up as a warning, and
+// the by-tax-code table in the UI exists so a human can see exactly how each code was treated.
 export function classifyGstLine(direction: GstDirection, taxType: string, taxAmount: number): GstClass {
   const code = (taxType || "").toUpperCase().trim();
+  if (code.startsWith("BADDEBTRELIEF")) return "BDR";
+  const zero = code.startsWith("ZR") || code.startsWith("ZP") || code.includes("ZERO");
+  const exempt = code.startsWith("ES") || code.startsWith("EP") || code.includes("EXEMPT");
+  const outOfScope = code === "" || code === "NONE" || code.startsWith("OS") || code.startsWith("OP") || code.startsWith("NP") || code.startsWith("ME") || code.includes("OUTOFSCOPE") || code.includes("NOTAX");
   if (direction === "SALES") {
     if (taxAmount !== 0) return "SR";
-    if (code.startsWith("ZR")) return "ZR";
-    if (code.startsWith("ES")) return "ES";
-    if (code === "" || code === "NONE" || code.startsWith("OS")) return "OUT";
-    return "UNK";
+    if (zero) return "ZR";
+    if (exempt) return "ES";
+    return outOfScope ? "OUT" : "UNK";
   }
-  if (code.startsWith("BL")) return "BL";
+  if (code.startsWith("BL") || code.includes("BLOCK")) return "BL";
   if (taxAmount !== 0) return "TX";
-  if (code.startsWith("ZP")) return "ZP";
-  if (code === "" || code === "NONE" || code.startsWith("EP") || code.startsWith("OP") || code.startsWith("NP") || code.startsWith("ME")) return "OUT";
-  return "UNK";
+  if (zero) return "ZP";
+  return exempt || outOfScope ? "OUT" : "UNK";
 }
 
 export interface GstTaxTypeRow {
@@ -109,7 +115,7 @@ export function buildGstBreakdown(docs: GstRawDoc[]): GstBreakdown {
   const documents: GstDocumentRow[] = [];
   const totals: Record<GstClass, { net: number; tax: number }> = {
     SR: { net: 0, tax: 0 }, ZR: { net: 0, tax: 0 }, ES: { net: 0, tax: 0 }, TX: { net: 0, tax: 0 },
-    ZP: { net: 0, tax: 0 }, BL: { net: 0, tax: 0 }, OUT: { net: 0, tax: 0 }, UNK: { net: 0, tax: 0 },
+    ZP: { net: 0, tax: 0 }, BDR: { net: 0, tax: 0 }, BL: { net: 0, tax: 0 }, OUT: { net: 0, tax: 0 }, UNK: { net: 0, tax: 0 },
   };
 
   for (const doc of docs) {
@@ -149,7 +155,9 @@ export function buildGstBreakdown(docs: GstRawDoc[]): GstBreakdown {
   const box4 = box1 + box2 + box3;
   const box5 = totals.TX.net + totals.ZP.net;
   const box6 = totals.SR.tax;
-  const box7 = totals.TX.tax;
+  // Bad-debt-relief credit notes carry negative sign here (credit note), so relief claimed = -tax.
+  const box11 = -totals.BDR.tax;
+  const box7 = totals.TX.tax + box11;
   const boxes: GstBoxRow[] = [
     { box: "1", en: "Total value of standard-rated supplies", zh: "标准税率销售总额", value: round2(box1) },
     { box: "2", en: "Total value of zero-rated supplies", zh: "零税率销售总额", value: round2(box2) },
@@ -161,7 +169,7 @@ export function buildGstBreakdown(docs: GstRawDoc[]): GstBreakdown {
     { box: "8", en: "Net GST to be paid to / claimed from IRAS (6 − 7)", zh: "应缴 / 应退 GST 净额 (6 − 7)", value: round2(box6 - box7) },
     { box: "9", en: "Goods imported under a GST suspension scheme (MES / A-GRS / ...)", zh: "暂缓GST计划下进口货物价值", value: null },
     { box: "10", en: "Tourist refund claimed", zh: "游客退税", value: null },
-    { box: "11", en: "Bad debt relief claimed", zh: "坏账减免", value: null },
+    { box: "11", en: "Bad debt relief claimed (also included in Box 7)", zh: "坏账减免 (已计入 Box 7)", value: round2(box11) },
     { box: "12", en: "Pre-registration input tax claimed", zh: "注册前进项税", value: null },
     { box: "13", en: "Revenue for the accounting period (approximated by Box 4)", zh: "会计期间营业收入 (以 Box 4 近似)", value: round2(box4) },
     { box: "14-15", en: "Reverse charge / overseas vendor registration (OVR) items", zh: "反向征税 / 海外供应商注册项目", value: null },
@@ -173,7 +181,7 @@ export function buildGstBreakdown(docs: GstRawDoc[]): GstBreakdown {
     warnings.push(`Tax codes with 0% tax this estimate could not classify (excluded from every box): ${codes.join(", ")} — check them against Xero's GST report.`);
   }
   if (totals.BL.tax !== 0) warnings.push(`Blocked / non-claimable input tax of ${round2(totals.BL.tax)} was excluded from Box 7.`);
-  warnings.push("Boxes 9–12 and 14–15 (suspension-scheme imports, tourist refund, bad debt relief, pre-registration claims, reverse charge) are not derived from Xero and must be checked/entered manually if applicable.");
+  warnings.push("Boxes 9, 10, 12 and 14–15 (suspension-scheme imports, tourist refund, pre-registration claims, reverse charge / OVR) are not derived from Xero and must be checked/entered manually if applicable. Box 11 only covers documents coded BADDEBTRELIEF*.");
   warnings.push("Basis: invoice date (accrual), AUTHORISED + PAID documents only; drafts, voided and deleted excluded; credit notes netted; foreign currency converted with each document's Xero rate.");
 
   const taxTypes = [...byType.values()]
