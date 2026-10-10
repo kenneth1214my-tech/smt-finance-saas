@@ -39,12 +39,13 @@ export default async function OverviewPage() {
   const companyName = await getCompanyName(user.organizationId);
   const isZh = locale === "zh" || locale === "zh-Hant";
 
-  const latestMonth = monthlyRows.length ? monthlyRows.reduce((a, b) => (b.month > a.month ? b : a)) : null;
-
   const totalRevenue = bySubsidiary.reduce((sum, r) => sum + Number(r._sum.revenue ?? 0), 0);
   const totalNetProfit = bySubsidiary.reduce((sum, r) => sum + Number(r._sum.netProfit ?? 0), 0);
   const totalCost = bySubsidiary.reduce((sum, r) => sum + Number(r._sum.opCost ?? 0), 0);
-  const latestGrossMargin = latestMonth ? Number(latestMonth.grossMarginPct) : 0;
+  // Whole-group gross margin for the period, computed the same way as 经营分析 / 利润分析 — NOT the
+  // stored margin of one row: with several entities there are several rows per month, so picking
+  // "the latest month's row" showed one arbitrary entity's single-month margin as the group's.
+  const groupGrossMargin = totalRevenue > 0 ? ((totalRevenue - totalCost) / totalRevenue) * 100 : 0;
   // Real period expenses (below the gross-profit line), summed from the same fields 经营分析
   // uses — previously this multiplied revenue by a hardcoded 18.7% ("estimated"), a leftover
   // from before sellExp/adminExp/rndExp/financeExp existed as real entered/synced figures.
@@ -129,7 +130,7 @@ export default async function OverviewPage() {
         </div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <KpiTile icon={TrendingUp} color="var(--cat-1)" label={dict.overview.kpiRevenue} value={fmtM(totalRevenue)} unit={dict.common.yi} />
-          <KpiTile icon={Percent} color="var(--cat-2)" label={dict.overview.kpiGrossMargin} value={fmt1(latestGrossMargin)} unit="%" />
+          <KpiTile icon={Percent} color="var(--cat-2)" label={dict.overview.kpiGrossMargin} value={fmt1(groupGrossMargin)} unit="%" />
           <KpiTile icon={CircleDollarSign} color="var(--status-good)" label={dict.overview.kpiOpProfit} value={fmtM(opProfit)} unit={dict.common.yi} />
           <KpiTile icon={Wallet} color="var(--cat-4)" label={dict.overview.kpiNetProfit} value={fmtM(totalNetProfit)} unit={dict.common.yi} />
           <KpiTile icon={Landmark} color="var(--cat-3)" label={dict.overview.kpiOcf} value={fmtM(totalOcf)} unit={dict.common.yi} />
