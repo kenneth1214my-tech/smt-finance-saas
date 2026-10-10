@@ -205,6 +205,7 @@ export async function downloadPagePdf(opts: PdfOptions): Promise<void> {
       pdf.setFontSize(8);
       pdf.setTextColor(120);
       pdf.text(`Generated ${stamp}`, MARGIN_X_MM, A4_H_MM - 7);
+      pdf.text("© smt-finance. All rights reserved", A4_W_MM / 2, A4_H_MM - 7, { align: "center" });
       pdf.text(`Page ${p} / ${total}`, A4_W_MM - MARGIN_X_MM, A4_H_MM - 7, { align: "right" });
     }
 
