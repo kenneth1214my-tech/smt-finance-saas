@@ -5,6 +5,7 @@ import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary, withBaseCurrency, fmtMoney } from "@/lib/i18n/dictionaries";
 import { localizedSegment } from "@/lib/localize";
 import { getBaseCurrency, getExchangeRates, convertToBase } from "@/lib/currency";
+import { classifyBankAccount } from "@/lib/bank-classify";
 import Topbar from "@/components/Topbar";
 import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
@@ -56,6 +57,7 @@ export default async function OverviewPage() {
   // file never actually flowed through to this KPI.
   const bankBaseByEntity = new Map<string | null, number>();
   for (const b of banks) {
+    if (classifyBankAccount(b.bankEn) !== "cash") continue; // loans/clearing accounts aren't assets
     const amount = convertToBase(Number(b.balance), b.currency, baseCurrency, rates) ?? Number(b.balance);
     bankBaseByEntity.set(b.subsidiaryId, (bankBaseByEntity.get(b.subsidiaryId) ?? 0) + amount);
   }

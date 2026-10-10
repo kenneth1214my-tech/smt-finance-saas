@@ -1,14 +1,14 @@
-import { Wallet, TrendingUp, TrendingDown, Landmark, CreditCard, AlertTriangle } from "lucide-react";
+import { Wallet, TrendingUp, TrendingDown, Landmark, CreditCard, AlertTriangle, Scale } from "lucide-react";
 import { requireUser } from "@/lib/dal";
 import { db } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary, withBaseCurrency, fmtMoney, scaleMoney } from "@/lib/i18n/dictionaries";
 import { monthLabels, localizedName } from "@/lib/localize";
 import { getBaseCurrency, getExchangeRates, convertToBase } from "@/lib/currency";
+import { classifyBankAccount, normalizeBankName } from "@/lib/bank-classify";
 import Topbar from "@/components/Topbar";
 import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
-import Ring from "@/components/ui/Ring";
 import TrendChart from "@/components/ui/TrendChart";
 import BarChart from "@/components/ui/BarChart";
 
@@ -35,11 +35,25 @@ export default async function FundPage() {
   const bankRows = banks.map((b) => {
     const original = Number(b.balance);
     const converted = convertToBase(original, b.currency, baseCurrency, rates);
-    return { ...b, original, converted: converted ?? original, hasRate: converted !== null };
+    return { ...b, original, converted: converted ?? original, hasRate: converted !== null, kind: classifyBankAccount(b.bankEn) };
   });
   const missingRateCurrencies = Array.from(new Set(bankRows.filter((b) => !b.hasRate).map((b) => b.currency)));
 
-  const totalBank = bankRows.reduce((a, b) => a + b.converted, 0);
+  // Only real cash accounts count toward Cash Balance: Xero's Bank Summary also lists loan and
+  // clearing accounts (see bank-classify.ts), and a -1.2M term loan was dragging cash negative.
+  const totalBank = bankRows.filter((b) => b.kind === "cash").reduce((a, b) => a + b.converted, 0);
+  const debtRows = bankRows.filter((b) => b.kind === "debt");
+  const totalBorrowings = -debtRows.reduce((a, b) => a + b.converted, 0);
+  const excludedClearing = bankRows.filter((b) => b.kind === "clearing");
+  const hasCashFlow = cashflow.length > 0;
+
+  const dupGroups = new Map<string, string[]>();
+  for (const b of bankRows) {
+    if (b.kind !== "cash") continue;
+    const key = `${b.subsidiaryId ?? "HQ"}|${normalizeBankName(b.bankEn)}`;
+    dupGroups.set(key, [...(dupGroups.get(key) ?? []), b.bankEn]);
+  }
+  const probableDuplicates = [...dupGroups.values()].filter((names) => names.length > 1);
   const totalOcf = cashflow.reduce((a, c) => a + Number(c.ocf), 0);
   const totalIcf = cashflow.reduce((a, c) => a + Number(c.icf), 0);
   const totalFcf = cashflow.reduce((a, c) => a + Number(c.fcf), 0);
@@ -53,11 +67,10 @@ export default async function FundPage() {
     return acc;
   }, []);
 
-  // No credit-line model exists yet (not modeled in the schema) — shown as 0 rather than invented numbers
-  // until a real CreditLine entity is added.
-  const creditTotal = 0;
-  const creditUsed = 0;
-  const creditUsePct = creditTotal > 0 ? (creditUsed / creditTotal) * 100 : 0;
+  const noCashFlowShort = isZh ? "暂无现金流数据" : "No cash-flow data";
+  const noCashFlowLong = isZh
+    ? "本年度暂无现金流量数据。Xero 没有现金流量表接口，系统无法自动生成经营/投资/筹资活动明细；可通过「设置 → 批量导入 → 月度现金流」导入，导入后此处会自动显示（不再显示为 0）。"
+    : "No cash-flow data for this year. Xero has no cash-flow statement endpoint, so operating/investing/financing activity cannot be pulled automatically — import it under Settings → Bulk import → Monthly cash flow and it will appear here (instead of showing 0).";
 
   return (
     <>
@@ -70,54 +83,87 @@ export default async function FundPage() {
             label={dict.m.cashBalance}
             value={fmtM(totalBank)}
             unit={dict.common.yi}
-            note={isZh ? `折合 ${baseCurrency}` : `in ${baseCurrency}`}
+            note={`${isZh ? `折合 ${baseCurrency}` : `in ${baseCurrency}`}${debtRows.length + excludedClearing.length > 0 ? (isZh ? `，已剔除 ${debtRows.length + excludedClearing.length} 个贷款/过渡账户` : ` · excl. ${debtRows.length + excludedClearing.length} loan/clearing acct`) : ""}`}
           />
-          <KpiTile icon={TrendingUp} color="var(--cat-3)" label={dict.m.ocf} value={fmtM(totalOcf)} unit={dict.common.yi} />
-          <KpiTile icon={TrendingDown} color="var(--cat-2)" label={dict.m.icfNet} value={fmtM(totalIcf)} unit={dict.common.yi} />
-          <KpiTile icon={Landmark} color="var(--cat-4)" label={dict.m.fcfNet} value={fmtM(totalFcf)} unit={dict.common.yi} />
-          <KpiTile icon={CreditCard} color="var(--cat-5)" label={dict.m.creditTotal} value={fmtM(creditTotal)} unit={dict.common.yi} />
-          <KpiTile icon={AlertTriangle} color="var(--status-warning)" label={dict.m.creditUse} value={fmt1(creditUsePct)} unit="%" note={`${fmtM(creditUsed)} ${dict.common.yi}`} />
+          <KpiTile icon={TrendingUp} color="var(--cat-3)" label={dict.m.ocf} value={hasCashFlow ? fmtM(totalOcf) : "—"} unit={hasCashFlow ? dict.common.yi : undefined} note={hasCashFlow ? undefined : noCashFlowShort} />
+          <KpiTile icon={TrendingDown} color="var(--cat-2)" label={dict.m.icfNet} value={hasCashFlow ? fmtM(totalIcf) : "—"} unit={hasCashFlow ? dict.common.yi : undefined} note={hasCashFlow ? undefined : noCashFlowShort} />
+          <KpiTile icon={Landmark} color="var(--cat-4)" label={dict.m.fcfNet} value={hasCashFlow ? fmtM(totalFcf) : "—"} unit={hasCashFlow ? dict.common.yi : undefined} note={hasCashFlow ? undefined : noCashFlowShort} />
+          <KpiTile
+            icon={CreditCard}
+            color="var(--cat-5)"
+            label={isZh ? "银行借款余额" : "Bank Borrowings"}
+            value={fmtM(totalBorrowings)}
+            unit={dict.common.yi}
+            note={isZh ? `来自 Xero 的 ${debtRows.length} 个贷款账户` : `${debtRows.length} loan account(s) from Xero`}
+          />
+          <KpiTile icon={Scale} color="var(--status-warning)" label={isZh ? "净现金（现金 − 借款）" : "Net Cash (cash − borrowings)"} value={fmtM(totalBank - totalBorrowings)} unit={dict.common.yi} />
         </div>
+
+        {probableDuplicates.length > 0 && (
+          <div className="flex items-start gap-2 rounded-lg px-3 py-2 text-[11.8px]" style={{ background: "color-mix(in srgb, var(--status-warning) 12%, transparent)", color: "var(--status-warning)" }}>
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <span>
+              {isZh ? "以下银行账户疑似重复录入（同一主体、名称相近），现金余额可能被重复计算，请核对后删除多余的一条：" : "These bank accounts look like duplicates (same entity, near-identical names) — cash may be double-counted. Check and delete the extra row: "}
+              {probableDuplicates.map((names) => names.join(" ⇄ ")).join("；")}
+            </span>
+          </div>
+        )}
 
         <div className="grid gap-4 lg:grid-cols-2">
-          <Card title={dict.m.cashTrendCard} unit={dict.common.yi}>
-            <TrendChart labels={months} series={[{ name: dict.m.cashBalance, color: "var(--cat-1)", data: balanceByMonth.map((v) => scaleMoney(v, locale)) }]} />
+          <Card title={dict.m.cashTrendCard} unit={hasCashFlow ? dict.common.yi : undefined}>
+            {hasCashFlow ? (
+              <TrendChart labels={months} series={[{ name: dict.m.cashBalance, color: "var(--cat-1)", data: balanceByMonth.map((v) => scaleMoney(v, locale)) }]} />
+            ) : (
+              <p className="py-6 text-[12.5px] leading-relaxed" style={{ color: "var(--ink-400)" }}>{noCashFlowLong}</p>
+            )}
           </Card>
-          <Card title={dict.m.creditGaugeCard}>
-            <div className="flex flex-wrap items-center gap-6">
-              <Ring pct={creditUsePct} color="var(--status-warning)" size={120} />
-              <div className="flex-1 space-y-1.5 text-[12.5px]" style={{ color: "var(--ink-600)" }}>
-                <div>
-                  {dict.m.creditTotal}：<b className="tabular-nums" style={{ color: "var(--ink-900)" }}>{fmtM(creditTotal)} {dict.common.yi}</b>
-                </div>
-                <div>
-                  {isZh ? "已使用额度" : "Used amount"}：<b className="tabular-nums" style={{ color: "var(--ink-900)" }}>{fmtM(creditUsed)} {dict.common.yi}</b>
-                </div>
-                <div className="pt-1" style={{ color: "var(--ink-400)" }}>
-                  {isZh
-                    ? "建议：单一银行授信集中度较高，考虑分散融资渠道。"
-                    : "Recommendation: credit is concentrated in one bank — consider diversifying funding sources."}
-                </div>
-              </div>
-            </div>
+          <Card title={isZh ? "银行借款明细" : "Bank borrowings"} unit={dict.common.yi}>
+            {debtRows.length === 0 ? (
+              <p className="py-6 text-[12.5px]" style={{ color: "var(--ink-400)" }}>{isZh ? "没有识别到贷款类账户" : "No loan-type accounts detected"}</p>
+            ) : (
+              <table className="w-full text-[12.6px]">
+                <tbody>
+                  {debtRows.map((d) => (
+                    <tr key={d.id} className="border-t first:border-t-0" style={{ borderColor: "var(--border)" }}>
+                      <td className="py-2 font-semibold" style={{ color: "var(--ink-900)" }}>{d.bankEn}</td>
+                      <td className="py-2" style={{ color: "var(--ink-400)" }}>{d.subsidiary ? localizedName(d.subsidiary, locale) : isZh ? "集团总部" : "Group HQ"}</td>
+                      <td className="tabular-nums py-2 text-right">{fmtM(-d.converted)}</td>
+                    </tr>
+                  ))}
+                  <tr className="border-t" style={{ borderColor: "var(--border)" }}>
+                    <td className="py-2 font-bold" colSpan={2}>{isZh ? "合计" : "Total"}</td>
+                    <td className="tabular-nums py-2 text-right font-bold">{fmtM(totalBorrowings)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            )}
+            <p className="mt-2 text-[11px]" style={{ color: "var(--ink-400)" }}>
+              {isZh ? "授信额度（上限）未在系统中记录，因此不显示授信使用率。" : "Credit limits are not tracked, so no utilisation % is shown."}
+            </p>
           </Card>
         </div>
 
-        <Card title={dict.m.cfActivityCard} unit={dict.common.yi}>
-          <BarChart
-            labels={months}
-            height={230}
-            series={[
-              { name: dict.m.ocfActivity, color: "var(--cat-3)", data: cashflow.map((c) => scaleMoney(Number(c.ocf), locale)) },
-              { name: dict.m.icfActivity, color: "var(--cat-2)", data: cashflow.map((c) => scaleMoney(Math.abs(Number(c.icf)), locale)) },
-              { name: dict.m.fcfActivity, color: "var(--cat-1)", data: cashflow.map((c) => scaleMoney(Math.abs(Number(c.fcf)), locale)) },
-            ]}
-          />
-          <div className="mt-3 flex flex-wrap gap-4 text-xs font-medium" style={{ color: "var(--ink-600)" }}>
-            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: "var(--cat-3)" }} />{dict.m.ocfActivity}</span>
-            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: "var(--cat-2)" }} />{dict.m.icfActivity} ({isZh ? "绝对值" : "abs"})</span>
-            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: "var(--cat-1)" }} />{dict.m.fcfActivity} ({isZh ? "绝对值" : "abs"})</span>
-          </div>
+        <Card title={dict.m.cfActivityCard} unit={hasCashFlow ? dict.common.yi : undefined}>
+          {hasCashFlow ? (
+            <>
+              <BarChart
+                labels={months}
+                height={230}
+                series={[
+                  { name: dict.m.ocfActivity, color: "var(--cat-3)", data: cashflow.map((c) => scaleMoney(Number(c.ocf), locale)) },
+                  { name: dict.m.icfActivity, color: "var(--cat-2)", data: cashflow.map((c) => scaleMoney(Math.abs(Number(c.icf)), locale)) },
+                  { name: dict.m.fcfActivity, color: "var(--cat-1)", data: cashflow.map((c) => scaleMoney(Math.abs(Number(c.fcf)), locale)) },
+                ]}
+              />
+              <div className="mt-3 flex flex-wrap gap-4 text-xs font-medium" style={{ color: "var(--ink-600)" }}>
+                <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: "var(--cat-3)" }} />{dict.m.ocfActivity}</span>
+                <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: "var(--cat-2)" }} />{dict.m.icfActivity} ({isZh ? "绝对值" : "abs"})</span>
+                <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: "var(--cat-1)" }} />{dict.m.fcfActivity} ({isZh ? "绝对值" : "abs"})</span>
+              </div>
+            </>
+          ) : (
+            <p className="py-6 text-[12.5px] leading-relaxed" style={{ color: "var(--ink-400)" }}>{noCashFlowLong}</p>
+          )}
         </Card>
 
         <Card title={dict.m.bankTableCard}>
@@ -147,6 +193,11 @@ export default async function FundPage() {
                   <tr key={b.id} className="border-t" style={{ borderColor: "var(--border)" }}>
                     <td className="py-2.5 font-semibold" style={{ color: "var(--ink-900)" }}>
                       {locale === "en" ? b.bankEn : b.bankZh}
+                      {b.kind !== "cash" && (
+                        <span className="ml-2 rounded px-1.5 py-0.5 text-[10.5px] font-semibold" style={{ background: "var(--surface-2)", color: "var(--ink-400)" }}>
+                          {b.kind === "debt" ? (isZh ? "贷款 · 不计入现金" : "Loan · not cash") : isZh ? "过渡账户 · 已剔除" : "Clearing · excluded"}
+                        </span>
+                      )}
                     </td>
                     <td className="py-2.5" style={{ color: "var(--ink-400)" }}>
                       {b.subsidiary ? localizedName(b.subsidiary, locale) : isZh ? "集团总部" : "Group HQ"}
@@ -164,7 +215,7 @@ export default async function FundPage() {
                       {fmtM(b.converted)}
                       {!b.hasRate && <span title={isZh ? "无汇率，按原值计入" : "no rate on file, face value used"}> *</span>}
                     </td>
-                    <td className="tabular-nums py-2.5 text-right">{fmt1(totalBank > 0 ? (b.converted / totalBank) * 100 : 0)}%</td>
+                    <td className="tabular-nums py-2.5 text-right">{b.kind === "cash" ? `${fmt1(totalBank > 0 ? (b.converted / totalBank) * 100 : 0)}%` : "—"}</td>
                   </tr>
                 ))}
               </tbody>
