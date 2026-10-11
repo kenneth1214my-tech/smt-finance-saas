@@ -1550,12 +1550,12 @@ function DataTab({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
-  // Stand-by "add subsidiary" form: a new entity is created in one step and is immediately ready to
-  // connect to Xero; from then on the daily auto-sync and the background AR/AP sync pick it up on their own.
+  // Stand-by "add subsidiary" form: a new entity is created in one step and is immediately ready to have its
+  // accounting/ERP system connected (not tied to any one system); once connected, the automatic syncs pick it up.
   const [addingSub, setAddingSub] = useState(false);
   const [newSubName, setNewSubName] = useState("");
   const [creatingSub, setCreatingSub] = useState(false);
-  async function addSubsidiary(thenConnect: boolean) {
+  async function addSubsidiary() {
     const name = newSubName.trim();
     if (!name || creatingSub) return;
     setCreatingSub(true);
@@ -1568,11 +1568,7 @@ function DataTab({
       }
       setNewSubName("");
       setAddingSub(false);
-      if (thenConnect) {
-        window.location.href = `/api/admin/erp/xero/connect?subsidiaryId=${body.row.id}`;
-        return;
-      }
-      onToast(isZh ? "子公司已添加，可立即连接 Xero" : "Subsidiary added — ready to connect to Xero");
+      onToast(isZh ? "子公司已添加，可立即对接其系统" : "Subsidiary added — ready to connect its system");
       router.refresh();
     } finally {
       setCreatingSub(false);
@@ -1860,34 +1856,26 @@ function DataTab({
           {addingSub ? (
             <div className="flex flex-col gap-2 rounded-lg border px-3.5 py-3" style={{ borderColor: "var(--border-strong)" }}>
               <div className="text-[12px] font-semibold" style={{ color: "var(--ink-600)" }}>
-                {isZh ? "新增子公司（待命状态：添加后即可连接 Xero，之后自动同步，无需其他设置）" : "New subsidiary — stand-by: once added it can be connected to Xero right away, then syncs automatically"}
+                {isZh ? "新增子公司（待命状态：添加后即可立即对接其系统，对接后自动同步）" : "New subsidiary — stand-by: once added, its system can be connected right away and then syncs automatically"}
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <input
                   autoFocus
                   value={newSubName}
                   onChange={(e) => setNewSubName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && addSubsidiary(false)}
+                  onKeyDown={(e) => e.key === "Enter" && addSubsidiary()}
                   placeholder={isZh ? "子公司名称" : "Subsidiary name"}
                   maxLength={60}
                   className="min-w-[220px] flex-1 rounded-lg border px-3 py-1.5 text-[12.5px]"
                   style={{ borderColor: "var(--border-strong)", background: "var(--surface)" }}
                 />
                 <button
-                  onClick={() => addSubsidiary(true)}
+                  onClick={() => addSubsidiary()}
                   disabled={!newSubName.trim() || creatingSub}
                   className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
                   style={{ background: "var(--cat-1)" }}
                 >
-                  {isZh ? "添加并连接 Xero" : "Add & connect Xero"}
-                </button>
-                <button
-                  onClick={() => addSubsidiary(false)}
-                  disabled={!newSubName.trim() || creatingSub}
-                  className="rounded-lg border px-3 py-1.5 text-[12px] font-bold disabled:opacity-50"
-                  style={{ borderColor: "var(--border-strong)", color: "var(--ink-600)" }}
-                >
-                  {isZh ? "仅添加" : "Add only"}
+                  {isZh ? "添加" : "Add"}
                 </button>
                 <button onClick={() => { setAddingSub(false); setNewSubName(""); }} className="px-2 py-1.5 text-[12px] font-semibold" style={{ color: "var(--ink-400)" }}>
                   {isZh ? "取消" : "Cancel"}
@@ -1901,7 +1889,7 @@ function DataTab({
               style={{ borderColor: "var(--border-strong)", color: "var(--ink-600)" }}
             >
               <Plus size={14} />
-              {isZh ? "新增子公司并对接 Xero" : "Add subsidiary & connect Xero"}
+              {isZh ? "新增子公司" : "Add subsidiary"}
             </button>
           )}
           {!xeroConfigured && (
