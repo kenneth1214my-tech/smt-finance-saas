@@ -15,6 +15,8 @@ import PeriodSelector from "@/components/PeriodSelector";
 import { parsePeriod, periodEndDate } from "@/lib/period";
 import { getReportYears } from "@/lib/period-server";
 import BarChart from "@/components/ui/BarChart";
+import KpiBreakdown from "@/components/ui/KpiBreakdown";
+import { buildFlowSections, type BreakdownSection } from "@/lib/treasury-breakdown";
 
 const fmt1 = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const BANK_TYPE_KEY: Record<string, keyof ReturnType<typeof getDictionary>["m"]> = { main: "bankTypeMain", general: "bankTypeGeneral", fx: "bankTypeFx" };
@@ -113,6 +115,103 @@ export default async function FundPage(props: PageProps<"/fund">) {
   const totalIcf = cashflow.reduce((a, c) => a + c.icf, 0);
   const totalFcf = cashflow.reduce((a, c) => a + c.fcf, 0);
 
+  // ---- Workings behind each KPI tile (see KpiBreakdown) ----
+  const t = (zh: string, en: string) => (isZh ? zh : en);
+  const hqLabel = t("集团总部", "Group HQ");
+  const ownerName = (sub: Parameters<typeof localizedName>[0] | null) => (sub ? localizedName(sub, locale) : hqLabel);
+  const flowSections = hasCashFlow ? await buildFlowSections({ organizationId, year: period.year, fromMonth: period.fromMonth, toMonth: period.toMonth, subsidiaryFilter, locale, isZh }) : [];
+  const flowById = new Map(flowSections.map((x) => [x.id, x]));
+  const periodEnd = periodEndDate(period);
+
+  const cashSection: BreakdownSection = snapshotActive
+    ? {
+        id: "cash",
+        title: dict.m.cashBalance,
+        result: cashBalance,
+        formula: t(`所选月末（${periodEnd}）各主体 Xero 资产负债表中「银行」栏现金类账户余额之和（贷款与过渡账户已剔除）`, `Sum of each entity's cash-type bank accounts on its Xero balance sheet at month-end ${periodEnd} (loan and clearing accounts excluded)`),
+        cols: [t("现金", "Cash")],
+        rows: [
+          ...[...snapshotRows].sort((a, b) => Number(b.cash) - Number(a.cash)).map((r) => ({ label: ownerName(r.subsidiary), values: [Number(r.cash)] })),
+          { label: t("现金余额合计", "Cash balance"), values: [cashBalance], kind: "total" as const },
+        ],
+        notes: [t("月末数据来自每次 Xero 同步存档的资产负债表（仅有主体级合计，无账户级明细）。", "Month-end figures come from the balance sheet archived on each Xero sync (entity totals only, no per-account detail).")],
+      }
+    : {
+        id: "cash",
+        title: dict.m.cashBalance,
+        result: cashBalance,
+        formula: t(`所有「现金类」银行账户余额按汇率折合 ${baseCurrency} 后相加；贷款账户与过渡/清算账户不是现金，已剔除`, `Add up every cash-type bank account, each converted to ${baseCurrency}; loan accounts and clearing/suspense accounts are not cash and are excluded`),
+        cols: [t(`折合 ${baseCurrency}`, `In ${baseCurrency}`)],
+        rows: [
+          ...bankRows.filter((b) => b.kind === "cash").map((b) => ({ label: `${b.bankEn} · ${ownerName(b.subsidiary)}`, hint: b.currency !== baseCurrency ? `${fmtM(b.original)} ${b.currency}` : undefined, values: [b.converted] })),
+          { label: t("现金余额合计", "Cash balance"), values: [totalBank], kind: "total" as const },
+          ...[...debtRows, ...excludedClearing].map((b) => ({
+            label: `${b.bankEn} · ${ownerName(b.subsidiary)}`,
+            hint: b.kind === "debt" ? t("贷款账户 — 计入借款，不计入现金", "Loan account — counted under borrowings, not cash") : t("过渡/清算账户 — 已剔除", "Clearing account — excluded"),
+            values: [b.converted],
+            kind: "muted" as const,
+          })),
+        ],
+        notes: [t("灰色行不计入现金余额。", "Greyed rows are not part of the cash balance.")],
+      };
+
+  const borrowingsSection: BreakdownSection = snapshotActive
+    ? {
+        id: "borrowings",
+        title: isZh ? "银行借款余额" : "Bank borrowings",
+        result: borrowings,
+        formula: t(`所选月末（${periodEnd}）各主体 Xero 资产负债表「银行」栏中贷款类账户余额之和，取相反数（贷款账户在 Xero 中为负数）`, `Sum of each entity's loan-type accounts on its Xero balance sheet at month-end ${periodEnd}, sign flipped (loan accounts are negative in Xero)`),
+        cols: [t("借款", "Borrowings")],
+        rows: [
+          ...[...snapshotRows].map((r) => ({ label: ownerName(r.subsidiary), values: [0 - Number(r.loans)] })),
+          { label: t("借款合计", "Total borrowings"), values: [borrowings], kind: "total" as const },
+        ],
+        notes: [t("按贷款拆分（一年内 / 长期）仅提供最新余额。", "The per-loan current / long-term split is available for the latest balances only.")],
+      }
+    : {
+        id: "borrowings",
+        title: isZh ? "银行借款余额" : "Bank borrowings",
+        result: borrowings,
+        formula: t("所有贷款类银行账户余额取相反数后相加（贷款账户在 Xero 中为负数）；「…-Current」为一年内到期，「…-Non Current」为长期", "Add up every loan-type account with its sign flipped (loans are negative in Xero); \"…-Current\" accounts are due within a year, \"…-Non Current\" are long-term"),
+        cols: [t("一年内到期", "Current"), t("长期", "Long-term"), t("合计", "Total")],
+        rows: [
+          ...loans.map((l) => ({ label: `${l.base} · ${l.owner}`, values: [l.current, l.longTerm, l.current + l.longTerm + l.unspecified] })),
+          { label: t("借款合计", "Total borrowings"), values: [borrowingsCurrent, borrowingsLongTerm, totalBorrowings], kind: "total" as const },
+        ],
+      };
+
+  const entityNet = new Map<string, { label: string; cash: number; borrow: number }>();
+  if (snapshotActive) {
+    for (const r of snapshotRows) entityNet.set(r.subsidiaryId ?? "HQ", { label: ownerName(r.subsidiary), cash: Number(r.cash), borrow: 0 - Number(r.loans) });
+  } else {
+    for (const b of bankRows) {
+      const e = entityNet.get(b.subsidiaryId ?? "HQ") ?? { label: ownerName(b.subsidiary), cash: 0, borrow: 0 };
+      if (b.kind === "cash") e.cash += b.converted;
+      else if (b.kind === "debt") e.borrow += -b.converted;
+      entityNet.set(b.subsidiaryId ?? "HQ", e);
+    }
+  }
+  const netCashSection: BreakdownSection = {
+    id: "netcash",
+    title: isZh ? "净现金（现金 − 借款）" : "Net cash (cash − borrowings)",
+    result: cashBalance - borrowings,
+    formula: t("现金余额 − 银行借款余额；为负表示借款超过现金", "Cash balance − bank borrowings; negative means borrowings exceed cash"),
+    cols: [t("现金", "Cash"), t("借款", "Borrowings"), t("净现金", "Net cash")],
+    rows: [
+      ...[...entityNet.values()].map((e) => ({ label: e.label, values: [e.cash, e.borrow, e.cash - e.borrow] })),
+      { label: t("合计", "Total"), values: [cashBalance, borrowings, cashBalance - borrowings], kind: "total" as const },
+    ],
+  };
+  const noFlowSection = (id: string, title: string): BreakdownSection => ({ id, title, result: null, formula: noCashFlowShort, cols: [], rows: [] });
+  const breakdownSections: BreakdownSection[] = [
+    cashSection,
+    flowById.get("ocf") ?? noFlowSection("ocf", dict.m.ocf),
+    flowById.get("icf") ?? noFlowSection("icf", dict.m.icfNet),
+    flowById.get("fcf") ?? noFlowSection("fcf", dict.m.fcfNet),
+    borrowingsSection,
+    netCashSection,
+  ];
+
   const allMonthLabels = monthLabels(locale, 12);
   const months = cashflow.map((c) => allMonthLabels[c.month - 1]);
   const netFlows = cashflow.map((c) => c.ocf + c.icf + c.fcf);
@@ -172,6 +271,14 @@ export default async function FundPage(props: PageProps<"/fund">) {
             </span>
           </div>
         )}
+
+        <KpiBreakdown
+          sections={breakdownSections}
+          locale={locale}
+          unit={baseCurrency}
+          heading={t("指标明细与计算过程", "KPI breakdown & calculation")}
+          hint={t("点击展开，查看每个指标的计算公式、逐项明细与核对结果，便于复核。", "Click a KPI to see its formula, line items and tie-out so every figure can be re-checked.")}
+        />
 
         <div className="grid gap-4 lg:grid-cols-2">
           <Card title={dict.m.cashTrendCard} unit={hasCashFlow ? dict.common.yi : undefined}>
