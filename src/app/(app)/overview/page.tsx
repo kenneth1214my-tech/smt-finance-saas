@@ -3,7 +3,7 @@ import { requireUser } from "@/lib/dal";
 import { db } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary, withBaseCurrency, fmtMoney } from "@/lib/i18n/dictionaries";
-import { localizedSegment } from "@/lib/localize";
+import { localizedSegment, localizedName, monthLabels } from "@/lib/localize";
 import { getBaseCurrency, getExchangeRates, convertToBase } from "@/lib/currency";
 import { classifyBankAccount } from "@/lib/bank-classify";
 import Topbar from "@/components/Topbar";
@@ -14,6 +14,9 @@ import { getReportYears } from "@/lib/period-server";
 import { getCompanyName } from "@/lib/company";
 import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
+import KpiBreakdown from "@/components/ui/KpiBreakdown";
+import { buildFlowSections, type BreakdownSection } from "@/lib/treasury-breakdown";
+import { buildPnlSections } from "@/lib/overview-breakdown";
 
 export default async function OverviewPage(props: PageProps<"/overview">) {
   const user = await requireUser();
@@ -135,6 +138,56 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
   const fmt1 = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   const fmtM = (n: number) => fmtMoney(n, locale);
 
+  // ---- Workings behind each KPI tile (see KpiBreakdown) ----
+  const t = (zh: string, en: string) => (isZh ? zh : en);
+  const hqLabel = t("集团总部", "Group HQ");
+  const pnlEntityIds = new Set(bySubsidiary.map((r) => r.subsidiaryId));
+  const pnlEntities = [
+    ...(pnlEntityIds.has(null) ? [{ id: null as string | null, label: hqLabel }] : []),
+    ...subsidiaries.filter((sub) => pnlEntityIds.has(sub.id)).map((sub) => ({ id: sub.id as string | null, label: localizedName(sub, locale) })),
+  ];
+  const pnlSections = buildPnlSections({ entities: pnlEntities, rows: monthlyRows, fromMonth: period.fromMonth, toMonth: period.toMonth, monthNames: monthLabels(locale, 12), isZh });
+  const ocfSection =
+    cashflow.length > 0
+      ? (await buildFlowSections({ organizationId, year: period.year, fromMonth: period.fromMonth, toMonth: period.toMonth, subsidiaryFilter: {}, locale, isZh })).find((x) => x.id === "ocf")
+      : undefined;
+
+  // Total assets, entity by entity, with the source each figure came from, then the two eliminations.
+  const assetSource = (id: string | null, equity: number, debtRatio: number) =>
+    snapshotAssets.has(id)
+      ? t("月末资产负债表（Xero 存档）", "Stored month-end balance sheet (Xero)")
+      : equity !== 0 || debtRatio !== 0
+        ? t(`最近一次同步：权益 ${fmtM(equity)} ÷ (1 − 资产负债率 ${debtRatio}%)`, `Latest sync: equity ${fmtM(equity)} ÷ (1 − debt ratio ${debtRatio}%)`)
+        : t("无资产负债表，用现金 + 应收账款估算", "No balance sheet on file — cash + receivables used");
+  const assetLines = [
+    { id: null as string | null, label: hqLabel, equity: Number(organization.equity), debtRatio: Number(organization.debtRatio) },
+    ...subsidiaries.map((sub) => ({ id: sub.id as string | null, label: localizedName(sub, locale), equity: Number(sub.equity), debtRatio: Number(sub.debtRatio) })),
+  ];
+  const interco = Math.max(0, -dueToSubsidiaries);
+  const assetsSection: BreakdownSection = {
+    id: "assets",
+    title: dict.overview.kpiTotalAssets,
+    result: totalAssets,
+    formula: t("各主体资产总额之和，减去总部对子公司的投资及集团内部往来（避免子公司净资产被重复计算）", "Sum of every entity's total assets, minus HQ's investment in subsidiaries and inter-company balances (so a subsidiary's net assets aren't counted twice)"),
+    cols: [t("金额", "Amount")],
+    rows: [
+      ...assetLines.map((e) => ({ label: e.label, hint: assetSource(e.id, e.equity, e.debtRatio), values: [assetsFor(e.id, e.equity, e.debtRatio)] })),
+      { label: t("－ 总部对子公司的投资（抵消）", "− Investment in subsidiaries (eliminated)"), values: [-investmentInSubsidiariesEliminated] },
+      { label: t("－ 集团内部往来款（抵消）", "− Inter-company balances (eliminated)"), values: [-interco] },
+      { label: t("＝ 资产总额", "= Total assets"), values: [totalAssets], kind: "total" as const },
+    ],
+    notes: snapshotIncomplete ? [t("部分主体暂无该月末资产负债表，已用最近一次同步数。", "Some entities have no stored balance sheet for this month-end — their latest-sync figure is used.")] : [],
+  };
+  const byId = new Map(pnlSections.map((x) => [x.id, x]));
+  const breakdownSections: BreakdownSection[] = [
+    byId.get("revenue")!,
+    byId.get("gm")!,
+    byId.get("op")!,
+    byId.get("np")!,
+    ocfSection ?? { id: "ocf", title: dict.overview.kpiOcf, result: null, formula: t("暂无现金流数据", "No cash-flow data for this period"), cols: [], rows: [] },
+    assetsSection,
+  ];
+
   return (
     <>
       <Topbar dict={dict} locale={locale} title={dict.nav.overview} desc={dict.overview.pageDesc} user={user} />
@@ -150,6 +203,16 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
           <KpiTile icon={Wallet} color="var(--cat-4)" label={dict.overview.kpiNetProfit} value={fmtM(totalNetProfit)} unit={dict.common.yi} />
           <KpiTile icon={Landmark} color="var(--cat-3)" label={dict.overview.kpiOcf} value={fmtM(totalOcf)} unit={dict.common.yi} />
           <KpiTile icon={Building2} color="var(--cat-5)" label={dict.overview.kpiTotalAssets} value={fmtM(totalAssets)} unit={dict.common.yi} note={useSnapshot ? (snapshotIncomplete ? (isZh ? "部分主体暂无该月末资产负债表，已用最近一次同步数" : "Some entities have no stored balance sheet for this month-end — latest sync used for them") : (isZh ? `截至 ${periodEndDate(period)} 月末资产负债表（Xero）` : `Month-end balance sheet as at ${periodEndDate(period)} (Xero)`)) : undefined} />
+        </div>
+
+        <div data-pdf-hide>
+          <KpiBreakdown
+            sections={breakdownSections}
+            locale={locale}
+            unit={baseCurrency}
+            heading={t("指标明细与计算过程", "KPI breakdown & calculation")}
+            hint={t("点击展开，查看每个指标的计算公式、逐项明细与核对结果，便于复核。", "Click a KPI to see its formula, line items and tie-out so every figure can be re-checked.")}
+          />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
