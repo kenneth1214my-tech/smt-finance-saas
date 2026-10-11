@@ -1,3 +1,4 @@
+import { rateLimitWaitSec } from "@/lib/xero-ratelimit";
 import "server-only";
 import { db } from "@/lib/db";
 import {
@@ -197,7 +198,10 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
     result.payablesSynced = apRows.length;
     worstArStatus = arRows.reduce((worstSoFar, r) => worse(worstSoFar, r.status), "GOOD" as RiskSeverity);
   } catch (err) {
-    errors.push(`AR/AP: ${err instanceof Error ? err.message : String(err)}`);
+    const msg = err instanceof Error ? err.message : String(err);
+    // Too many contacts for one live pass is expected — the background batch sync covers them — so it is
+    // not a failed sync and must not turn the connection card red.
+    if (!msg.startsWith("skipped —")) errors.push(`AR/AP: ${msg}`);
   }
 
   // 3a. Budget — separate try/catch from Bank below: they used to share one, which meant a
@@ -405,7 +409,10 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
     result.customersSynced = arRows.length;
     result.payablesSynced = apRows.length;
   } catch (err) {
-    errors.push(`AR/AP: ${err instanceof Error ? err.message : String(err)}`);
+    const msg = err instanceof Error ? err.message : String(err);
+    // Too many contacts for one live pass is expected — the background batch sync covers them — so it is
+    // not a failed sync and must not turn the connection card red.
+    if (!msg.startsWith("skipped —")) errors.push(`AR/AP: ${msg}`);
   }
   mark("AR/AP step done");
 
@@ -535,7 +542,17 @@ async function runArApBatch(
   const apBatch = pendingAp.slice(0, Math.max(0, batchSize - arBatch.length));
 
   let processed = 0;
+  // Once Xero says the daily quota is used up, every further call in this batch would fail the same
+  // way — stop at the first one and report it once, instead of one error per contact.
+  let rateLimitedMsg: string | null = null;
+  const stopOnRateLimit = (err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    const wait = rateLimitWaitSec(msg);
+    if (wait !== null) rateLimitedMsg = `Xero API call failed: 429 rate limited — Xero asked to wait ${wait}s (daily quota); the batch pauses and resumes automatically`;
+    return wait !== null;
+  };
   for (const c of arBatch) {
+    if (rateLimitedMsg) break;
     try {
       const report = await fetchXeroAgedReceivablesByContact(accessToken, tenantId, c.ContactID);
       const agingDays = oldestDueAgingDays(report);
@@ -553,10 +570,11 @@ async function runArApBatch(
       else await db.aRCustomer.create({ data: { ...data, organizationId, subsidiaryId } });
       processed++;
     } catch (err) {
-      errors.push(`AR contact "${c.Name}": ${err instanceof Error ? err.message : String(err)}`);
+      if (!stopOnRateLimit(err)) errors.push(`AR contact "${c.Name}": ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   for (const c of apBatch) {
+    if (rateLimitedMsg) break;
     try {
       const report = await fetchXeroAgedPayablesByContact(accessToken, tenantId, c.ContactID);
       const agingDays = oldestDueAgingDays(report);
@@ -574,10 +592,11 @@ async function runArApBatch(
       else await db.payable.create({ data: { ...data, organizationId, subsidiaryId } });
       processed++;
     } catch (err) {
-      errors.push(`AP contact "${c.Name}": ${err instanceof Error ? err.message : String(err)}`);
+      if (!stopOnRateLimit(err)) errors.push(`AP contact "${c.Name}": ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
+  if (rateLimitedMsg) errors.push(rateLimitedMsg);
   const cycleComplete = processed >= pendingBefore;
   if (cycleComplete) {
     // Prune rows this cycle should have refreshed but Xero no longer lists a balance for — only

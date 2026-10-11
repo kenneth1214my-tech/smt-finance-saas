@@ -1,5 +1,6 @@
 "use client";
 
+import { visibleSyncError, describeBatchError } from "@/lib/xero-ratelimit";
 import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import * as XLSX from "xlsx";
@@ -1501,6 +1502,8 @@ function relativeTime(date: Date | string | null | undefined, isZh: boolean): st
 // JSON body...}" segments joined with "; " — useful in logs, but as a one-line status under a
 // connection card it reads as a wall of noise. Collapse each segment to "<step>: <reason>" and
 // drop the JSON body; anything that doesn't match the known shape is just truncated.
+const batchColor = (d: { rateLimited: boolean } | null) => (!d ? "var(--ink-400)" : d.rateLimited ? "var(--status-warning)" : "var(--status-critical)");
+
 function shortSyncError(raw: string): string {
   return raw
     .split("; ")
@@ -1547,6 +1550,34 @@ function DataTab({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
+  // Stand-by "add subsidiary" form: a new entity is created in one step and is immediately ready to
+  // connect to Xero; from then on the daily auto-sync and the background AR/AP sync pick it up on their own.
+  const [addingSub, setAddingSub] = useState(false);
+  const [newSubName, setNewSubName] = useState("");
+  const [creatingSub, setCreatingSub] = useState(false);
+  async function addSubsidiary(thenConnect: boolean) {
+    const name = newSubName.trim();
+    if (!name || creatingSub) return;
+    setCreatingSub(true);
+    try {
+      const res = await fetch("/api/admin/subsidiaries", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nameZh: name, nameEn: name }) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.row?.id) {
+        onToast(body.error === "duplicate_entry" ? (isZh ? "该子公司已存在" : "A subsidiary with this name already exists") : isZh ? "添加失败" : "Could not add the subsidiary");
+        return;
+      }
+      setNewSubName("");
+      setAddingSub(false);
+      if (thenConnect) {
+        window.location.href = `/api/admin/erp/xero/connect?subsidiaryId=${body.row.id}`;
+        return;
+      }
+      onToast(isZh ? "子公司已添加，可立即连接 Xero" : "Subsidiary added — ready to connect to Xero");
+      router.refresh();
+    } finally {
+      setCreatingSub(false);
+    }
+  }
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [deletingImportId, setDeletingImportId] = useState<string | null>(null);
   const [pendingChoice, setPendingChoice] = useState<
@@ -1706,11 +1737,11 @@ function DataTab({
               )}
             </div>
             {xeroGroupConnected && (
-              <div className="flex items-center gap-1.5 text-[11px]" style={{ color: xeroGroupLastSyncError ? "var(--status-warning)" : "var(--ink-400)" }}>
-                {xeroGroupLastSyncError
+              <div className="flex items-center gap-1.5 text-[11px]" style={{ color: visibleSyncError(xeroGroupLastSyncError) ? "var(--status-warning)" : "var(--ink-400)" }}>
+                {visibleSyncError(xeroGroupLastSyncError)
                   ? isZh
-                    ? `上次同步失败（${relativeTime(xeroGroupLastSyncAt, isZh)}）：${shortSyncError(xeroGroupLastSyncError)}`
-                    : `Last sync failed (${relativeTime(xeroGroupLastSyncAt, isZh)}): ${shortSyncError(xeroGroupLastSyncError)}`
+                    ? `上次同步失败（${relativeTime(xeroGroupLastSyncAt, isZh)}）：${shortSyncError(visibleSyncError(xeroGroupLastSyncError) ?? "")}`
+                    : `Last sync failed (${relativeTime(xeroGroupLastSyncAt, isZh)}): ${shortSyncError(visibleSyncError(xeroGroupLastSyncError) ?? "")}`
                   : xeroGroupLastSyncAt
                     ? isZh
                       ? `每日自动同步 · 上次同步：${relativeTime(xeroGroupLastSyncAt, isZh)}`
@@ -1721,7 +1752,7 @@ function DataTab({
               </div>
             )}
             {xeroGroupConnected && (xeroGroupArApCycleStartedAt || xeroGroupArApLastBatchAt) && (
-              <div className="flex items-center gap-1.5 text-[11px]" style={{ color: xeroGroupArApLastBatchError ? "var(--status-critical)" : "var(--ink-400)" }}>
+              <div className="flex items-center gap-1.5 text-[11px]" style={{ color: batchColor(describeBatchError(xeroGroupArApLastBatchError, xeroGroupArApLastBatchAt, isZh)) }}>
                 {isZh ? "应收/应付后台同步" : "AR/AP background sync"}
                 {": "}
                 {xeroGroupArApCycleStartedAt
@@ -1731,7 +1762,10 @@ function DataTab({
                   : isZh
                     ? `已完成本轮，上次批次：${relativeTime(xeroGroupArApLastBatchAt, isZh)}`
                     : `up to date, last batch ${relativeTime(xeroGroupArApLastBatchAt, isZh)}`}
-                {xeroGroupArApLastBatchError ? ` — ${xeroGroupArApLastBatchError}` : ""}
+                {(() => {
+                  const d = describeBatchError(xeroGroupArApLastBatchError, xeroGroupArApLastBatchAt, isZh);
+                  return d ? ` — ${d.text}` : "";
+                })()}
               </div>
             )}
           </div>
@@ -1789,22 +1823,22 @@ function DataTab({
                   )}
                 </div>
                 {connected && (
-                  <div className="flex items-center gap-1.5 text-[11px]" style={{ color: conn?.lastSyncError ? "var(--status-warning)" : "var(--ink-400)" }}>
-                    {conn?.lastSyncError
+                  <div className="flex items-center gap-1.5 text-[11px]" style={{ color: visibleSyncError(conn?.lastSyncError) ? "var(--status-warning)" : "var(--ink-400)" }}>
+                    {visibleSyncError(conn?.lastSyncError)
                       ? isZh
-                        ? `上次同步失败（${relativeTime(conn.lastSyncAt, isZh)}）：${shortSyncError(conn.lastSyncError)}`
-                        : `Last sync failed (${relativeTime(conn.lastSyncAt, isZh)}): ${shortSyncError(conn.lastSyncError)}`
+                        ? `上次同步失败（${relativeTime(conn?.lastSyncAt, isZh)}）：${shortSyncError(visibleSyncError(conn?.lastSyncError) ?? "")}`
+                        : `Last sync failed (${relativeTime(conn?.lastSyncAt, isZh)}): ${shortSyncError(visibleSyncError(conn?.lastSyncError) ?? "")}`
                       : conn?.lastSyncAt
                         ? isZh
-                          ? `每日自动同步 · 上次同步：${relativeTime(conn.lastSyncAt, isZh)}`
-                          : `Auto-syncs daily · Last synced ${relativeTime(conn.lastSyncAt, isZh)}`
+                          ? `每日自动同步 · 上次同步：${relativeTime(conn?.lastSyncAt, isZh)}`
+                          : `Auto-syncs daily · Last synced ${relativeTime(conn?.lastSyncAt, isZh)}`
                         : isZh
                           ? "每日自动同步 · 尚未同步过，请点击「全部同步」立即同步一次"
                           : "Auto-syncs daily · Not synced yet — click \"Sync all\" to run it now"}
                   </div>
                 )}
                 {connected && (conn?.arApCycleStartedAt || conn?.arApLastBatchAt) && (
-                  <div className="flex items-center gap-1.5 text-[11px]" style={{ color: conn?.arApLastBatchError ? "var(--status-critical)" : "var(--ink-400)" }}>
+                  <div className="flex items-center gap-1.5 text-[11px]" style={{ color: batchColor(describeBatchError(conn?.arApLastBatchError, conn?.arApLastBatchAt, isZh)) }}>
                     {isZh ? "应收/应付后台同步" : "AR/AP background sync"}
                     {": "}
                     {conn?.arApCycleStartedAt
@@ -1814,26 +1848,62 @@ function DataTab({
                       : isZh
                         ? `已完成本轮，上次批次：${relativeTime(conn?.arApLastBatchAt, isZh)}`
                         : `up to date, last batch ${relativeTime(conn?.arApLastBatchAt, isZh)}`}
-                    {conn?.arApLastBatchError ? ` — ${conn.arApLastBatchError}` : ""}
+                    {(() => {
+                      const d = describeBatchError(conn?.arApLastBatchError, conn?.arApLastBatchAt, isZh);
+                      return d ? ` — ${d.text}` : "";
+                    })()}
                   </div>
                 )}
               </div>
             );
           })}
-          <button
-            onClick={() =>
-              onToast(
-                isZh
-                  ? "用友 / 金蝶 / SAP 等 ERP 系统对接即将推出，敬请期待"
-                  : "Yonyou / Kingdee / SAP and other ERP integrations are coming soon"
-              )
-            }
-            className="flex items-center gap-1.5 rounded-lg border border-dashed px-3.5 py-2.5 text-[12.5px] font-bold"
-            style={{ borderColor: "var(--border-strong)", color: "var(--ink-400)" }}
-          >
-            <Plus size={14} />
-            {isZh ? "新增子公司 ERP 系统对接（用友 / 金蝶 / SAP 等）" : "Add subsidiary ERP integration (Yonyou / Kingdee / SAP, etc.)"}
-          </button>
+          {addingSub ? (
+            <div className="flex flex-col gap-2 rounded-lg border px-3.5 py-3" style={{ borderColor: "var(--border-strong)" }}>
+              <div className="text-[12px] font-semibold" style={{ color: "var(--ink-600)" }}>
+                {isZh ? "新增子公司（待命状态：添加后即可连接 Xero，之后自动同步，无需其他设置）" : "New subsidiary — stand-by: once added it can be connected to Xero right away, then syncs automatically"}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  autoFocus
+                  value={newSubName}
+                  onChange={(e) => setNewSubName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && addSubsidiary(false)}
+                  placeholder={isZh ? "子公司名称" : "Subsidiary name"}
+                  maxLength={60}
+                  className="min-w-[220px] flex-1 rounded-lg border px-3 py-1.5 text-[12.5px]"
+                  style={{ borderColor: "var(--border-strong)", background: "var(--surface)" }}
+                />
+                <button
+                  onClick={() => addSubsidiary(true)}
+                  disabled={!newSubName.trim() || creatingSub}
+                  className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
+                  style={{ background: "var(--cat-1)" }}
+                >
+                  {isZh ? "添加并连接 Xero" : "Add & connect Xero"}
+                </button>
+                <button
+                  onClick={() => addSubsidiary(false)}
+                  disabled={!newSubName.trim() || creatingSub}
+                  className="rounded-lg border px-3 py-1.5 text-[12px] font-bold disabled:opacity-50"
+                  style={{ borderColor: "var(--border-strong)", color: "var(--ink-600)" }}
+                >
+                  {isZh ? "仅添加" : "Add only"}
+                </button>
+                <button onClick={() => { setAddingSub(false); setNewSubName(""); }} className="px-2 py-1.5 text-[12px] font-semibold" style={{ color: "var(--ink-400)" }}>
+                  {isZh ? "取消" : "Cancel"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setAddingSub(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-dashed px-3.5 py-2.5 text-[12.5px] font-bold"
+              style={{ borderColor: "var(--border-strong)", color: "var(--ink-600)" }}
+            >
+              <Plus size={14} />
+              {isZh ? "新增子公司并对接 Xero" : "Add subsidiary & connect Xero"}
+            </button>
+          )}
           {!xeroConfigured && (
             <div className="rounded-lg px-3 py-2 text-[11.8px]" style={{ background: "color-mix(in srgb, var(--status-warning) 12%, transparent)", color: "var(--status-warning)" }}>
               {isZh

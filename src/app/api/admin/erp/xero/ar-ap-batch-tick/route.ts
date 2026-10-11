@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
+import { rateLimitResumeAt } from "@/lib/xero-ratelimit";
 import { syncArApBatchForSubsidiary, syncArApBatchForGroup } from "@/lib/xero-sync";
 
 // A batch of up to AR_AP_BATCH_SIZE (40) contacts, potentially for more than one connection in
@@ -19,7 +20,10 @@ export const maxDuration = 120;
 // Settings repeatedly doesn't multiply real API usage.
 const MIN_INTERVAL_MS = 3 * 60 * 1000;
 
-function dueForTick(lastBatchAt: Date | null): boolean {
+function dueForTick(lastBatchAt: Date | null, lastError: string | null = null): boolean {
+  // While Xero's daily quota is exhausted every call fails, so don't even try until it resets.
+  const resumeAt = rateLimitResumeAt(lastError, lastBatchAt);
+  if (resumeAt && resumeAt.getTime() > Date.now()) return false;
   return !lastBatchAt || Date.now() - lastBatchAt.getTime() >= MIN_INTERVAL_MS;
 }
 
@@ -35,7 +39,7 @@ export async function POST() {
   const results: { scope: string; ok: boolean; processed: number; pendingBefore: number; cycleComplete: boolean; skipped?: boolean }[] = [];
 
   for (const conn of connections) {
-    if (!dueForTick(conn.arApLastBatchAt)) {
+    if (!dueForTick(conn.arApLastBatchAt, conn.arApLastBatchError)) {
       results.push({ scope: conn.subsidiaryId, ok: true, processed: 0, pendingBefore: 0, cycleComplete: false, skipped: true });
       continue;
     }
@@ -49,7 +53,7 @@ export async function POST() {
     results.push({ scope: conn.subsidiaryId, ...result });
   }
 
-  if (groupConnection?.connectedAt && dueForTick(groupConnection.arApLastBatchAt)) {
+  if (groupConnection?.connectedAt && dueForTick(groupConnection.arApLastBatchAt, groupConnection.arApLastBatchError)) {
     let result: { ok: boolean; processed: number; pendingBefore: number; cycleComplete: boolean; errors: string[] };
     try {
       result = await syncArApBatchForGroup(organizationId);
