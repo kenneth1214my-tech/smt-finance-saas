@@ -14,6 +14,8 @@ import { getReportYears } from "@/lib/period-server";
 import { getCompanyName } from "@/lib/company";
 import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
+import KpiBreakdown from "@/components/ui/KpiBreakdown";
+import { buildPnlSections } from "@/lib/overview-breakdown";
 import RankList from "@/components/ui/RankList";
 import TrendChart from "@/components/ui/TrendChart";
 import StatusPill from "@/components/ui/StatusPill";
@@ -121,6 +123,24 @@ export default async function ProfitPage(props: PageProps<"/profit">) {
   const roeRows = bySub.filter((r): r is typeof bySub[number] & { roe: number } => r.roe !== null);
   const avgRoe = roeRows.length ? roeRows.reduce((a, r) => a + r.roe, 0) / roeRows.length : 0;
 
+  // ---- Workings behind each KPI tile (see KpiBreakdown) ----
+  const t = (zh: string, en: string) => (isZh ? zh : en);
+  const profitEntities = [
+    ...(bySub.some((r) => r.sub.id === HQ_PSEUDO_SUB.id) ? [{ id: null as string | null, label: t("集团总部", "Group HQ"), equity: Number(organization.equity) }] : []),
+    ...subsidiaries.map((sub) => ({ id: sub.id as string | null, label: localizedName(sub, locale), equity: Number(sub.equity) })),
+  ];
+  const profitSections = buildPnlSections({
+    entities: profitEntities,
+    rows: kpiRows,
+    fromMonth: period.fromMonth,
+    toMonth: period.toMonth,
+    monthNames: monthLabels(locale, 12),
+    isZh,
+    equity: profitEntities.map((e) => e.equity),
+  });
+  const profitById = new Map(profitSections.map((x) => [x.id, x]));
+  const breakdownSections = ["gm", "opmargin", "netmargin", "np", "op", "roe"].map((id) => profitById.get(id)!).filter(Boolean);
+
   const waterfall = [
     { label: dict.m.revenue, value: totalRevenue, kind: "total" as const },
     { label: dict.m.cost, value: -totalCost, kind: "neg" as const },
@@ -149,6 +169,16 @@ export default async function ProfitPage(props: PageProps<"/profit">) {
           <KpiTile icon={Wallet} color="var(--cat-4)" label={dict.m.netProfit} value={fmtM(totalNetProfit)} unit={dict.common.yi} />
           <KpiTile icon={PieChart} color="var(--cat-5)" label={dict.m.opProfit} value={fmtM(opProfit)} unit={dict.common.yi} />
           <KpiTile icon={Users2} color="var(--cat-3)" label={dict.m.avgRoe} value={fmt1(avgRoe)} unit="%" />
+        </div>
+
+        <div data-pdf-hide>
+          <KpiBreakdown
+            sections={breakdownSections}
+            locale={locale}
+            unit={baseCurrency}
+            heading={t("指标明细与计算过程", "KPI breakdown & calculation")}
+            hint={t("点击展开，查看每个指标的计算公式、逐项明细与核对结果，便于复核。", "Click a KPI to see its formula, line items and tie-out so every figure can be re-checked.")}
+          />
         </div>
 
         <Card title={dict.m.waterfallCard} unit={dict.common.yi}>

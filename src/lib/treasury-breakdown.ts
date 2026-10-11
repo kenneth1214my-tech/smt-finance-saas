@@ -14,13 +14,13 @@ export interface BreakdownRow {
   hint?: string;
   values: (number | null)[];
   kind?: "item" | "total" | "muted" | "check";
-  format?: "pct"; // show values as a percentage instead of an amount
+  format?: "pct" | "count"; // show values as a percentage / whole number instead of an amount
 }
 export interface BreakdownSection {
   id: string;
   title: string;
   result: number | null;
-  resultFormat?: "pct";
+  resultFormat?: "pct" | "count";
   formula: string;
   cols: string[];
   rows: BreakdownRow[];

@@ -4,7 +4,8 @@ import type { BreakdownSection } from "@/lib/treasury-breakdown";
 // Collapsible "how this number is calculated" panels, one per KPI. Server component — no state needed,
 // the native <details> element handles open/close.
 export default function KpiBreakdown({ sections, locale, unit, heading, hint }: { sections: BreakdownSection[]; locale: Locale; unit: string; heading: string; hint: string }) {
-  const fmt = (n: number | null, pct = false) => (n === null ? "—" : pct ? `${(n + 0).toFixed(1)}%` : fmtMoney(n + 0, locale)); // + 0 turns -0 into 0
+  const fmt = (n: number | null, format?: "pct" | "count") =>
+    n === null ? "—" : format === "pct" ? `${(n + 0).toFixed(1)}%` : format === "count" ? Math.round(n).toLocaleString("en-US") : fmtMoney(n + 0, locale); // + 0 turns -0 into 0
   return (
     <section className="rounded-2xl border p-4" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
       <div className="mb-1 text-[14px] font-extrabold" style={{ color: "var(--ink-900)" }}>{heading}</div>
@@ -15,7 +16,7 @@ export default function KpiBreakdown({ sections, locale, unit, heading, hint }: 
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-2.5 text-[13px] font-bold" style={{ color: "var(--ink-900)" }}>
               <span>{s.title}</span>
               <span className="tabular-nums" style={{ color: s.result !== null && s.result < 0 ? "var(--status-critical)" : "var(--ink-900)" }}>
-                {fmt(s.result, s.resultFormat === "pct")} {s.resultFormat !== "pct" && <span className="text-[11px] font-semibold" style={{ color: "var(--ink-400)" }}>{unit}</span>}
+                {fmt(s.result, s.resultFormat)} {!s.resultFormat && <span className="text-[11px] font-semibold" style={{ color: "var(--ink-400)" }}>{unit}</span>}
               </span>
             </summary>
             <div className="border-t px-3.5 py-3" style={{ borderColor: "var(--border)" }}>
@@ -44,7 +45,7 @@ export default function KpiBreakdown({ sections, locale, unit, heading, hint }: 
                           </td>
                           {r.values.map((v, j) => (
                             <td key={j} className={`tabular-nums py-1.5 text-right ${strong ? "font-bold" : ""}`} style={{ color: muted ? "var(--ink-400)" : v !== null && v < 0 ? "var(--status-critical)" : undefined }}>
-                              {fmt(v, r.format === "pct")}
+                              {fmt(v, r.format)}
                             </td>
                           ))}
                         </tr>

@@ -3,7 +3,7 @@ import { requireUser } from "@/lib/dal";
 import { db } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary, withBaseCurrency, fmtMoney } from "@/lib/i18n/dictionaries";
-import { localizedSegment, monthLabels } from "@/lib/localize";
+import { localizedSegment, localizedName, monthLabels } from "@/lib/localize";
 import { getBaseCurrency } from "@/lib/currency";
 import Topbar from "@/components/Topbar";
 import PdfDownloadButton from "@/components/PdfDownloadButton";
@@ -13,6 +13,8 @@ import { getReportYears } from "@/lib/period-server";
 import { getCompanyName } from "@/lib/company";
 import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
+import KpiBreakdown from "@/components/ui/KpiBreakdown";
+import { buildPnlSections } from "@/lib/overview-breakdown";
 import RankList from "@/components/ui/RankList";
 import TrendChart from "@/components/ui/TrendChart";
 
@@ -109,6 +111,25 @@ export default async function OpsPage(props: PageProps<"/ops">) {
     { name: dict.m.financeExp, value: financeExp, color: "var(--cat-3)" },
   ];
 
+  // ---- Workings behind each KPI tile (see KpiBreakdown) ----
+  const t = (zh: string, en: string) => (isZh ? zh : en);
+  const headcountOf = new Map(bySub.map((r) => [r.sub.id, r.headcount]));
+  const opsEntities = [
+    ...(bySub.some((r) => r.sub.id === HQ_PSEUDO_SUB.id) ? [{ id: null as string | null, label: t("集团总部", "Group HQ"), headcount: headcountOf.get(HQ_PSEUDO_SUB.id) ?? 0 }] : []),
+    ...subsidiaries.map((sub) => ({ id: sub.id as string | null, label: localizedName(sub, locale), headcount: headcountOf.get(sub.id) ?? 0 })),
+  ];
+  const opsSections = buildPnlSections({
+    entities: opsEntities,
+    rows: kpiCur,
+    fromMonth: period.fromMonth,
+    toMonth: period.toMonth,
+    monthNames: monthLabels(locale, 12),
+    isZh,
+    headcounts: opsEntities.map((e) => e.headcount),
+  });
+  const opsById = new Map(opsSections.map((x) => [x.id, x]));
+  const breakdownSections = ["revenue", "cost", "gm", "expratio", "rnd", "perhead"].map((id) => opsById.get(id)!).filter(Boolean);
+
   const opCostTrendTitle = locale === "zh" || locale === "zh-Hant" ? "月度营业成本占比趋势" : "Monthly Operating Cost Ratio Trend";
 
   return (
@@ -126,6 +147,16 @@ export default async function OpsPage(props: PageProps<"/ops">) {
           <KpiTile icon={Wallet} color="var(--cat-4)" label={dict.m.expenseRatio} value={fmt1(expenseRatio)} unit="%" />
           <KpiTile icon={FlaskConical} color="var(--cat-5)" label={dict.m.rndIntensity} value={fmt1(totalRevenue > 0 ? (rndExp / totalRevenue) * 100 : 0)} unit="%" />
           <KpiTile icon={Users2} color="var(--cat-3)" label={dict.m.revenuePerHead} value={fmtM(revenuePerHead)} unit={dict.common.yi} />
+        </div>
+
+        <div data-pdf-hide>
+          <KpiBreakdown
+            sections={breakdownSections}
+            locale={locale}
+            unit={baseCurrency}
+            heading={t("指标明细与计算过程", "KPI breakdown & calculation")}
+            hint={t("点击展开，查看每个指标的计算公式、逐项明细与核对结果，便于复核。", "Click a KPI to see its formula, line items and tie-out so every figure can be re-checked.")}
+          />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
