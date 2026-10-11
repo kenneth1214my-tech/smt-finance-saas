@@ -902,7 +902,9 @@ export function scaleMoney(n: number, _locale: Locale): number {
 
 /** Formats a raw monetary figure for display: thousands separators, 2 decimals (true precision). */
 export function fmtMoney(n: number, _locale: Locale): string {
-  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // A value that rounds to zero must print as 0, never as "-0.00".
+  const v = Math.abs(n) < 0.005 ? 0 : n;
+  return v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export function withBaseCurrency(dict: Dictionary, locale: Locale, baseCurrency: string): Dictionary {
