@@ -23,6 +23,7 @@ export default function KpiBreakdown({ sections, locale, unit, heading, hint }: 
               <p className="mb-2.5 text-[12px] leading-relaxed" style={{ color: "var(--ink-600)" }}>
                 <b>ƒ</b> {s.formula}
               </p>
+              {s.rows.length > 0 && (
               <div className="overflow-x-auto">
                 <table className="w-full text-[12.4px]">
                   <thead>
@@ -54,6 +55,7 @@ export default function KpiBreakdown({ sections, locale, unit, heading, hint }: 
                   </tbody>
                 </table>
               </div>
+              )}
               {s.notes?.map((n, i) => (
                 <p key={i} className="mt-2 text-[11px] leading-relaxed" style={{ color: "var(--ink-400)" }}>{n}</p>
               ))}

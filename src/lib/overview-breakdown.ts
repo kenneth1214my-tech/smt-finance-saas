@@ -78,7 +78,7 @@ export function buildPnlSections(args: {
     id: "revenue",
     title: t("营业收入", "Revenue"),
     result: revenue[last],
-    formula: t("所选期间内每个主体各月利润表营业收入（来自 Xero 同步的月度利润表）之和", "Sum of each entity's monthly P&L revenue over the selected period (from the monthly P&L synced from Xero)"),
+    formula: t("所选期间内每个主体各月利润表营业收入（来自月度利润表）之和", "Sum of each entity's monthly P&L revenue over the selected period (from the monthly P&L)"),
     cols,
     rows: [...monthlyRows((r) => num(r.revenue)), { label: t("营业收入合计", "Total revenue"), values: revenue, kind: "total" }],
     notes: [period],
@@ -217,7 +217,7 @@ export function buildPnlSections(args: {
     id: "np",
     title: t("净利润", "Net profit"),
     result: net[last],
-    formula: t("利润表净利润（Xero 同步）；与营业利润的差额为其他收入/支出及税项", "Net profit as reported in the synced monthly P&L; the gap to operating profit is other income / expenses and tax"),
+    formula: t("利润表净利润；与营业利润的差额为其他收入/支出及税项", "Net profit as reported in the monthly P&L; the gap to operating profit is other income / expenses and tax"),
     cols,
     rows: [
       { label: t("营业利润（见上）", "Operating profit (above)"), values: opProfit },
