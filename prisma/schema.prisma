@@ -504,7 +504,12 @@ model ImportBatch {
   importedById   String
   importedBy     User         @relation(fields: [importedById], references: [id])
   createdAt      DateTime     @default(now())
+  // SHA-256 of the import type + the exact rows sent. The same data can only be imported once per
+  // organization (a second upload of the same file is rejected until its history entry is deleted).
+  // Null on batches recorded before this existed — Postgres allows many NULLs in a unique index.
+  contentHash    String?
 
+  @@unique([organizationId, contentHash])
   @@index([organizationId])
 }
 

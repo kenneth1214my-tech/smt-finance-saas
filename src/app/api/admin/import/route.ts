@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 import { requireUser, canApprove } from "@/lib/dal";
 import { db } from "@/lib/db";
 import { findImportType } from "@/lib/import-types";
@@ -47,6 +48,26 @@ export async function POST(req: Request) {
   ]);
   const subByKey = new Map(subsidiaries.map((s) => [s.key, s.id]));
   const regionByKey = new Map(regions.map((r) => [r.key, r.id]));
+
+  // The same data must never be imported twice: it wastes storage, and for the contact imports
+  // (AR / AP) it re-runs hundreds of per-row writes for no change. The batch row is claimed BEFORE the
+  // rows are processed — the unique index on contentHash makes a double-click or a second tab lose the
+  // race instead of both running — and is released again below if nothing ended up imported.
+  const contentHash = createHash("sha256").update(JSON.stringify({ type: config.id, rows })).digest("hex");
+  let claimId: string;
+  try {
+    const claim = await db.importBatch.create({ data: { organizationId, fileName, rowCount: 0, importedById: user.id, contentHash } });
+    claimId = claim.id;
+  } catch (err) {
+    if (err && typeof err === "object" && "code" in err && err.code === "P2002") {
+      const earlier = await db.importBatch.findFirst({ where: { organizationId, contentHash }, include: { importedBy: true } });
+      return NextResponse.json(
+        { error: "duplicate_import", earlier: earlier ? { fileName: earlier.fileName, rowCount: earlier.rowCount, createdAt: earlier.createdAt, importedBy: earlier.importedBy?.name ?? null } : null },
+        { status: 409 }
+      );
+    }
+    throw err;
+  }
 
   let successCount = 0;
   const failed: FailedRow[] = [];
@@ -178,9 +199,9 @@ export async function POST(req: Request) {
     }
   }
 
-  if (successCount > 0) {
-    await db.importBatch.create({ data: { organizationId, fileName, rowCount: successCount, importedById: user.id } });
-  }
+  // Nothing imported (every row failed) → release the claim so the corrected file can be re-uploaded.
+  if (successCount > 0) await db.importBatch.update({ where: { id: claimId }, data: { rowCount: successCount } });
+  else await db.importBatch.delete({ where: { id: claimId } });
 
   return NextResponse.json({ successCount, failedCount: failed.length, failed });
 }

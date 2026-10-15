@@ -1515,6 +1515,17 @@ function shortSyncError(raw: string): string {
     .join(", ");
 }
 
+// The server refuses to import data it has already imported (same type + same rows). Turn its 409 reply
+// into a message that says what the earlier import was and how to import again if that is really intended.
+async function duplicateImportText(res: Response, isZh: boolean): Promise<string> {
+  const body = await res.json().catch(() => ({}));
+  const e = body?.earlier as { fileName: string; rowCount: number; createdAt: string; importedBy: string | null } | null | undefined;
+  const when = e?.createdAt ? new Date(e.createdAt).toLocaleString(isZh ? "zh-CN" : "en-SG") : "";
+  return isZh
+    ? `该文件内容已导入过${e ? `（${e.fileName}，${when}${e.importedBy ? `，${e.importedBy}` : ""}，${e.rowCount} 行）` : ""}，已阻止重复导入。如确需重新导入，请先在下方「导入记录」中删除该条记录。`
+    : `This data was already imported${e ? ` (${e.fileName}, ${when}${e.importedBy ? `, by ${e.importedBy}` : ""}, ${e.rowCount} rows)` : ""} — duplicate import blocked. To import it again, delete that entry in the import history below first.`;
+}
+
 function DataTab({
   locale,
   onToast,
@@ -2194,6 +2205,10 @@ function PnlImport({
       }),
     });
     setSubmitting(false);
+    if (res.status === 409) {
+      onToast(await duplicateImportText(res, isZh));
+      return;
+    }
     if (res.ok) {
       const body = await res.json();
       if (body.successCount > 0) {
@@ -2457,6 +2472,10 @@ function BalanceSheetImport({ locale, onToast, subsidiaries }: { locale: Locale;
       }),
     });
     setSubmitting(false);
+    if (res.status === 409) {
+      onToast(await duplicateImportText(res, isZh));
+      return;
+    }
     if (res.ok) {
       const body = await res.json();
       if (body.successCount > 0) {
@@ -2669,6 +2688,7 @@ function SmartAgingImport({ kind, locale, onToast, subsidiaries }: { kind: "ar" 
     setSubmitting(true);
     let successTotal = 0;
     let failedTotal = 0;
+    let duplicateMsg: string | null = null;
     for (let i = 0; i < result.contacts.length; i += AGING_IMPORT_CHUNK_SIZE) {
       const chunk = result.contacts.slice(i, i + AGING_IMPORT_CHUNK_SIZE);
       const rows = chunk.map((c) => ({ nameZh: c.name, nameEn: c.name, subsidiaryKey, balance: String(c.balance), agingDays: String(c.agingDays), status: c.status }));
@@ -2678,6 +2698,10 @@ function SmartAgingImport({ kind, locale, onToast, subsidiaries }: { kind: "ar" 
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ type, fileName, rows }),
         });
+        if (res.status === 409) {
+          duplicateMsg = await duplicateImportText(res, isZh);
+          break;
+        }
         if (res.ok) {
           const body = await res.json();
           successTotal += body.successCount;
@@ -2691,6 +2715,10 @@ function SmartAgingImport({ kind, locale, onToast, subsidiaries }: { kind: "ar" 
       setProgress({ done: Math.min(i + AGING_IMPORT_CHUNK_SIZE, result.contacts.length), total: result.contacts.length, success: successTotal, failed: failedTotal });
     }
     setSubmitting(false);
+    if (duplicateMsg && successTotal === 0) {
+      onToast(duplicateMsg);
+      return;
+    }
     onToast(isZh ? `导入完成：成功 ${successTotal} 条，失败 ${failedTotal} 条` : `Import complete: ${successTotal} succeeded, ${failedTotal} failed`);
     if (successTotal > 0) router.refresh();
   }
@@ -2882,6 +2910,10 @@ function CsvImport({ locale, onToast }: { locale: Locale; onToast: (m: string) =
       body: JSON.stringify({ type: config.id, fileName, rows: records }),
     });
     setSubmitting(false);
+    if (res.status === 409) {
+      onToast(await duplicateImportText(res, isZh));
+      return;
+    }
     if (res.ok) {
       const body = await res.json();
       setResult(body);
