@@ -70,6 +70,10 @@ export default async function SettingsPage() {
     isAdmin ? db.xeroGroupConnection.findUnique({ where: { organizationId } }) : Promise.resolve(null),
     isAdmin ? db.expenseCategoryMapping.findMany({ where: { organizationId }, orderBy: { accountLabel: "asc" } }) : Promise.resolve([]),
   ]);
+  // Share capital on the HQ balance sheet (latest stored month-end) — offered as a starting point for the share count.
+  const latestShareCapital = isAdmin
+    ? await db.balanceSheetMonthly.findFirst({ where: { organizationId, subsidiaryId: null, equityDetailed: true }, orderBy: [{ year: "desc" }, { month: "desc" }], select: { shareCapital: true } })
+    : null;
 
   return (
     <>
@@ -107,6 +111,7 @@ export default async function SettingsPage() {
           hqInvestmentInSubsidiaries={org ? Number(org.investmentInSubsidiaries) : 0}
           hqDueToSubsidiaries={org ? Number(org.dueToSubsidiaries) : 0}
           hqHeadcount={org?.headcount ?? 0}
+          hqShareCapital={latestShareCapital ? Number(latestShareCapital.shareCapital) : 0}
           hqShare={{ shares: org?.sharesOutstanding?.toString() ?? "", price: org?.sharePrice?.toString() ?? "", dps: org?.dividendPerShare?.toString() ?? "" }}
           xeroConnections={toPlain(xeroConnections)}
           xeroGroupConnected={Boolean(xeroGroupConnection?.connectedAt)}

@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "BalanceSheetMonthly" ADD COLUMN "shareCapital" DECIMAL(14,2) NOT NULL DEFAULT 0,
+ADD COLUMN "dividends" DECIMAL(14,2) NOT NULL DEFAULT 0,
+ADD COLUMN "equityDetailed" BOOLEAN NOT NULL DEFAULT false;

@@ -65,6 +65,7 @@ export default function SettingsClient({
   hqDueToSubsidiaries,
   hqHeadcount,
   hqShare,
+  hqShareCapital,
   xeroConnections,
   xeroGroupConnected,
   xeroGroupTenantName,
@@ -108,6 +109,7 @@ export default function SettingsClient({
   hqDueToSubsidiaries: number;
   hqHeadcount: number;
   hqShare: { shares: string; price: string; dps: string };
+  hqShareCapital: number;
   xeroConnections: XeroConnection[];
   xeroGroupConnected: boolean;
   xeroGroupTenantName: string | null;
@@ -194,6 +196,7 @@ export default function SettingsClient({
           hqDueToSubsidiaries={hqDueToSubsidiaries}
           hqHeadcount={hqHeadcount}
           hqShare={hqShare}
+          hqShareCapital={hqShareCapital}
           exchangeRates={exchangeRates as unknown as Row[]}
           onToast={showToast}
         />
@@ -806,6 +809,7 @@ function CurrencyTab({
   hqDueToSubsidiaries,
   hqHeadcount,
   hqShare,
+  hqShareCapital,
   exchangeRates,
   onToast,
 }: {
@@ -820,6 +824,7 @@ function CurrencyTab({
   hqDueToSubsidiaries: number;
   hqHeadcount: number;
   hqShare: { shares: string; price: string; dps: string };
+  hqShareCapital: number;
   exchangeRates: Row[];
   onToast: (m: string) => void;
 }) {
@@ -1169,8 +1174,20 @@ function CurrencyTab({
         </div>
         <p className="mt-2 text-[11.8px]" style={{ color: "var(--ink-400)" }}>
           {isZh
-            ? "这三项不在 Xero 中，因此在此录入一次：报告主体（母公司）的已发行股数、当前每股价格（非上市公司可填最近一次估值 ÷ 股数）、以及年度每股股息。留空表示未录入，相关比率将显示「—」。"
-            : "These three are not held in Xero, so they are entered once here: the reporting (parent) company's shares outstanding, its current price per share (for an unlisted company, its latest valuation ÷ shares), and the annual dividend per share. Leave blank if unknown — the ratios that need them show \"—\"."}
+            ? "只有「已发行股数」必须手工录入（它不在 Xero 中）。价格与股息可留空：未录入价格时，自动以账面权益作为估值（市盈率与股息率仍可计算），股息则自动从资产负债表的股息/分红科目读取。只有想覆盖时才填写每股价格（非上市公司可填最近一次估值 ÷ 股数）或每股股息。"
+            : "Only the share count has to be entered by hand — it isn't in Xero. Price and dividend can stay blank: with no price the valuation is the book value of equity (so P/E and dividend yield still work), and dividends are read automatically from the balance sheet's dividend accounts. Enter a price per share (for an unlisted company, its latest valuation ÷ shares) or a dividend per share only to override those."}
+        </p>
+        {hqShareCapital > 0 && !shares && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11.8px]" style={{ color: "var(--ink-600)" }}>
+            <span>
+              {isZh ? `资产负债表上的股本为 ${hqShareCapital.toLocaleString("en-US")}。若每股发行价为 1，则约 ${Math.round(hqShareCapital).toLocaleString("en-US")} 股。` : `Share capital on the balance sheet: ${hqShareCapital.toLocaleString("en-US")}. If each share was issued at 1, that is about ${Math.round(hqShareCapital).toLocaleString("en-US")} shares.`}
+            </span>
+            <button onClick={() => setShares(String(Math.round(hqShareCapital)))} className="rounded-lg border px-2.5 py-1 text-[11.8px] font-bold" style={{ borderColor: "var(--border-strong)", color: "var(--ink-600)" }}>
+              {isZh ? "带入此数（再点保存）" : "Use this number (then Save)"}
+            </button>
+          </div>
+        )}
+        <p className="hidden">
         </p>
       </Card>
 

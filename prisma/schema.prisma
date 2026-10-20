@@ -806,6 +806,11 @@ model BalanceSheetMonthly {
   loansCurrent   Decimal @default(0) @db.Decimal(14, 2) // loan accounts due within a year (part of loans, negative like loans)
   finLiabCurrent Decimal @default(0) @db.Decimal(14, 2) // lease / other financial liabilities due within a year (part of finLiabilities)
   detailed       Boolean @default(false)
+  // Equity detail for share-based ratios: the share capital account and any dividend / distribution accounts,
+  // picked out of the equity section by name. `equityDetailed` is false on rows stored before these existed.
+  shareCapital   Decimal @default(0) @db.Decimal(14, 2)
+  dividends      Decimal @default(0) @db.Decimal(14, 2)
+  equityDetailed Boolean @default(false)
   updatedAt      DateTime     @updatedAt
 
   // Postgres treats NULL subsidiaryIds as distinct, so a partial unique index (see migration)

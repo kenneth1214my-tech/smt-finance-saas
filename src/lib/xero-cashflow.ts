@@ -53,6 +53,7 @@ export async function syncDerivedCashFlow(args: {
       cash: r2(b.cash), loans: r2(b.loan), clearing: r2(b.clearing), opAssets: r2(b.opAsset), fixedAssets: r2(b.fixed),
       finAssets: r2(b.finAsset), opLiabilities: r2(b.opLiab), finLiabilities: r2(b.finLiab),
       receivables: r2(b.receivables), inventory: r2(b.inventory), loansCurrent: r2(b.loanCurrent), finLiabCurrent: r2(b.finLiabCurrent), detailed: true,
+      shareCapital: r2(b.shareCapital), dividends: r2(b.dividends), equityDetailed: true,
     };
     try {
       if (subsidiaryId) {

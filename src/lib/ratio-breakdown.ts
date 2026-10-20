@@ -57,8 +57,12 @@ export function buildRatioSections(args: {
   basisNote?: string;
   /** Replaces the default "fills in on the next Xero sync" hint for missing employment cost. */
   labourMissingNote?: string;
+  /** Dividends paid by the reporting company in the last 12 months, read from the balance sheet's equity accounts (null = not captured yet). */
+  dividendsTtm?: number | null;
+  /** Share capital on the balance sheet — used only to suggest a share count. */
+  shareCapital?: number | null;
 }): { sections: BreakdownSection[]; values: RatioValues } {
-  const { entities, investmentEliminated, periodNetProfit, ttmNetProfit, ttmMonths, ttmLabel, shares, price, dividendPerShare, baseCurrency, isZh, basisNote, labourMissingNote } = args;
+  const { entities, investmentEliminated, periodNetProfit, ttmNetProfit, ttmMonths, ttmLabel, shares, price, dividendPerShare, baseCurrency, isZh, basisNote, labourMissingNote, dividendsTtm = null, shareCapital = null } = args;
   const t = (zh: string, en: string) => (isZh ? zh : en);
   const multi = entities.length > 1;
   const cols = multi ? [...entities.map((e) => e.label), t("集团", "Group")] : entities.map((e) => e.label);
@@ -118,14 +122,28 @@ export function buildRatioSections(args: {
   const de = groupOf(deRatio) ?? null;
   const equityNegative = withBs.length > 0 && (groupOf(equity) ?? 0) <= 0;
 
-  // ---------- Per share ----------
+  // ---------- Per share / valuation ----------
+  const groupEquity = withBs.length ? (groupOf(equity) ?? null) : null;
   const eps = shares && shares > 0 ? periodNetProfit / shares : null;
-  const ttmEps = shares && shares > 0 && ttmMonths >= 12 ? ttmNetProfit / shares : null;
-  const pe = price !== null && price > 0 && ttmEps !== null && ttmEps > 0 ? price / ttmEps : null;
-  const yieldPct = price !== null && price > 0 && dividendPerShare !== null ? (dividendPerShare / price) * 100 : null;
-  const payout = dividendPerShare !== null && ttmEps !== null && ttmEps > 0 ? (dividendPerShare / ttmEps) * 100 : null;
+  const ttmComplete = ttmMonths >= 12;
+  const ttmEps = shares && shares > 0 && ttmComplete ? ttmNetProfit / shares : null;
+  // Valuation: price × shares when both are entered; otherwise the BOOK VALUE of equity — the only valuation an
+  // unlisted company's own books can give. On book value the share count cancels out of P/E and dividend yield,
+  // so those two work without any manual input.
+  const enteredValue = price !== null && price > 0 && shares && shares > 0 ? price * shares : null;
+  const marketValue = enteredValue ?? (groupEquity !== null && groupEquity > 0 ? groupEquity : null);
+  const valuedAtBook = enteredValue === null && marketValue !== null;
+  const pe = marketValue !== null && ttmComplete && ttmNetProfit > 0 ? marketValue / ttmNetProfit : null;
+  // Dividends paid in the last 12 months: an entered dividend per share overrides what is read from the balance sheet.
+  const enteredDividends = dividendPerShare !== null && shares && shares > 0 ? dividendPerShare * shares : null;
+  const dividendsTotal = enteredDividends ?? dividendsTtm;
+  const yieldPct = marketValue !== null && dividendsTotal !== null ? (dividendsTotal / marketValue) * 100 : null;
+  const payout = dividendsTotal !== null && ttmComplete && ttmNetProfit > 0 ? (dividendsTotal / ttmNetProfit) * 100 : null;
   const noShares = t("请先在「设置 → 集团设置 → 股份数据」录入已发行股数。", "Enter the shares outstanding under Settings → Group Settings → Share data first.");
-  const noPrice = t("请先在「设置 → 集团设置 → 股份数据」录入每股价格/估值。", "Enter the price / valuation per share under Settings → Group Settings → Share data first.");
+  const shareCapitalHint =
+    shareCapital !== null && shareCapital > 0
+      ? t(`资产负债表上的股本为 ${r2(shareCapital)} — 若每股发行价为 1，则约 ${Math.round(shareCapital)} 股；可在「设置 → 集团设置 → 股份数据」一键带入。`, `Share capital on the balance sheet is ${r2(shareCapital)} — if each share was issued at 1 that is about ${Math.round(shareCapital)} shares; Settings → Group Settings → Share data can fill it in with one click.`)
+      : null;
 
   const sections: BreakdownSection[] = [];
 
@@ -288,8 +306,8 @@ export function buildRatioSections(args: {
     ],
     notes: [
       ...(shares ? [] : [noShares]),
-      t(`每股金额以 ${baseCurrency} 计。EPS 为所选期间（可能不足一年）的数值，未年化；市盈率使用近 12 个月 EPS。`, `Per-share amounts are in ${baseCurrency}. EPS is for the selected period (which may be under a year) and is not annualised; P/E uses the last-12-months EPS.`),
-      ...(ttmMonths >= 12 ? [] : [t(`近 12 个月仅有 ${ttmMonths} 个月数据，因此不计算近 12 个月 EPS。`, `Only ${ttmMonths} months of history are available, so last-12-months EPS is not calculated.`)]),
+      ...(shares || !shareCapitalHint ? [] : [shareCapitalHint]),
+      t(`每股金额以 ${baseCurrency} 计。EPS 为所选期间（可能不足一年）的数值，未年化。`, `Per-share amounts are in ${baseCurrency}. EPS is for the selected period (which may be under a year) and is not annualised.`),
     ],
     explanation: {
       meaning: t("每一股普通股所对应的利润（或亏损），是衡量股东回报的基础指标。", "The profit (or loss) attributable to each ordinary share — the basic measure of what the business earns for its shareholders."),
@@ -297,6 +315,7 @@ export function buildRatioSections(args: {
         t("为正表示盈利，数字越大、逐期增长越好；为负表示每股亏损。", "Positive means profit — bigger and growing is better; negative means a loss per share."),
         t("不能脱离股数单独比较：增发股份会摊薄 EPS，回购会提高 EPS。", "Don't compare it without the share count: issuing new shares dilutes EPS, buying shares back raises it."),
         t("本系统按集团合并净利润 ÷ 母公司股数计算，假设没有少数股东权益。", "Calculated as group net profit ÷ the parent's shares, assuming there are no minority interests."),
+        t("股数不在财务系统中，需在设置里录入一次（这是唯一必须手工提供的数据）。", "The share count is not in the accounting system, so it is entered once in Settings (the only figure that has to be supplied by hand)."),
       ],
       current:
         eps === null
@@ -310,34 +329,40 @@ export function buildRatioSections(args: {
     title: t("市盈率（P/E）", "Price-to-earnings ratio (P/E)"),
     result: pe,
     resultFormat: "x",
-    formula: t("每股价格 ÷ 近 12 个月每股收益", "Price per share ÷ last-12-months EPS"),
+    formula: t("市值 ÷ 近 12 个月净利润（= 每股价格 ÷ 每股收益）", "Market value ÷ net profit of the last 12 months (= price per share ÷ EPS)"),
     cols: [t("集团", "Group")],
     rows: [
-      { label: t("每股价格 / 估值", "Price / valuation per share"), values: [price], format: "pershare" },
-      { label: t("÷ 近 12 个月 EPS", "÷ EPS (last 12 months)"), values: [ttmEps], format: "pershare" },
+      {
+        label: valuedAtBook ? t("估值：账面权益（未录入价格，自动使用）", "Valuation: book equity (no price entered — used automatically)") : t("估值：每股价格 × 股数", "Valuation: price per share × shares"),
+        values: [marketValue === null ? null : r2(marketValue)],
+      },
+      { label: t(`÷ 净利润（${ttmLabel}）`, `÷ Net profit (${ttmLabel})`), values: [ttmComplete ? r2(ttmNetProfit) : null] },
       { label: t("市盈率", "P/E ratio"), values: [pe], kind: "total", format: "x" },
     ],
     notes: [
-      ...(price === null || price <= 0 ? [noPrice] : []),
-      ...(shares ? [] : [noShares]),
-      ...(ttmEps !== null && ttmEps <= 0 ? [t("近 12 个月为亏损，市盈率无意义（n/m）。", "The last 12 months were loss-making, so P/E is not meaningful (n/m).")] : []),
-      t("非上市公司没有市场价格，此处使用你录入的估值 ÷ 股数，市盈率因此是估算值。", "An unlisted company has no market price, so this uses the valuation ÷ shares you entered — the P/E is an estimate."),
+      ...(valuedAtBook
+        ? [t("非上市公司没有市场价格，因此自动以账面权益（净资产）作为估值，得到的是「账面市盈率」；如有最近一次融资/评估估值，请在「设置 → 股份数据」录入每股价格以覆盖。", "An unlisted company has no market price, so equity (net assets) at book value is used as the valuation automatically — a \"book P/E\". If you have a recent funding or valuation figure, enter the price per share in Settings → Share data to override it.")]
+        : [t("使用你录入的每股价格 × 股数作为估值，因此市盈率是估算值。", "Uses the price per share × shares you entered as the valuation, so the P/E is an estimate.")]),
+      ...(marketValue === null ? [t("暂无可用估值：没有权益数据，也没有录入价格与股数。", "No valuation available: there is no equity figure and no price and share count have been entered.")] : []),
+      ...(!ttmComplete ? [t(`近 12 个月仅有 ${ttmMonths} 个月数据，不足以计算。`, `Only ${ttmMonths} months of history are available — not enough for a last-12-months figure.`)] : []),
+      ...(ttmComplete && ttmNetProfit <= 0 ? [t("近 12 个月为亏损，市盈率无意义（n/m）。", "The last 12 months were loss-making, so P/E is not meaningful (n/m).")] : []),
     ],
     explanation: {
-      meaning: t("投资者为每 1 元年度盈利愿意支付多少元股价；也可理解为「按当前盈利水平，多少年能收回投资」。", "How much an investor pays for each 1 of annual earnings — or, roughly, how many years of current profit it takes to earn the price back."),
+      meaning: t("投资者为每 1 元年度盈利愿意支付多少元；也可理解为「按当前盈利水平，多少年能收回投资」。", "How much an investor pays for each 1 of annual earnings — or, roughly, how many years of current profit it takes to earn the price back."),
       interpretation: [
         t("约 10x–20x 为常见区间（经验值，行业差异大）；明显偏高通常反映对增长的预期，偏低可能说明被低估，也可能说明盈利前景不佳。", "Roughly 10x–20x is a common range (a rule of thumb — industries differ); a much higher figure usually reflects expected growth, a much lower one can mean cheap or can mean poor prospects."),
-        t("公司亏损时 EPS 为负，市盈率没有意义，显示 n/m。", "When the company makes a loss, EPS is negative and P/E is not meaningful (n/m)."),
+        t("公司亏损时市盈率没有意义，显示 n/m。", "When the company makes a loss, P/E is not meaningful (n/m)."),
         t("使用近 12 个月盈利，避免单月波动影响。", "Uses last-12-months earnings so a single month doesn't swing it."),
+        t("按账面权益估值时，这个数字其实是「净资产 ÷ 年利润」，反映需要几年利润才能抵得上净资产。", "Valued at book equity, the figure is really \"net assets ÷ annual profit\" — how many years of profit it takes to match the net assets."),
       ],
       current:
         pe === null
-          ? ttmEps !== null && ttmEps <= 0
+          ? ttmComplete && ttmNetProfit <= 0
             ? t("近 12 个月亏损，市盈率为 n/m（无意义）。", "Loss-making over the last 12 months — P/E is n/m (not meaningful).")
             : undefined
           : t(
-              `按当前价格，需要约 ${x2(pe)} 年的盈利才能收回股价。${pe < 10 ? "偏低。" : pe <= 20 ? "处于常见区间。" : "偏高，隐含较高的增长预期。"}`,
-              `At this price it would take about ${x2(pe)} years of current earnings to earn the price back. ${pe < 10 ? "On the low side." : pe <= 20 ? "In the common range." : "On the high side — it implies strong growth expectations."}`
+              `按${valuedAtBook ? "账面权益" : "当前价格"}估值，需要约 ${x2(pe)} 年的盈利才能抵得上估值。${pe < 10 ? "偏低。" : pe <= 20 ? "处于常见区间。" : "偏高，隐含较高的增长预期。"}`,
+              `On ${valuedAtBook ? "book equity" : "the entered price"} it would take about ${x2(pe)} years of current earnings to match the valuation. ${pe < 10 ? "On the low side." : pe <= 20 ? "In the common range." : "On the high side — it implies strong growth expectations."}`
             ),
     },
   });
@@ -347,28 +372,32 @@ export function buildRatioSections(args: {
     title: t("股息率", "Dividend yield"),
     result: yieldPct,
     resultFormat: "pct",
-    formula: t("每股股息 ÷ 每股价格 × 100%", "Dividend per share ÷ price per share × 100%"),
+    formula: t("近 12 个月已派股息 ÷ 市值 × 100%", "Dividends paid in the last 12 months ÷ market value × 100%"),
     cols: [t("集团", "Group")],
     rows: [
-      { label: t("年度每股股息", "Annual dividend per share"), values: [dividendPerShare], format: "pershare" },
-      { label: t("÷ 每股价格 / 估值", "÷ Price / valuation per share"), values: [price], format: "pershare" },
+      { label: t("已派股息（近 12 个月）", "Dividends paid (last 12 months)"), hint: enteredDividends !== null ? t("按你录入的每股股息 × 股数", "From the dividend per share you entered × shares") : t("取自资产负债表中权益下的股息/分红科目的月度增加", "Read from the monthly increase in the dividend / distribution accounts under equity on the balance sheet"), values: [dividendsTotal === null ? null : r2(dividendsTotal)] },
+      { label: valuedAtBook ? t("÷ 估值：账面权益", "÷ Valuation: book equity") : t("÷ 估值：每股价格 × 股数", "÷ Valuation: price per share × shares"), values: [marketValue === null ? null : r2(marketValue)] },
       { label: t("股息率", "Dividend yield"), values: [yieldPct], kind: "total", format: "pct" },
-      { label: t("派息率（每股股息 ÷ 近 12 个月 EPS）", "Payout ratio (dividend ÷ last-12-months EPS)"), values: [payout], kind: "muted", format: "pct" },
+      { label: t("派息率（股息 ÷ 近 12 个月净利润）", "Payout ratio (dividends ÷ last-12-months net profit)"), values: [payout], kind: "muted", format: "pct" },
     ],
-    notes: [...(price === null || price <= 0 ? [noPrice] : []), ...(dividendPerShare === null ? [t("请在「设置 → 集团设置 → 股份数据」录入年度每股股息（未派息填 0）。", "Enter the annual dividend per share under Settings → Group Settings → Share data (0 if none is paid).")] : [])],
+    notes: [
+      ...(dividendsTotal === null ? [t("尚未取得股息数据：下一次 Xero 同步后会从资产负债表读取；也可在「设置 → 股份数据」录入每股股息与股数来覆盖。", "No dividend data yet: it is read from the balance sheet on the next Xero sync; you can also override it by entering the dividend per share and the share count in Settings → Share data.")] : []),
+      ...(dividendsTotal === 0 ? [t("近 12 个月没有记录到股息（若股息直接记入留存收益而没有单独的权益科目，则无法识别）。", "No dividends were recorded in the last 12 months (a dividend booked straight to retained earnings, with no separate equity account, cannot be recognised).")] : []),
+      ...(marketValue === null ? [t("暂无可用估值（没有权益数据，也没有录入价格与股数）。", "No valuation available (no equity figure, and no price and share count entered).")] : []),
+    ],
     explanation: {
-      meaning: t("按当前股价，每年以股息形式回报给股东的现金比例。", "The cash a shareholder receives each year as dividends, as a percentage of the price paid for the share."),
+      meaning: t("按当前估值，每年以股息形式回报给股东的现金比例。", "The cash a shareholder receives each year as dividends, as a percentage of what the shares are worth."),
       interpretation: [
         t("约 2%–6% 较常见；0% 表示不派息（利润留存再投资）。", "Around 2%–6% is common; 0% means no dividend is paid (profit is kept and reinvested)."),
-        t("过高要警惕：可能是股价大跌，或派息超出盈利、难以持续。", "Be careful with a very high figure: the price may have collapsed, or the dividend may be more than earnings and hard to sustain."),
+        t("过高要警惕：可能是估值偏低，或派息超出盈利、难以持续。", "Be careful with a very high figure: the valuation may be low, or the dividend may be more than earnings and hard to sustain."),
         t("结合派息率看：派息率超过 100% 说明派息大于盈利，靠动用留存收益或借款支付。", "Read it with the payout ratio: above 100% means the dividend is larger than earnings and is being paid out of reserves or borrowings."),
       ],
       current:
         yieldPct === null
           ? undefined
           : t(
-              `按当前价格，股息回报率为 ${x2(yieldPct)}%。${yieldPct === 0 ? "当前不派息。" : yieldPct < 2 ? "偏低。" : yieldPct <= 6 ? "处于常见区间。" : "偏高，需确认是否可持续。"}${payout !== null && payout > 100 ? " 派息率超过 100%，派息大于盈利。" : ""}`,
-              `At this price the dividend return is ${x2(yieldPct)}%. ${yieldPct === 0 ? "No dividend is currently paid." : yieldPct < 2 ? "On the low side." : yieldPct <= 6 ? "In the common range." : "On the high side — check it is sustainable."}${payout !== null && payout > 100 ? " The payout ratio is above 100% — the dividend exceeds earnings." : ""}`
+              `按${valuedAtBook ? "账面权益" : "当前估值"}，股息回报率为 ${x2(yieldPct)}%。${yieldPct === 0 ? "近 12 个月没有派息。" : yieldPct < 2 ? "偏低。" : yieldPct <= 6 ? "处于常见区间。" : "偏高，需确认是否可持续。"}${payout !== null && payout > 100 ? " 派息率超过 100%，派息大于盈利。" : ""}`,
+              `On ${valuedAtBook ? "book equity" : "the entered valuation"} the dividend return is ${x2(yieldPct)}%. ${yieldPct === 0 ? "No dividend was paid in the last 12 months." : yieldPct < 2 ? "On the low side." : yieldPct <= 6 ? "In the common range." : "On the high side — check it is sustainable."}${payout !== null && payout > 100 ? " The payout ratio is above 100% — the dividend exceeds earnings." : ""}`
             ),
     },
   });

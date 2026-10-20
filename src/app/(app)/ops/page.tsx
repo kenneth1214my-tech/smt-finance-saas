@@ -172,7 +172,23 @@ export default async function OpsPage(props: PageProps<"/ops">) {
   });
   const ttmRowsCur = mCur.filter((m) => m.month <= ttmEnd);
   const ttmMonthSet = new Set<string>([...ttmRowsCur.map((m) => `${period.year}-${m.month}`), ...ttmTail.map((m) => `${period.year - 1}-${m.month}`)]);
+  // Dividends paid by the reporting (HQ) company over the last 12 months, read from the dividend / distribution
+  // equity accounts: each month's increase in the account's size, summed (a year-end reset to 0 is ignored). Needs the
+  // balance sheet at all 13 month-ends of the window — otherwise unknown rather than guessed.
+  const eqRows = ttmEnd > 0
+    ? await db.balanceSheetMonthly.findMany({ where: { organizationId, subsidiaryId: null, equityDetailed: true, year: { in: [period.year - 1, period.year] } }, select: { year: true, month: true, dividends: true, shareCapital: true } })
+    : [];
+  const divAt = new Map(eqRows.map((r) => [r.year * 12 + r.month, Math.abs(Number(r.dividends))]));
+  let dividendsTtm: number | null = null;
+  if (ttmEnd > 0) {
+    const endKey = period.year * 12 + ttmEnd;
+    const keys = Array.from({ length: 13 }, (_, i) => endKey - 12 + i);
+    if (keys.every((k) => divAt.has(k))) dividendsTtm = keys.slice(1).reduce((a, k) => a + Math.max(0, (divAt.get(k) ?? 0) - (divAt.get(k - 1) ?? 0)), 0);
+  }
+  const latestEq = [...eqRows].sort((a, b) => b.year * 12 + b.month - (a.year * 12 + a.month))[0];
   const ratios = buildRatioSections({
+    dividendsTtm,
+    shareCapital: latestEq ? Number(latestEq.shareCapital) : null,
     entities: ratioEntities,
     investmentEliminated: Number(orgShare.investmentInSubsidiaries),
     periodNetProfit: kpiCur.reduce((a, m) => a + Number(m.netProfit), 0),
@@ -219,7 +235,7 @@ export default async function OpsPage(props: PageProps<"/ops">) {
           <KpiTile icon={Landmark} color="var(--cat-4)" label={t("负债权益比", "Debt-to-equity")} value={fx2(rv.de)} unit={rv.de === null ? undefined : "x"} note={rv.de === null ? missing : t("负债总额 ÷ 权益", "Total liabilities ÷ equity")} />
           <KpiTile icon={Coins} color="var(--cat-5)" label={t("每股收益 EPS", "Earnings per share (EPS)")} value={rv.eps === null ? "—" : rv.eps.toFixed(4)} unit={rv.eps === null ? undefined : baseCurrency} note={rv.eps === null ? t("请在设置录入股份数据", "Enter share data in Settings") : t("所选期间", "Selected period")} />
           <KpiTile icon={BarChart3} color="var(--status-good)" label={t("市盈率 P/E", "P/E ratio")} value={fx2(rv.pe)} unit={rv.pe === null ? undefined : "x"} note={rv.pe === null ? missing : t("价格 ÷ 近12个月EPS", "Price ÷ last-12-months EPS")} />
-          <KpiTile icon={PiggyBank} color="var(--status-warning)" label={t("股息率", "Dividend yield")} value={rv.yield === null ? "—" : fmt1(rv.yield)} unit={rv.yield === null ? undefined : "%"} note={rv.yield === null ? t("请在设置录入股份数据", "Enter share data in Settings") : t("每股股息 ÷ 价格", "Dividend ÷ price")} />
+          <KpiTile icon={PiggyBank} color="var(--status-warning)" label={t("股息率", "Dividend yield")} value={rv.yield === null ? "—" : fmt1(rv.yield)} unit={rv.yield === null ? undefined : "%"} note={rv.yield === null ? t("股息数据将在下次同步后自动读取", "Dividends are read automatically after the next sync") : t("每股股息 ÷ 价格", "Dividend ÷ price")} />
         </div>
 
         <div data-pdf-hide>

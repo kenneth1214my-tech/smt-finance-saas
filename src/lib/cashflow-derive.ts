@@ -20,6 +20,10 @@ const DEPRECIATION_RE = /depreciat|amortis|amortiz/i;
 // Deliberately narrow so non-staff costs (agent commissions, "allowance for doubtful debts") are never swept in.
 const EMPLOYMENT_RE = /salar|wage|payroll|\bcpf\b|\bsdl\b|skills development|bonus|remunerat|director'?s?\s*fee|\bstaff\b|employee|worker levy|\bfwl\b|overtime|\bepf\b|\bsocso\b|\bperkeso\b|\bbpjs\b/i;
 const RECEIVABLE_RE = /receivable|debtor/i;
+// Equity accounts: the share capital account, and any dividend / distribution account (a company that books
+// dividends straight to retained earnings leaves no separate account to read).
+const SHARE_CAPITAL_RE = /share\s*capital|paid[\s-]*up|ordinary shares?|issued capital/i;
+const DIVIDEND_RE = /dividend|distribution/i;
 const INVENTORY_RE = /inventor|\bstock\b/i;
 // "…-Current" (due within a year) but not "…-Non Current" / "long term".
 const isCurrentLabel = (label: string) => /\bcurrent\b/i.test(label) && !/non[\s-]*current|long[\s-]*term/i.test(label);
@@ -57,6 +61,8 @@ export interface BalanceDetail {
   inventory: number; // part of opAsset
   loanCurrent: number; // part of loan (signed like loan: negative)
   finLiabCurrent: number; // part of finLiab
+  shareCapital: number; // part of equity
+  dividends: number; // part of equity (dividend / distribution accounts, signed as on the balance sheet)
 }
 export type MonthSnapshot = MonthBalances & BalanceTotals & BalanceDetail;
 
@@ -73,7 +79,7 @@ export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<stri
     const mi = MONTHS.indexOf(m[2].toLowerCase());
     return mi < 0 ? null : `${m[3]}-${mi + 1}`;
   });
-  const blank = (): MonthSnapshot => ({ cash: 0, clearing: 0, loan: 0, opAsset: 0, fixed: 0, finAsset: 0, opLiab: 0, finLiab: 0, equity: 0, totalAssets: 0, totalLiabilities: 0, totalEquity: 0, receivables: 0, inventory: 0, loanCurrent: 0, finLiabCurrent: 0 });
+  const blank = (): MonthSnapshot => ({ cash: 0, clearing: 0, loan: 0, opAsset: 0, fixed: 0, finAsset: 0, opLiab: 0, finLiab: 0, equity: 0, totalAssets: 0, totalLiabilities: 0, totalEquity: 0, receivables: 0, inventory: 0, loanCurrent: 0, finLiabCurrent: 0, shareCapital: 0, dividends: 0 });
   const byMonth = new Map<string, MonthSnapshot>();
   keys.forEach((k) => k && byMonth.set(k, blank()));
 
@@ -98,6 +104,8 @@ export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<stri
         if (cls === "opAsset" && INVENTORY_RE.test(label)) snap.inventory += v;
         if (cls === "loan" && isCurrentLabel(label)) snap.loanCurrent += v;
         if (cls === "finLiab" && isCurrentLabel(label)) snap.finLiabCurrent += v;
+        if (cls === "equity" && SHARE_CAPITAL_RE.test(label)) snap.shareCapital += v;
+        if (cls === "equity" && DIVIDEND_RE.test(label)) snap.dividends += v;
       });
     }
   }
