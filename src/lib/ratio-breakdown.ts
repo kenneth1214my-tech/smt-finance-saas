@@ -53,8 +53,12 @@ export function buildRatioSections(args: {
   dividendPerShare: number | null;
   baseCurrency: string;
   isZh: boolean;
+  /** Replaces the default "latest stored month-end balance sheet" note (a platform without stored balance sheets words its own basis). */
+  basisNote?: string;
+  /** Replaces the default "fills in on the next Xero sync" hint for missing employment cost. */
+  labourMissingNote?: string;
 }): { sections: BreakdownSection[]; values: RatioValues } {
-  const { entities, investmentEliminated, periodNetProfit, ttmNetProfit, ttmMonths, ttmLabel, shares, price, dividendPerShare, baseCurrency, isZh } = args;
+  const { entities, investmentEliminated, periodNetProfit, ttmNetProfit, ttmMonths, ttmLabel, shares, price, dividendPerShare, baseCurrency, isZh, basisNote, labourMissingNote } = args;
   const t = (zh: string, en: string) => (isZh ? zh : en);
   const multi = entities.length > 1;
   const cols = multi ? [...entities.map((e) => e.label), t("集团", "Group")] : entities.map((e) => e.label);
@@ -64,9 +68,9 @@ export function buildRatioSections(args: {
   const withBs = entities.filter((e) => e.bs);
   const allDetailed = withBs.length > 0 && withBs.every((e) => e.bs!.detailed);
   const asOf = [...new Set(withBs.map((e) => e.bs!.asOf))].join(", ");
-  const bsNote = withBs.length
+  const bsNote = basisNote ?? (withBs.length
     ? t(`资产负债表取所选期间内最近一个已存档的月末（${asOf}）。`, `Balance sheet: the latest stored month-end within the selected period (${asOf}).`)
-    : t("所选期间内没有已存档的月末资产负债表。", "No month-end balance sheet is stored for the selected period.");
+    : t("所选期间内没有已存档的月末资产负债表。", "No month-end balance sheet is stored for the selected period."));
   const needSync = t("流动/速动比率需要「一年内到期」的借款与租赁明细，该明细在下一次 Xero 同步时记录 — 请到「设置 → 数据导入与ERP」点击「全部同步」。", "The current and quick ratios need the \"due within a year\" split of loans and leases, which is captured on the next Xero sync — click Sync all under Settings → Data Import & ERP.");
 
   const bsPick = (f: (b: RatioBs) => number, needDetail = false): (number | null)[] =>
@@ -138,7 +142,7 @@ export function buildRatioSections(args: {
       { label: t("劳动成本生产率", "Labour cost productivity"), values: labourVals, kind: "total", format: "x" },
     ],
     notes: [
-      ...(labourComplete ? [] : [t("部分月份尚未识别到用工成本，因此不显示比率（否则会虚高）— 下一次 Xero 同步后补全，请点击「全部同步」。", "Employment cost has not been picked up for some months yet, so the ratio is not shown (it would be overstated) — it fills in on the next Xero sync; click Sync all.")]),
+      ...(labourComplete ? [] : [labourMissingNote ?? t("部分月份尚未识别到用工成本，因此不显示比率（否则会虚高）— 下一次 Xero 同步后补全，请点击「全部同步」。", "Employment cost has not been picked up for some months yet, so the ratio is not shown (it would be overstated) — it fills in on the next Xero sync; click Sync all.")]),
       t("用工成本取自利润表中名称含工资/薪酬/CPF/奖金/董事酬金/员工等字样的科目，不含销售佣金。", "Employment cost = P&L accounts whose names mention salary / wages / CPF / bonus / remuneration / staff etc.; sales commissions are not included."),
     ],
     explanation: {
