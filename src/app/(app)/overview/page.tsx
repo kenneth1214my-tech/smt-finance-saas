@@ -193,7 +193,7 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
       <Topbar dict={dict} locale={locale} title={dict.nav.overview} desc={dict.overview.pageDesc} user={user} />
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
         <div className="flex flex-wrap items-center justify-between gap-3" data-pdf-hide>
-          <PeriodSelector year={period.year} month={period.month} basis={period.basis} years={reportYears} isZh={isZh} />
+          <PeriodSelector year={period.year} fromMonth={period.fromMonth} toMonth={period.toMonth} years={reportYears} isZh={isZh} />
           <PdfDownloadButton companyName={companyName} title={dict.nav.overview} subtitle={periodLabel(period, isZh)} isZh={isZh} signOff />
         </div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">

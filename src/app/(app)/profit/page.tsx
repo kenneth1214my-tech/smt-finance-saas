@@ -159,7 +159,7 @@ export default async function ProfitPage(props: PageProps<"/profit">) {
       <Topbar dict={dict} locale={locale} title={dict.nav.profit} desc={dict.nav.profit} user={user} />
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
         <div className="flex flex-wrap items-center justify-between gap-3" data-pdf-hide>
-          <PeriodSelector year={period.year} month={period.month} basis={period.basis} years={reportYears} isZh={isZh} />
+          <PeriodSelector year={period.year} fromMonth={period.fromMonth} toMonth={period.toMonth} years={reportYears} isZh={isZh} />
           <PdfDownloadButton companyName={companyName} title={dict.nav.profit} subtitle={periodLabel(period, isZh)} isZh={isZh} />
         </div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
