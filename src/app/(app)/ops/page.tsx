@@ -1,4 +1,4 @@
-import { TrendingUp, DollarSign, Percent, Wallet, FlaskConical, Users2 } from "lucide-react";
+import { TrendingUp, DollarSign, Percent, Wallet, FlaskConical, Users2, Gauge, Scale, Droplets, Landmark, Coins, BarChart3, PiggyBank } from "lucide-react";
 import { requireUser } from "@/lib/dal";
 import { db } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
@@ -15,6 +15,7 @@ import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
 import KpiBreakdown from "@/components/ui/KpiBreakdown";
 import { buildPnlSections } from "@/lib/overview-breakdown";
+import { buildRatioSections } from "@/lib/ratio-breakdown";
 import RankList from "@/components/ui/RankList";
 import TrendChart from "@/components/ui/TrendChart";
 
@@ -128,7 +129,66 @@ export default async function OpsPage(props: PageProps<"/ops">) {
     headcounts: opsEntities.map((e) => e.headcount),
   });
   const opsById = new Map(opsSections.map((x) => [x.id, x]));
-  const breakdownSections = ["revenue", "cost", "gm", "expratio", "rnd", "perhead"].map((id) => opsById.get(id)!).filter(Boolean);
+  const baseBreakdown = ["revenue", "cost", "gm", "expratio", "rnd", "perhead"].map((id) => opsById.get(id)!).filter(Boolean);
+
+  // ---- Efficiency & financial-health ratios (labour productivity, liquidity, leverage, per-share) ----
+  const nowDate = new Date();
+  const lastCompleteMonth = period.year < nowDate.getFullYear() ? 12 : period.year === nowDate.getFullYear() ? nowDate.getMonth() : 0; // months already closed
+  const ttmEnd = Math.max(0, ...mCur.filter((m) => m.month <= Math.min(period.toMonth, lastCompleteMonth)).map((m) => m.month));
+  const [balanceRows, orgShare, ttmTail] = await Promise.all([
+    db.balanceSheetMonthly.findMany({ where: { organizationId, year: period.year, month: { lte: period.toMonth } } }),
+    db.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { sharesOutstanding: true, sharePrice: true, dividendPerShare: true, investmentInSubsidiaries: true } }),
+    ttmEnd > 0 && ttmEnd < 12 ? db.monthlyFinancial.findMany({ where: { organizationId, year: period.year - 1, month: { gt: ttmEnd } }, select: { month: true, netProfit: true } }) : Promise.resolve([] as { month: number; netProfit: unknown }[]),
+  ]);
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+  const ratioEntities = opsEntities.map((e) => {
+    const rows = kpiCur.filter((m) => m.subsidiaryId === e.id);
+    const withRevenue = rows.filter((m) => Number(m.revenue) !== 0);
+    const bsRow = balanceRows.filter((r) => r.subsidiaryId === e.id).sort((a, b) => b.month - a.month)[0];
+    return {
+      id: e.id,
+      label: e.label,
+      revenue: rows.reduce((a, m) => a + Number(m.revenue), 0),
+      employmentCost: rows.reduce((a, m) => a + Number(m.employmentCost), 0),
+      employmentComplete: withRevenue.every((m) => Number(m.employmentCost) > 0),
+      bs: bsRow
+        ? {
+            cash: Number(bsRow.cash),
+            opAssets: Number(bsRow.opAssets),
+            receivables: Number(bsRow.receivables),
+            inventory: Number(bsRow.inventory),
+            opLiabilities: Number(bsRow.opLiabilities),
+            loans: Number(bsRow.loans),
+            loansCurrent: Number(bsRow.loansCurrent),
+            finLiabilities: Number(bsRow.finLiabilities),
+            finLiabCurrent: Number(bsRow.finLiabCurrent),
+            totalLiabilities: Number(bsRow.totalLiabilities),
+            totalEquity: Number(bsRow.totalEquity),
+            detailed: bsRow.detailed,
+            asOf: `${period.year}-${pad2(bsRow.month)}`,
+          }
+        : null,
+    };
+  });
+  const ttmRowsCur = mCur.filter((m) => m.month <= ttmEnd);
+  const ttmMonthSet = new Set<string>([...ttmRowsCur.map((m) => `${period.year}-${m.month}`), ...ttmTail.map((m) => `${period.year - 1}-${m.month}`)]);
+  const ratios = buildRatioSections({
+    entities: ratioEntities,
+    investmentEliminated: Number(orgShare.investmentInSubsidiaries),
+    periodNetProfit: kpiCur.reduce((a, m) => a + Number(m.netProfit), 0),
+    ttmNetProfit: ttmRowsCur.reduce((a, m) => a + Number(m.netProfit), 0) + ttmTail.reduce((a, m) => a + Number(m.netProfit), 0),
+    ttmMonths: ttmMonthSet.size,
+    ttmLabel: ttmEnd === 0 ? "—" : ttmEnd === 12 ? `${period.year}-01 → ${period.year}-12` : `${period.year - 1}-${pad2(ttmEnd + 1)} → ${period.year}-${pad2(ttmEnd)}`,
+    shares: orgShare.sharesOutstanding === null ? null : Number(orgShare.sharesOutstanding),
+    price: orgShare.sharePrice === null ? null : Number(orgShare.sharePrice),
+    dividendPerShare: orgShare.dividendPerShare === null ? null : Number(orgShare.dividendPerShare),
+    baseCurrency,
+    isZh,
+  });
+  const rv = ratios.values;
+  const breakdownSections = [...baseBreakdown, ...ratios.sections];
+  const fx2 = (n: number | null) => (n === null ? "—" : n.toFixed(2));
+  const missing = t("数据不足，见下方说明", "Not available — see the explanation below");
 
   const opCostTrendTitle = locale === "zh" || locale === "zh-Hant" ? "月度营业成本占比趋势" : "Monthly Operating Cost Ratio Trend";
 
@@ -147,6 +207,19 @@ export default async function OpsPage(props: PageProps<"/ops">) {
           <KpiTile icon={Wallet} color="var(--cat-4)" label={dict.m.expenseRatio} value={fmt1(expenseRatio)} unit="%" />
           <KpiTile icon={FlaskConical} color="var(--cat-5)" label={dict.m.rndIntensity} value={fmt1(totalRevenue > 0 ? (rndExp / totalRevenue) * 100 : 0)} unit="%" />
           <KpiTile icon={Users2} color="var(--cat-3)" label={dict.m.revenuePerHead} value={fmtM(revenuePerHead)} unit={dict.common.yi} />
+        </div>
+
+        <div className="text-[12px] font-semibold" style={{ color: "var(--ink-400)" }}>
+          {t("效率与财务健康比率", "Efficiency & financial-health ratios")}
+        </div>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+          <KpiTile icon={Gauge} color="var(--cat-1)" label={t("劳动成本生产率", "Labour cost productivity")} value={fx2(rv.labour)} unit={rv.labour === null ? undefined : "x"} note={rv.labour === null ? missing : t("收入 ÷ 用工成本", "Revenue ÷ employment cost")} />
+          <KpiTile icon={Scale} color="var(--cat-2)" label={t("流动比率", "Current ratio")} value={fx2(rv.current)} unit={rv.current === null ? undefined : "x"} note={rv.current === null ? missing : t("流动资产 ÷ 流动负债", "Current assets ÷ current liabilities")} />
+          <KpiTile icon={Droplets} color="var(--cat-3)" label={t("速动比率", "Quick ratio")} value={fx2(rv.quick)} unit={rv.quick === null ? undefined : "x"} note={rv.quick === null ? missing : t("（现金+应收）÷ 流动负债", "(Cash + receivables) ÷ current liabilities")} />
+          <KpiTile icon={Landmark} color="var(--cat-4)" label={t("负债权益比", "Debt-to-equity")} value={fx2(rv.de)} unit={rv.de === null ? undefined : "x"} note={rv.de === null ? missing : t("负债总额 ÷ 权益", "Total liabilities ÷ equity")} />
+          <KpiTile icon={Coins} color="var(--cat-5)" label={t("每股收益 EPS", "Earnings per share (EPS)")} value={rv.eps === null ? "—" : rv.eps.toFixed(4)} unit={rv.eps === null ? undefined : baseCurrency} note={rv.eps === null ? t("请在设置录入股份数据", "Enter share data in Settings") : t("所选期间", "Selected period")} />
+          <KpiTile icon={BarChart3} color="var(--status-good)" label={t("市盈率 P/E", "P/E ratio")} value={fx2(rv.pe)} unit={rv.pe === null ? undefined : "x"} note={rv.pe === null ? missing : t("价格 ÷ 近12个月EPS", "Price ÷ last-12-months EPS")} />
+          <KpiTile icon={PiggyBank} color="var(--status-warning)" label={t("股息率", "Dividend yield")} value={rv.yield === null ? "—" : fmt1(rv.yield)} unit={rv.yield === null ? undefined : "%"} note={rv.yield === null ? t("请在设置录入股份数据", "Enter share data in Settings") : t("每股股息 ÷ 价格", "Dividend ÷ price")} />
         </div>
 
         <div data-pdf-hide>

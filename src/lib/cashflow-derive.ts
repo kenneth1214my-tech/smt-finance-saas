@@ -16,6 +16,13 @@ const FIXED_RE = /accum|depreciat|\bat cost\b|\bcost\b|renovation|furniture|fitt
 const FIN_LIAB_RE = /lease liabilit|\bloans?\b|borrowing|hire[\s-]*purchase|debenture|\bbonds?\b|notes? payable|mortgage|overdraft/i;
 const INTERCO_RE = /\bdue\s+(to|from)\s+(holding|subsidiar|director|related|group|associate|parent)/i;
 const DEPRECIATION_RE = /depreciat|amortis|amortiz/i;
+// Employment cost = payroll-type P&L accounts, picked by NAME (a chart of accounts has no "staff cost" flag).
+// Deliberately narrow so non-staff costs (agent commissions, "allowance for doubtful debts") are never swept in.
+const EMPLOYMENT_RE = /salar|wage|payroll|\bcpf\b|\bsdl\b|skills development|bonus|remunerat|director'?s?\s*fee|\bstaff\b|employee|worker levy|\bfwl\b|overtime|\bepf\b|\bsocso\b|\bperkeso\b|\bbpjs\b/i;
+const RECEIVABLE_RE = /receivable|debtor/i;
+const INVENTORY_RE = /inventor|\bstock\b/i;
+// "…-Current" (due within a year) but not "…-Non Current" / "long term".
+const isCurrentLabel = (label: string) => /\bcurrent\b/i.test(label) && !/non[\s-]*current|long[\s-]*term/i.test(label);
 
 function sectionKind(title: string): "bank" | "asset" | "liability" | "equity" | null {
   if (/^bank$/i.test(title)) return "bank";
@@ -44,7 +51,14 @@ export interface BalanceTotals {
   totalLiabilities: number;
   totalEquity: number;
 }
-export type MonthSnapshot = MonthBalances & BalanceTotals;
+// Detail kept for the current / quick ratios: parts of the grouped balances above.
+export interface BalanceDetail {
+  receivables: number; // part of opAsset
+  inventory: number; // part of opAsset
+  loanCurrent: number; // part of loan (signed like loan: negative)
+  finLiabCurrent: number; // part of finLiab
+}
+export type MonthSnapshot = MonthBalances & BalanceTotals & BalanceDetail;
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
@@ -59,7 +73,7 @@ export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<stri
     const mi = MONTHS.indexOf(m[2].toLowerCase());
     return mi < 0 ? null : `${m[3]}-${mi + 1}`;
   });
-  const blank = (): MonthSnapshot => ({ cash: 0, clearing: 0, loan: 0, opAsset: 0, fixed: 0, finAsset: 0, opLiab: 0, finLiab: 0, equity: 0, totalAssets: 0, totalLiabilities: 0, totalEquity: 0 });
+  const blank = (): MonthSnapshot => ({ cash: 0, clearing: 0, loan: 0, opAsset: 0, fixed: 0, finAsset: 0, opLiab: 0, finLiab: 0, equity: 0, totalAssets: 0, totalLiabilities: 0, totalEquity: 0, receivables: 0, inventory: 0, loanCurrent: 0, finLiabCurrent: 0 });
   const byMonth = new Map<string, MonthSnapshot>();
   keys.forEach((k) => k && byMonth.set(k, blank()));
 
@@ -77,7 +91,13 @@ export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<stri
       keys.forEach((k, i) => {
         if (!k) return;
         const v = parseFloat(line.Cells?.[i + 1]?.Value ?? "");
-        if (!Number.isNaN(v)) byMonth.get(k)![cls] += v;
+        if (Number.isNaN(v)) return;
+        const snap = byMonth.get(k)!;
+        snap[cls] += v;
+        if (cls === "opAsset" && RECEIVABLE_RE.test(label)) snap.receivables += v;
+        if (cls === "opAsset" && INVENTORY_RE.test(label)) snap.inventory += v;
+        if (cls === "loan" && isCurrentLabel(label)) snap.loanCurrent += v;
+        if (cls === "finLiab" && isCurrentLabel(label)) snap.finLiabCurrent += v;
       });
     }
   }
@@ -100,6 +120,10 @@ export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<stri
   };
   walkTotals(rows);
   return { byMonth, warnings };
+}
+
+export function employmentCostOf(expenseLineItems: { label: string; value: number }[]): number {
+  return expenseLineItems.filter((i) => EMPLOYMENT_RE.test(i.label)).reduce((a, i) => a + i.value, 0);
 }
 
 export interface PnlMonth {

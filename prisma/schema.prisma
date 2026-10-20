@@ -103,6 +103,11 @@ model Organization {
   dueToSubsidiaries        Decimal @default(0) @db.Decimal(14, 2)
   // Current HQ headcount snapshot — mirrors Subsidiary.headcount, for the holding entity itself.
   headcount    Int      @default(0)
+  // Share data of the reporting (parent) company — not held in Xero, so entered once under Group Settings.
+  // Back Earnings per Share, P/E and Dividend Yield. All optional: blank means "not entered".
+  sharesOutstanding Decimal? @db.Decimal(18, 0)
+  sharePrice        Decimal? @db.Decimal(14, 4) // latest price / valuation per share, in the base currency
+  dividendPerShare  Decimal? @db.Decimal(14, 4) // dividend declared per share for the year, in the base currency
   inviteCode   String   @unique
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -269,6 +274,10 @@ model MonthlyFinancial {
   adminExp       Decimal      @default(0) @db.Decimal(14, 2)
   rndExp         Decimal      @default(0) @db.Decimal(14, 2)
   financeExp     Decimal      @default(0) @db.Decimal(14, 2)
+  // Total employment cost for the month (salaries, CPF, bonuses, director remuneration…), picked out of the
+  // P&L line items by account name at sync time. Backs Labour Cost Productivity (revenue ÷ employment cost).
+  // 0 on months synced before this existed — they fill in on the next sync.
+  employmentCost Decimal      @default(0) @db.Decimal(14, 2)
   // Point-in-time employee count for this subsidiary as of this month (not additive across
   // months) — backs Revenue per Employee, which was previously hardcoded to 0.
   headcount      Int          @default(0)
@@ -790,6 +799,13 @@ model BalanceSheetMonthly {
   finAssets        Decimal @db.Decimal(14, 2)
   opLiabilities    Decimal @db.Decimal(14, 2)
   finLiabilities   Decimal @db.Decimal(14, 2)
+  // Detail for the current / quick ratios (captured from the same balance sheet). `detailed` is false on
+  // rows stored before these existed — they fill in on the next sync, and the ratios show "—" until then.
+  receivables    Decimal @default(0) @db.Decimal(14, 2) // trade receivables / debtors (part of opAssets)
+  inventory      Decimal @default(0) @db.Decimal(14, 2) // stock (part of opAssets)
+  loansCurrent   Decimal @default(0) @db.Decimal(14, 2) // loan accounts due within a year (part of loans, negative like loans)
+  finLiabCurrent Decimal @default(0) @db.Decimal(14, 2) // lease / other financial liabilities due within a year (part of finLiabilities)
+  detailed       Boolean @default(false)
   updatedAt      DateTime     @updatedAt
 
   // Postgres treats NULL subsidiaryIds as distinct, so a partial unique index (see migration)

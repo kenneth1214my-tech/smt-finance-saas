@@ -64,6 +64,7 @@ export default function SettingsClient({
   hqInvestmentInSubsidiaries,
   hqDueToSubsidiaries,
   hqHeadcount,
+  hqShare,
   xeroConnections,
   xeroGroupConnected,
   xeroGroupTenantName,
@@ -106,6 +107,7 @@ export default function SettingsClient({
   hqInvestmentInSubsidiaries: number;
   hqDueToSubsidiaries: number;
   hqHeadcount: number;
+  hqShare: { shares: string; price: string; dps: string };
   xeroConnections: XeroConnection[];
   xeroGroupConnected: boolean;
   xeroGroupTenantName: string | null;
@@ -191,6 +193,7 @@ export default function SettingsClient({
           hqInvestmentInSubsidiaries={hqInvestmentInSubsidiaries}
           hqDueToSubsidiaries={hqDueToSubsidiaries}
           hqHeadcount={hqHeadcount}
+          hqShare={hqShare}
           exchangeRates={exchangeRates as unknown as Row[]}
           onToast={showToast}
         />
@@ -802,6 +805,7 @@ function CurrencyTab({
   hqInvestmentInSubsidiaries,
   hqDueToSubsidiaries,
   hqHeadcount,
+  hqShare,
   exchangeRates,
   onToast,
 }: {
@@ -815,6 +819,7 @@ function CurrencyTab({
   hqInvestmentInSubsidiaries: number;
   hqDueToSubsidiaries: number;
   hqHeadcount: number;
+  hqShare: { shares: string; price: string; dps: string };
   exchangeRates: Row[];
   onToast: (m: string) => void;
 }) {
@@ -833,6 +838,25 @@ function CurrencyTab({
   const [savingBs, setSavingBs] = useState(false);
   const [headcount, setHeadcount] = useState(String(hqHeadcount));
   const [savingHeadcount, setSavingHeadcount] = useState(false);
+  const [shares, setShares] = useState(hqShare.shares);
+  const [sharePrice, setSharePrice] = useState(hqShare.price);
+  const [dividendPerShare, setDividendPerShare] = useState(hqShare.dps);
+  const [savingShare, setSavingShare] = useState(false);
+  async function saveShareData() {
+    setSavingShare(true);
+    const res = await fetch("/api/admin/hq-share-data", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sharesOutstanding: shares, sharePrice, dividendPerShare }),
+    });
+    setSavingShare(false);
+    if (res.ok) {
+      onToast(isZh ? "股份数据已更新" : "Share data updated");
+      router.refresh();
+    } else {
+      onToast(isZh ? "保存失败：请输入有效数字（股数需为整数）" : "Could not save — enter valid numbers (shares must be a whole number)");
+    }
+  }
 
   async function saveHqBalanceSheet() {
     setSavingBs(true);
@@ -1111,6 +1135,42 @@ function CurrencyTab({
           {isZh
             ? "集团/总部层面的员工人数（与各子公司「子公司主数据」中的员工人数是同一类数据，但归属于总部本身）。用于统计集团整体人员编制。"
             : "Group/HQ-level headcount (the same kind of field as each subsidiary's own Headcount under Subsidiary master data, but belonging to the holding entity itself). Used to track the group's overall headcount."}
+        </p>
+      </Card>
+
+      <Card title={isZh ? "股份数据（用于每股收益、市盈率、股息率）" : "Share data (for EPS, P/E and dividend yield)"}>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1 text-[12.5px]">
+            <span className="font-semibold" style={{ color: "var(--ink-600)" }}>
+              {isZh ? "已发行股数" : "Shares outstanding"}
+            </span>
+            <input value={shares} onChange={(e) => setShares(e.target.value)} inputMode="numeric" placeholder="e.g. 1000000" className="w-44 rounded-lg border px-3 py-2 text-[12.8px]" style={{ borderColor: "var(--border)" }} />
+          </label>
+          <label className="flex flex-col gap-1 text-[12.5px]">
+            <span className="font-semibold" style={{ color: "var(--ink-600)" }}>
+              {isZh ? `每股价格 / 估值（${baseCurrency}）` : `Price / valuation per share (${baseCurrency})`}
+            </span>
+            <input value={sharePrice} onChange={(e) => setSharePrice(e.target.value)} inputMode="decimal" placeholder="e.g. 1.50" className="w-52 rounded-lg border px-3 py-2 text-[12.8px]" style={{ borderColor: "var(--border)" }} />
+          </label>
+          <label className="flex flex-col gap-1 text-[12.5px]">
+            <span className="font-semibold" style={{ color: "var(--ink-600)" }}>
+              {isZh ? `每股股息（年度，${baseCurrency}）` : `Dividend per share (annual, ${baseCurrency})`}
+            </span>
+            <input value={dividendPerShare} onChange={(e) => setDividendPerShare(e.target.value)} inputMode="decimal" placeholder="e.g. 0.05" className="w-52 rounded-lg border px-3 py-2 text-[12.8px]" style={{ borderColor: "var(--border)" }} />
+          </label>
+          <button
+            disabled={savingShare || (shares === hqShare.shares && sharePrice === hqShare.price && dividendPerShare === hqShare.dps)}
+            onClick={saveShareData}
+            className="rounded-lg px-3.5 py-2 text-[12.5px] font-bold text-white disabled:opacity-50"
+            style={{ background: "var(--cat-1)" }}
+          >
+            {isZh ? "保存" : "Save"}
+          </button>
+        </div>
+        <p className="mt-2 text-[11.8px]" style={{ color: "var(--ink-400)" }}>
+          {isZh
+            ? "这三项不在 Xero 中，因此在此录入一次：报告主体（母公司）的已发行股数、当前每股价格（非上市公司可填最近一次估值 ÷ 股数）、以及年度每股股息。留空表示未录入，相关比率将显示「—」。"
+            : "These three are not held in Xero, so they are entered once here: the reporting (parent) company's shares outstanding, its current price per share (for an unlisted company, its latest valuation ÷ shares), and the annual dividend per share. Leave blank if unknown — the ratios that need them show \"—\"."}
         </p>
       </Card>
 

@@ -285,6 +285,14 @@ export const hqHeadcountSchema = z.object({
   headcount: z.coerce.number().int().min(0),
 });
 
+// Share data of the reporting company (for EPS, P/E and dividend yield). Blank means "not entered" → null.
+const blankToNull = (v: unknown) => (v === "" || v === null || v === undefined ? null : v);
+export const hqShareDataSchema = z.object({
+  sharesOutstanding: z.preprocess(blankToNull, z.coerce.number().int().min(1).nullable()),
+  sharePrice: z.preprocess(blankToNull, z.coerce.number().min(0).nullable()),
+  dividendPerShare: z.preprocess(blankToNull, z.coerce.number().min(0).nullable()),
+});
+
 export const exchangeRateSchema = z.object({
   currency: z.string().trim().length(3),
   rateToBase: z.coerce.number().positive(),

@@ -16,6 +16,7 @@ import { parseXeroPnl } from "@/lib/xero-pnl-parser";
 import { oldestDueAgingDays, statusFromAgingDays } from "@/lib/xero-aging-parser";
 import { parseXeroBudgetSummary, parseXeroBankSummary } from "@/lib/xero-budget-bank-parser";
 import { syncDerivedCashFlow, depreciationOf, type PnlMonth } from "@/lib/xero-cashflow";
+import { employmentCostOf } from "@/lib/cashflow-derive";
 import { parseXeroBalanceSheet } from "@/lib/xero-balance-sheet-parser";
 import { getBaseCurrency } from "@/lib/currency";
 import { computeSyncedRiskRating, worse, type RiskSeverity } from "@/lib/risk-rating";
@@ -145,8 +146,8 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
           const { sellExp, adminExp, rndExp, financeExp } = applyCategoryMapping(expenseLineItems, categoryMapping);
           await db.monthlyFinancial.upsert({
             where: { subsidiaryId_year_month: { subsidiaryId, year, month } },
-            create: { subsidiaryId, organizationId, year, month, revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp },
-            update: { revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp },
+            create: { subsidiaryId, organizationId, year, month, revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp, employmentCost: employmentCostOf(expenseLineItems) },
+            update: { revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp, employmentCost: employmentCostOf(expenseLineItems) },
           });
           result.monthsSynced++;
         } catch (err) {
@@ -351,7 +352,7 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
           pnlByMonth.set(`${year}-${month}`, { netProfit, depreciation: depreciationOf(expenseLineItems) });
           const grossMarginPct = revenue > 0 ? ((revenue - costOfSales) / revenue) * 100 : 0;
           const { sellExp, adminExp, rndExp, financeExp } = applyCategoryMapping(expenseLineItems, categoryMapping);
-          const data = { revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp };
+          const data = { revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp, employmentCost: employmentCostOf(expenseLineItems) };
           const existing = await db.monthlyFinancial.findFirst({ where: { organizationId, subsidiaryId: null, year, month } });
           if (existing) await db.monthlyFinancial.update({ where: { id: existing.id }, data });
           else await db.monthlyFinancial.create({ data: { ...data, organizationId, subsidiaryId: null, year, month } });

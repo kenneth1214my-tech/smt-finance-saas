@@ -14,17 +14,19 @@ export interface BreakdownRow {
   hint?: string;
   values: (number | null)[];
   kind?: "item" | "total" | "muted" | "check";
-  format?: "pct" | "count"; // show values as a percentage / whole number instead of an amount
+  format?: "pct" | "count" | "x" | "pershare"; // percentage / whole number / multiple ("1.45x") / per-share amount instead of an amount
 }
 export interface BreakdownSection {
   id: string;
   title: string;
   result: number | null;
-  resultFormat?: "pct" | "count";
+  resultFormat?: "pct" | "count" | "x" | "pershare";
   formula: string;
   cols: string[];
   rows: BreakdownRow[];
   notes?: string[];
+  // Plain-language explanation of a ratio: what it measures, how to read it, and what the current value says.
+  explanation?: { meaning: string; interpretation: string[]; current?: string };
 }
 
 const num = (v: unknown) => Number(v ?? 0);
