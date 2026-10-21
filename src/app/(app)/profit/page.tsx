@@ -4,7 +4,8 @@ import { db } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary, withBaseCurrency, fmtMoney } from "@/lib/i18n/dictionaries";
 import { localizedName, monthLabels } from "@/lib/localize";
-import { getBaseCurrency } from "@/lib/currency";
+import { getBaseCurrency, getFyeMonth } from "@/lib/currency";
+import { fiscalFindMany, fiscalMonthLabels } from "@/lib/fiscal";
 import { effectiveRiskRating } from "@/lib/risk-rating";
 import Topbar from "@/components/Topbar";
 import PdfDownloadButton from "@/components/PdfDownloadButton";
@@ -26,24 +27,25 @@ const RISK_TONE: Record<string, "good" | "warning" | "serious" | "critical"> = {
 export default async function ProfitPage(props: PageProps<"/profit">) {
   const user = await requireUser();
   const locale = await getServerLocale();
-  const period = parsePeriod(await props.searchParams);
+  const fye = await getFyeMonth(user.organizationId); // month the financial year ends in (12 = calendar year)
+  const period = parsePeriod(await props.searchParams, new Date(), fye);
   const isZh = locale === "zh" || locale === "zh-Hant";
 
   const organizationId = user.organizationId;
   const baseCurrency = await getBaseCurrency(organizationId);
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const companyName = await getCompanyName(user.organizationId);
-  const reportYears = await getReportYears(user.organizationId, period.year);
+  const reportYears = await getReportYears(user.organizationId, period.year, fye);
   const fmtM = (n: number) => fmtMoney(n, locale);
   const subsidiaries = await db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } });
   const organization = await db.organization.findUniqueOrThrow({ where: { id: organizationId } });
   const currentYear = period.year;
   // `monthly` runs Jan..toMonth (trend charts); `kpiRows` is the period itself (fromMonth..toMonth).
-  const monthly = await db.monthlyFinancial.findMany({ where: { year: currentYear, month: { lte: period.toMonth }, organizationId }, orderBy: { month: "asc" } });
+  const monthly = await fiscalFindMany(db.monthlyFinancial, fye, { where: { year: currentYear, month: { lte: period.toMonth }, organizationId }, orderBy: { month: "asc" } });
   const kpiRows = monthly.filter((r) => r.month >= period.fromMonth);
   // Prior-year revenue, fetched only to compute YoY for risk-rating escalation below — this
   // page's own KPIs/trends stay current-year-only.
-  const prevYearMonthly = await db.monthlyFinancial.findMany({ where: { year: currentYear - 1, month: { gte: period.fromMonth, lte: period.toMonth }, organizationId } });
+  const prevYearMonthly = await fiscalFindMany(db.monthlyFinancial, fye, { where: { year: currentYear - 1, month: { gte: period.fromMonth, lte: period.toMonth }, organizationId } });
 
   const totalRevenue = kpiRows.reduce((a, r) => a + Number(r.revenue), 0);
   const totalCost = kpiRows.reduce((a, r) => a + Number(r.opCost), 0);
@@ -59,7 +61,7 @@ export default async function ProfitPage(props: PageProps<"/profit">) {
   const netMargin = totalRevenue > 0 ? (totalNetProfit / totalRevenue) * 100 : 0;
 
   const monthCount = monthly.length ? Math.max(...monthly.map((m) => m.month)) : 0;
-  const months = monthLabels(locale, monthCount);
+  const months = fiscalMonthLabels(locale, fye).slice(0, monthCount);
   const gmByMonth = Array.from({ length: monthCount }, (_, i) => {
     const rows = monthly.filter((r) => r.month === i + 1);
     const rev = rows.reduce((a, r) => a + Number(r.revenue), 0);
@@ -134,7 +136,7 @@ export default async function ProfitPage(props: PageProps<"/profit">) {
     rows: kpiRows,
     fromMonth: period.fromMonth,
     toMonth: period.toMonth,
-    monthNames: monthLabels(locale, 12),
+    monthNames: fiscalMonthLabels(locale, fye),
     isZh,
     equity: profitEntities.map((e) => e.equity),
   });
@@ -159,8 +161,8 @@ export default async function ProfitPage(props: PageProps<"/profit">) {
       <Topbar dict={dict} locale={locale} title={dict.nav.profit} desc={dict.nav.profit} user={user} />
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
         <div className="flex flex-wrap items-center justify-between gap-3" data-pdf-hide>
-          <PeriodSelector year={period.year} fromMonth={period.fromMonth} toMonth={period.toMonth} years={reportYears} isZh={isZh} />
-          <PdfDownloadButton companyName={companyName} title={dict.nav.profit} subtitle={periodLabel(period, isZh)} isZh={isZh} />
+          <PeriodSelector year={period.year} fromMonth={period.fromMonth} toMonth={period.toMonth} years={reportYears} isZh={isZh} fyeMonth={fye} />
+          <PdfDownloadButton companyName={companyName} title={dict.nav.profit} subtitle={periodLabel(period, isZh, fye)} isZh={isZh} />
         </div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <KpiTile icon={Percent} color="var(--cat-1)" label={dict.m.grossMargin} value={fmt1(grossMargin)} unit="%" />

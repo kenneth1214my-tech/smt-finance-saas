@@ -4,7 +4,8 @@ import { db } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary, withBaseCurrency, fmtMoney, scaleMoney } from "@/lib/i18n/dictionaries";
 import { monthLabels, localizedName } from "@/lib/localize";
-import { getBaseCurrency, getExchangeRates, convertToBase } from "@/lib/currency";
+import { getBaseCurrency, getExchangeRates, convertToBase, getFyeMonth } from "@/lib/currency";
+import { fiscalFindMany, fiscalMonthLabels, currentFiscal } from "@/lib/fiscal";
 import { classifyBankAccount, normalizeBankName, splitLoanTerm } from "@/lib/bank-classify";
 import Topbar from "@/components/Topbar";
 import Card from "@/components/ui/Card";
@@ -26,7 +27,8 @@ export default async function FundPage(props: PageProps<"/fund">) {
   const locale = await getServerLocale();
   const isZh = locale === "zh" || locale === "zh-Hant";
   const searchParams = await props.searchParams;
-  const period = parsePeriod(searchParams);
+  const fye = await getFyeMonth(user.organizationId); // month the financial year ends in (12 = calendar year)
+  const period = parsePeriod(searchParams, new Date(), fye);
   const scopeParam = typeof searchParams.scope === "string" ? searchParams.scope : "all";
   const scope: EntityScope = scopeParam === "hq" || scopeParam === "subsidiary" ? scopeParam : "all";
   // null subsidiaryId = Group HQ; "Total" is HQ + every subsidiary.
@@ -34,7 +36,7 @@ export default async function FundPage(props: PageProps<"/fund">) {
 
   const organizationId = user.organizationId;
   const banks = await db.bankAccount.findMany({ where: { organizationId, ...subsidiaryFilter }, include: { subsidiary: true }, orderBy: { balance: "desc" } });
-  const cashflowRows = await db.cashFlowMonthly.findMany({ where: { year: period.year, month: { gte: period.fromMonth, lte: period.toMonth }, organizationId, ...subsidiaryFilter }, orderBy: { month: "asc" } });
+  const cashflowRows = await fiscalFindMany(db.cashFlowMonthly, fye, { where: { year: period.year, month: { gte: period.fromMonth, lte: period.toMonth }, organizationId, ...subsidiaryFilter }, orderBy: { month: "asc" } });
   // Each entity records its own row per month, so "Total" must add them up per month rather than
   // treating every row as its own month.
   const cashflowByMonth = new Map<number, { month: number; ocf: number; icf: number; fcf: number }>();
@@ -54,11 +56,11 @@ export default async function FundPage(props: PageProps<"/fund">) {
   // Same rule as the Overview: any month-end (or a past year) is reported from the balance sheet stored
   // for that month-end, not from today's bank balances. Stored balances are in each entity's own
   // (base) currency — the entities here share one — and have no per-account detail.
-  const reportYears = await getReportYears(organizationId, period.year);
-  const useSnapshot = period.basis !== "year" || period.year !== new Date().getFullYear();
+  const reportYears = await getReportYears(organizationId, period.year, fye);
+  const useSnapshot = period.basis !== "year" || period.year !== currentFiscal(fye).year;
   const [snapshotRows, monthlyCashRows] = await Promise.all([
-    useSnapshot ? db.balanceSheetMonthly.findMany({ where: { organizationId, year: period.year, month: period.toMonth, ...subsidiaryFilter }, include: { subsidiary: true } }) : Promise.resolve([]),
-    db.balanceSheetMonthly.findMany({ where: { organizationId, year: period.year, month: { lte: period.toMonth }, ...subsidiaryFilter }, select: { month: true, cash: true } }),
+    useSnapshot ? fiscalFindMany(db.balanceSheetMonthly, fye, { where: { organizationId, year: period.year, month: period.toMonth, ...subsidiaryFilter }, include: { subsidiary: true } }) : Promise.resolve([]),
+    fiscalFindMany(db.balanceSheetMonthly, fye, { where: { organizationId, year: period.year, month: { lte: period.toMonth }, ...subsidiaryFilter }, select: { month: true, cash: true } }),
   ]);
   const snapshotActive = useSnapshot && snapshotRows.length > 0;
   const cashByMonth = new Map<number, number>();
@@ -119,9 +121,9 @@ export default async function FundPage(props: PageProps<"/fund">) {
   const t = (zh: string, en: string) => (isZh ? zh : en);
   const hqLabel = t("集团总部", "Group HQ");
   const ownerName = (sub: Parameters<typeof localizedName>[0] | null) => (sub ? localizedName(sub, locale) : hqLabel);
-  const flowSections = hasCashFlow ? await buildFlowSections({ organizationId, year: period.year, fromMonth: period.fromMonth, toMonth: period.toMonth, subsidiaryFilter, locale, isZh }) : [];
+  const flowSections = hasCashFlow ? await buildFlowSections({ organizationId, year: period.year, fromMonth: period.fromMonth, toMonth: period.toMonth, subsidiaryFilter, locale, isZh, fyeMonth: fye }) : [];
   const flowById = new Map(flowSections.map((x) => [x.id, x]));
-  const periodEnd = periodEndDate(period);
+  const periodEnd = periodEndDate(period, fye);
 
   const cashSection: BreakdownSection = snapshotActive
     ? {
@@ -212,7 +214,7 @@ export default async function FundPage(props: PageProps<"/fund">) {
     netCashSection,
   ];
 
-  const allMonthLabels = monthLabels(locale, 12);
+  const allMonthLabels = fiscalMonthLabels(locale, fye);
   const months = cashflow.map((c) => allMonthLabels[c.month - 1]);
   const netFlows = cashflow.map((c) => c.ocf + c.icf + c.fcf);
   const openingBalance = totalBank - netFlows.reduce((a, b) => a + b, 0);
@@ -236,7 +238,7 @@ export default async function FundPage(props: PageProps<"/fund">) {
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <EntityScopeFilter scope={scope} locale={locale} />
-          <PeriodSelector year={period.year} fromMonth={period.fromMonth} toMonth={period.toMonth} years={reportYears} isZh={isZh} />
+          <PeriodSelector year={period.year} fromMonth={period.fromMonth} toMonth={period.toMonth} years={reportYears} isZh={isZh} fyeMonth={fye} />
         </div>
 
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
@@ -246,7 +248,7 @@ export default async function FundPage(props: PageProps<"/fund">) {
             label={dict.m.cashBalance}
             value={fmtM(cashBalance)}
             unit={dict.common.yi}
-            note={snapshotActive ? (isZh ? `截至 ${periodEndDate(period)} 月末（Xero）` : `Month-end ${periodEndDate(period)} (Xero)`) : `${isZh ? `折合 ${baseCurrency}` : `in ${baseCurrency}`}${useSnapshot ? (isZh ? " · 该月末无存档，用最新余额" : " · no month-end stored, latest balances") : ""}${debtRows.length + excludedClearing.length > 0 ? (isZh ? `，已剔除 ${debtRows.length + excludedClearing.length} 个贷款/过渡账户` : ` · excl. ${debtRows.length + excludedClearing.length} loan/clearing acct`) : ""}`}
+            note={snapshotActive ? (isZh ? `截至 ${periodEndDate(period, fye)} 月末（Xero）` : `Month-end ${periodEndDate(period, fye)} (Xero)`) : `${isZh ? `折合 ${baseCurrency}` : `in ${baseCurrency}`}${useSnapshot ? (isZh ? " · 该月末无存档，用最新余额" : " · no month-end stored, latest balances") : ""}${debtRows.length + excludedClearing.length > 0 ? (isZh ? `，已剔除 ${debtRows.length + excludedClearing.length} 个贷款/过渡账户` : ` · excl. ${debtRows.length + excludedClearing.length} loan/clearing acct`) : ""}`}
           />
           <KpiTile icon={TrendingUp} color="var(--cat-3)" label={dict.m.ocf} value={hasCashFlow ? fmtM(totalOcf) : "—"} unit={hasCashFlow ? dict.common.yi : undefined} note={hasCashFlow ? undefined : noCashFlowShort} />
           <KpiTile icon={TrendingDown} color="var(--cat-2)" label={dict.m.icfNet} value={hasCashFlow ? fmtM(totalIcf) : "—"} unit={hasCashFlow ? dict.common.yi : undefined} note={hasCashFlow ? undefined : noCashFlowShort} />
@@ -362,7 +364,7 @@ export default async function FundPage(props: PageProps<"/fund">) {
         </Card>
 
         {snapshotActive ? (
-          <Card title={isZh ? `月末现金与借款（${periodEndDate(period)}）` : `Month-end cash & borrowings (${periodEndDate(period)})`} unit={dict.common.yi}>
+          <Card title={isZh ? `月末现金与借款（${periodEndDate(period, fye)}）` : `Month-end cash & borrowings (${periodEndDate(period, fye)})`} unit={dict.common.yi}>
             <table className="w-full text-[12.6px]">
               <thead>
                 <tr className="text-left text-[11.3px] font-semibold" style={{ color: "var(--ink-400)" }}>

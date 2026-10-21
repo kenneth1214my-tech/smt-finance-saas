@@ -1,6 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { localizedName } from "@/lib/localize";
+import { fiscalFindMany, calendarOf } from "@/lib/fiscal";
 import type { Locale } from "@/lib/i18n/dictionaries";
 
 // Line-by-line workings behind the Treasury KPIs, so every figure can be re-performed by hand.
@@ -60,14 +61,21 @@ export async function buildFlowSections(args: {
   subsidiaryFilter: Record<string, unknown>;
   locale: Locale;
   isZh: boolean;
+  /** Month the financial year ends in; `year` and the months are then fiscal (see lib/fiscal.ts). Default 12 = calendar. */
+  fyeMonth?: number;
 }): Promise<BreakdownSection[]> {
   const { organizationId, year, fromMonth, toMonth, subsidiaryFilter, locale, isZh } = args;
+  const fye = args.fyeMonth ?? 12;
+  const lab = (fy: number, idx: number) => {
+    const c = calendarOf(fy, idx, fye);
+    return `${c.year}-${String(c.month).padStart(2, "0")}`;
+  };
   const t = (zh: string, en: string) => (isZh ? zh : en);
 
   const [cfRows, bsRows, plRows] = await Promise.all([
-    db.cashFlowMonthly.findMany({ where: { organizationId, year, month: { gte: fromMonth, lte: toMonth }, ...subsidiaryFilter }, include: { subsidiary: true } }),
-    db.balanceSheetMonthly.findMany({ where: { organizationId, year: { in: [year - 1, year] }, ...subsidiaryFilter } }),
-    db.monthlyFinancial.findMany({ where: { organizationId, year, month: { gte: fromMonth, lte: toMonth }, ...subsidiaryFilter } }),
+    fiscalFindMany(db.cashFlowMonthly, fye, { where: { organizationId, year, month: { gte: fromMonth, lte: toMonth }, ...subsidiaryFilter }, include: { subsidiary: true } }),
+    fiscalFindMany(db.balanceSheetMonthly, fye, { where: { organizationId, year: { in: [year - 1, year] }, ...subsidiaryFilter } }),
+    fiscalFindMany(db.monthlyFinancial, fye, { where: { organizationId, year, month: { gte: fromMonth, lte: toMonth }, ...subsidiaryFilter } }),
   ]);
   if (cfRows.length === 0) return [];
 
@@ -86,7 +94,8 @@ export async function buildFlowSections(args: {
     const fcf = sum(rows.map((r) => num(r.fcf)));
     const open = f === 1 ? bsMap.get(bsKey(id, year - 1, 12)) : bsMap.get(bsKey(id, year, f - 1));
     const close = bsMap.get(bsKey(id, year, l));
-    const monthsLabel = f === l ? `${year}-${String(f).padStart(2, "0")}` : `${year}-${String(f).padStart(2, "0")} → ${String(l).padStart(2, "0")}`;
+    // Short "2026-01 → 09" when the span stays inside one calendar year, the full dates when it crosses into the next.
+    const monthsLabel = f === l ? lab(year, f) : calendarOf(year, f, fye).year === calendarOf(year, l, fye).year ? `${lab(year, f)} → ${lab(year, l).slice(5)}` : `${lab(year, f)} → ${lab(year, l)}`;
     if (!open || !close) return { label, ocf, icf, fcf, detail: null, monthsLabel };
     const np = sum(plRows.filter((p) => p.subsidiaryId === id && months.includes(p.month)).map((p) => num(p.netProfit)));
     const d = (k: keyof Bs) => r2(close[k] - open[k]);
@@ -106,7 +115,7 @@ export async function buildFlowSections(args: {
       detail: {
         np, dep, dOpAssets, dOpLiab, dClearing, ocfCalc, dFixed, additions, icfCalc: r2(-additions),
         borrowed, leaseInterco, finAssets, equityOther, fcfCalc: r2(borrowed + leaseInterco + finAssets + equityOther),
-        dCash: d("cash"), openLabel: f === 1 ? `${year - 1}-12` : `${year}-${String(f - 1).padStart(2, "0")}`, closeLabel: `${year}-${String(l).padStart(2, "0")}`,
+        dCash: d("cash"), openLabel: f === 1 ? lab(year - 1, 12) : lab(year, f - 1), closeLabel: lab(year, l),
       },
     };
   });

@@ -4,7 +4,8 @@ import { db } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary, withBaseCurrency, fmtMoney } from "@/lib/i18n/dictionaries";
 import { localizedSegment, localizedName, monthLabels } from "@/lib/localize";
-import { getBaseCurrency, getExchangeRates, convertToBase } from "@/lib/currency";
+import { getBaseCurrency, getExchangeRates, convertToBase, getFyeMonth } from "@/lib/currency";
+import { fiscalOf, fiscalWhere, fiscalFindMany, fiscalMonthLabels, currentFiscal } from "@/lib/fiscal";
 import { classifyBankAccount } from "@/lib/bank-classify";
 import Topbar from "@/components/Topbar";
 import PdfDownloadButton from "@/components/PdfDownloadButton";
@@ -21,7 +22,8 @@ import { buildPnlSections } from "@/lib/overview-breakdown";
 export default async function OverviewPage(props: PageProps<"/overview">) {
   const user = await requireUser();
   const locale = await getServerLocale();
-  const period = parsePeriod(await props.searchParams);
+  const fye = await getFyeMonth(user.organizationId); // month the financial year ends in (12 = calendar year)
+  const period = parsePeriod(await props.searchParams, new Date(), fye);
 
   const YEAR = period.year;
   const monthRange = { gte: period.fromMonth, lte: period.toMonth };
@@ -30,13 +32,13 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
   const [bySubsidiary, subsidiaries, organization, monthlyRows, cashflow, banks, arCustomers, baseCurrency, rates] = await Promise.all([
     db.monthlyFinancial.groupBy({
       by: ["subsidiaryId"],
-      where: { year: YEAR, month: monthRange, organizationId },
+      where: { ...fiscalWhere(YEAR, monthRange, fye), organizationId },
       _sum: { revenue: true, netProfit: true, opCost: true },
     }),
     db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } }),
     db.organization.findUniqueOrThrow({ where: { id: organizationId } }),
-    db.monthlyFinancial.findMany({ where: { year: YEAR, month: monthRange, organizationId } }),
-    db.cashFlowMonthly.findMany({ where: { year: YEAR, month: monthRange, organizationId } }),
+    fiscalFindMany(db.monthlyFinancial, fye, { where: { year: YEAR, month: monthRange, organizationId } }),
+    fiscalFindMany(db.cashFlowMonthly, fye, { where: { year: YEAR, month: monthRange, organizationId } }),
     db.bankAccount.findMany({ where: { organizationId } }),
     db.aRCustomer.findMany({ where: { organizationId } }),
     getBaseCurrency(organizationId),
@@ -45,7 +47,7 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
 
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const companyName = await getCompanyName(user.organizationId);
-  const reportYears = await getReportYears(user.organizationId, period.year);
+  const reportYears = await getReportYears(user.organizationId, period.year, fye);
   const isZh = locale === "zh" || locale === "zh-Hant";
 
   const totalRevenue = bySubsidiary.reduce((sum, r) => sum + Number(r._sum.revenue ?? 0), 0);
@@ -94,8 +96,8 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
   // For any month-end other than "now", use the balance sheet stored for that month-end (captured from
   // Xero on each sync) instead of the latest-sync snapshot above. An entity with no stored snapshot
   // for that month falls back to the latest figure and the tile says so.
-  const useSnapshot = period.basis !== "year" || period.year !== new Date().getFullYear();
-  const snapshots = useSnapshot ? await db.balanceSheetMonthly.findMany({ where: { organizationId, year: period.year, month: period.toMonth } }) : [];
+  const useSnapshot = period.basis !== "year" || period.year !== currentFiscal(fye).year;
+  const snapshots = useSnapshot ? await fiscalFindMany(db.balanceSheetMonthly, fye, { where: { organizationId, year: period.year, month: period.toMonth } }) : [];
   const snapshotAssets = new Map(snapshots.map((r) => [r.subsidiaryId, Number(r.totalAssets)]));
   const assetsFor = (subsidiaryId: string | null, equity: number, debtRatio: number) => snapshotAssets.get(subsidiaryId) ?? entityAssets(subsidiaryId, equity, debtRatio);
   const snapshotIncomplete = useSnapshot && (!snapshotAssets.has(null) || subsidiaries.some((s) => !snapshotAssets.has(s.id)));
@@ -146,10 +148,10 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
     ...(pnlEntityIds.has(null) ? [{ id: null as string | null, label: hqLabel }] : []),
     ...subsidiaries.filter((sub) => pnlEntityIds.has(sub.id)).map((sub) => ({ id: sub.id as string | null, label: localizedName(sub, locale) })),
   ];
-  const pnlSections = buildPnlSections({ entities: pnlEntities, rows: monthlyRows, fromMonth: period.fromMonth, toMonth: period.toMonth, monthNames: monthLabels(locale, 12), isZh });
+  const pnlSections = buildPnlSections({ entities: pnlEntities, rows: monthlyRows, fromMonth: period.fromMonth, toMonth: period.toMonth, monthNames: fiscalMonthLabels(locale, fye), isZh });
   const ocfSection =
     cashflow.length > 0
-      ? (await buildFlowSections({ organizationId, year: period.year, fromMonth: period.fromMonth, toMonth: period.toMonth, subsidiaryFilter: {}, locale, isZh })).find((x) => x.id === "ocf")
+      ? (await buildFlowSections({ organizationId, year: period.year, fromMonth: period.fromMonth, toMonth: period.toMonth, subsidiaryFilter: {}, locale, isZh, fyeMonth: fye })).find((x) => x.id === "ocf")
       : undefined;
 
   // Total assets, entity by entity, with the source each figure came from, then the two eliminations.
@@ -193,8 +195,8 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
       <Topbar dict={dict} locale={locale} title={dict.nav.overview} desc={dict.overview.pageDesc} user={user} />
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
         <div className="flex flex-wrap items-center justify-between gap-3" data-pdf-hide>
-          <PeriodSelector year={period.year} fromMonth={period.fromMonth} toMonth={period.toMonth} years={reportYears} isZh={isZh} />
-          <PdfDownloadButton companyName={companyName} title={dict.nav.overview} subtitle={periodLabel(period, isZh)} isZh={isZh} signOff />
+          <PeriodSelector year={period.year} fromMonth={period.fromMonth} toMonth={period.toMonth} years={reportYears} isZh={isZh} fyeMonth={fye} />
+          <PdfDownloadButton companyName={companyName} title={dict.nav.overview} subtitle={periodLabel(period, isZh, fye)} isZh={isZh} signOff />
         </div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <KpiTile icon={TrendingUp} color="var(--cat-1)" label={dict.overview.kpiRevenue} value={fmtM(totalRevenue)} unit={dict.common.yi} />
@@ -202,7 +204,7 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
           <KpiTile icon={CircleDollarSign} color="var(--status-good)" label={dict.overview.kpiOpProfit} value={fmtM(opProfit)} unit={dict.common.yi} />
           <KpiTile icon={Wallet} color="var(--cat-4)" label={dict.overview.kpiNetProfit} value={fmtM(totalNetProfit)} unit={dict.common.yi} />
           <KpiTile icon={Landmark} color="var(--cat-3)" label={dict.overview.kpiOcf} value={fmtM(totalOcf)} unit={dict.common.yi} />
-          <KpiTile icon={Building2} color="var(--cat-5)" label={dict.overview.kpiTotalAssets} value={fmtM(totalAssets)} unit={dict.common.yi} note={useSnapshot ? (snapshotIncomplete ? (isZh ? "部分主体暂无该月末资产负债表，已用最近一次同步数" : "Some entities have no stored balance sheet for this month-end — latest sync used for them") : (isZh ? `截至 ${periodEndDate(period)} 月末资产负债表（Xero）` : `Month-end balance sheet as at ${periodEndDate(period)} (Xero)`)) : undefined} />
+          <KpiTile icon={Building2} color="var(--cat-5)" label={dict.overview.kpiTotalAssets} value={fmtM(totalAssets)} unit={dict.common.yi} note={useSnapshot ? (snapshotIncomplete ? (isZh ? "部分主体暂无该月末资产负债表，已用最近一次同步数" : "Some entities have no stored balance sheet for this month-end — latest sync used for them") : (isZh ? `截至 ${periodEndDate(period, fye)} 月末资产负债表（Xero）` : `Month-end balance sheet as at ${periodEndDate(period, fye)} (Xero)`)) : undefined} />
         </div>
 
         <div data-pdf-hide>

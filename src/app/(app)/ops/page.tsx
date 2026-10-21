@@ -4,7 +4,8 @@ import { db } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary, withBaseCurrency, fmtMoney } from "@/lib/i18n/dictionaries";
 import { localizedSegment, localizedName, monthLabels } from "@/lib/localize";
-import { getBaseCurrency } from "@/lib/currency";
+import { getBaseCurrency, getExchangeRates, convertToBase, getFyeMonth } from "@/lib/currency";
+import { fiscalFindMany, fiscalMonthLabels, currentFiscal, calendarOf } from "@/lib/fiscal";
 import Topbar from "@/components/Topbar";
 import PdfDownloadButton from "@/components/PdfDownloadButton";
 import PeriodSelector from "@/components/PeriodSelector";
@@ -24,18 +25,19 @@ const fmt1 = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 1
 export default async function OpsPage(props: PageProps<"/ops">) {
   const user = await requireUser();
   const locale = await getServerLocale();
-  const period = parsePeriod(await props.searchParams);
+  const fye = await getFyeMonth(user.organizationId); // month the financial year ends in (12 = calendar year)
+  const period = parsePeriod(await props.searchParams, new Date(), fye);
   const isZh = locale === "zh" || locale === "zh-Hant";
 
   const organizationId = user.organizationId;
   const baseCurrency = await getBaseCurrency(organizationId);
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const companyName = await getCompanyName(user.organizationId);
-  const reportYears = await getReportYears(user.organizationId, period.year);
+  const reportYears = await getReportYears(user.organizationId, period.year, fye);
   const fmtM = (n: number) => fmtMoney(n, locale);
   const [subsidiaries, monthly, org] = await Promise.all([
     db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } }),
-    db.monthlyFinancial.findMany({ where: { year: { in: [period.year - 1, period.year] }, month: { lte: period.toMonth }, organizationId }, orderBy: { month: "asc" } }),
+    fiscalFindMany(db.monthlyFinancial, fye, { where: { year: { in: [period.year - 1, period.year] }, month: { lte: period.toMonth }, organizationId }, orderBy: { month: "asc" } }),
     db.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { headcount: true } }),
   ]);
   const currentYear = period.year;
@@ -96,7 +98,7 @@ export default async function OpsPage(props: PageProps<"/ops">) {
   const revenuePerHead = totalHeadcount > 0 ? totalRevenue / totalHeadcount : 0;
 
   const monthCount = mCur.length ? Math.max(...mCur.map((m) => m.month)) : 0;
-  const months = monthLabels(locale, monthCount);
+  const months = fiscalMonthLabels(locale, fye).slice(0, monthCount);
   const opCostRatioByMonth = Array.from({ length: monthCount }, (_, i) => {
     const rows = mCur.filter((r) => r.month === i + 1);
     const rev = rows.reduce((a, r) => a + Number(r.revenue), 0);
@@ -124,7 +126,7 @@ export default async function OpsPage(props: PageProps<"/ops">) {
     rows: kpiCur,
     fromMonth: period.fromMonth,
     toMonth: period.toMonth,
-    monthNames: monthLabels(locale, 12),
+    monthNames: fiscalMonthLabels(locale, fye),
     isZh,
     headcounts: opsEntities.map((e) => e.headcount),
   });
@@ -133,14 +135,20 @@ export default async function OpsPage(props: PageProps<"/ops">) {
 
   // ---- Efficiency & financial-health ratios (labour productivity, liquidity, leverage, per-share) ----
   const nowDate = new Date();
-  const lastCompleteMonth = period.year < nowDate.getFullYear() ? 12 : period.year === nowDate.getFullYear() ? nowDate.getMonth() : 0; // months already closed
+  const nowFiscal = currentFiscal(fye, nowDate);
+  const lastCompleteMonth = period.year < nowFiscal.year ? 12 : period.year === nowFiscal.year ? nowFiscal.month - 1 : 0; // fiscal months already closed
   const ttmEnd = Math.max(0, ...mCur.filter((m) => m.month <= Math.min(period.toMonth, lastCompleteMonth)).map((m) => m.month));
   const [balanceRows, orgShare, ttmTail] = await Promise.all([
-    db.balanceSheetMonthly.findMany({ where: { organizationId, year: period.year, month: { lte: period.toMonth } } }),
+    fiscalFindMany(db.balanceSheetMonthly, fye, { where: { organizationId, year: period.year, month: { lte: period.toMonth } } }),
     db.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { sharesOutstanding: true, sharePrice: true, dividendPerShare: true, investmentInSubsidiaries: true } }),
-    ttmEnd > 0 && ttmEnd < 12 ? db.monthlyFinancial.findMany({ where: { organizationId, year: period.year - 1, month: { gt: ttmEnd } }, select: { month: true, netProfit: true } }) : Promise.resolve([] as { month: number; netProfit: unknown }[]),
+    ttmEnd > 0 && ttmEnd < 12 ? fiscalFindMany(db.monthlyFinancial, fye, { where: { organizationId, year: period.year - 1, month: { gt: ttmEnd } }, select: { month: true, netProfit: true } }) : Promise.resolve([] as { month: number; netProfit: unknown }[]),
   ]);
   const pad2 = (n: number) => String(n).padStart(2, "0");
+  // "yyyy-mm" of the real calendar month behind a fiscal (year, month) — what a reader of the notes expects to see.
+  const calLab = (fy: number, idx: number) => {
+    const c = calendarOf(fy, idx, fye);
+    return `${c.year}-${pad2(c.month)}`;
+  };
   const ratioEntities = opsEntities.map((e) => {
     const rows = kpiCur.filter((m) => m.subsidiaryId === e.id);
     const withRevenue = rows.filter((m) => Number(m.revenue) !== 0);
@@ -165,7 +173,7 @@ export default async function OpsPage(props: PageProps<"/ops">) {
             totalLiabilities: Number(bsRow.totalLiabilities),
             totalEquity: Number(bsRow.totalEquity),
             detailed: bsRow.detailed,
-            asOf: `${period.year}-${pad2(bsRow.month)}`,
+            asOf: calLab(period.year, bsRow.month),
           }
         : null,
     };
@@ -176,7 +184,7 @@ export default async function OpsPage(props: PageProps<"/ops">) {
   // equity accounts: each month's increase in the account's size, summed (a year-end reset to 0 is ignored). Needs the
   // balance sheet at all 13 month-ends of the window — otherwise unknown rather than guessed.
   const eqRows = ttmEnd > 0
-    ? await db.balanceSheetMonthly.findMany({ where: { organizationId, subsidiaryId: null, equityDetailed: true, year: { in: [period.year - 1, period.year] } }, select: { year: true, month: true, dividends: true, shareCapital: true } })
+    ? await fiscalFindMany(db.balanceSheetMonthly, fye, { where: { organizationId, subsidiaryId: null, equityDetailed: true, year: { in: [period.year - 1, period.year] } }, select: { year: true, month: true, dividends: true, shareCapital: true } })
     : [];
   const divAt = new Map(eqRows.map((r) => [r.year * 12 + r.month, Math.abs(Number(r.dividends))]));
   let dividendsTtm: number | null = null;
@@ -194,7 +202,7 @@ export default async function OpsPage(props: PageProps<"/ops">) {
     periodNetProfit: kpiCur.reduce((a, m) => a + Number(m.netProfit), 0),
     ttmNetProfit: ttmRowsCur.reduce((a, m) => a + Number(m.netProfit), 0) + ttmTail.reduce((a, m) => a + Number(m.netProfit), 0),
     ttmMonths: ttmMonthSet.size,
-    ttmLabel: ttmEnd === 0 ? "—" : ttmEnd === 12 ? `${period.year}-01 → ${period.year}-12` : `${period.year - 1}-${pad2(ttmEnd + 1)} → ${period.year}-${pad2(ttmEnd)}`,
+    ttmLabel: ttmEnd === 0 ? "—" : ttmEnd === 12 ? `${calLab(period.year, 1)} → ${calLab(period.year, 12)}` : `${calLab(period.year - 1, ttmEnd + 1)} → ${calLab(period.year, ttmEnd)}`,
     shares: orgShare.sharesOutstanding === null ? null : Number(orgShare.sharesOutstanding),
     price: orgShare.sharePrice === null ? null : Number(orgShare.sharePrice),
     dividendPerShare: orgShare.dividendPerShare === null ? null : Number(orgShare.dividendPerShare),
@@ -213,8 +221,8 @@ export default async function OpsPage(props: PageProps<"/ops">) {
       <Topbar dict={dict} locale={locale} title={dict.nav.ops} desc={dict.nav.ops} user={user} />
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
         <div className="flex flex-wrap items-center justify-between gap-3" data-pdf-hide>
-          <PeriodSelector year={period.year} fromMonth={period.fromMonth} toMonth={period.toMonth} years={reportYears} isZh={isZh} />
-          <PdfDownloadButton companyName={companyName} title={dict.nav.ops} subtitle={periodLabel(period, isZh)} isZh={isZh} />
+          <PeriodSelector year={period.year} fromMonth={period.fromMonth} toMonth={period.toMonth} years={reportYears} isZh={isZh} fyeMonth={fye} />
+          <PdfDownloadButton companyName={companyName} title={dict.nav.ops} subtitle={periodLabel(period, isZh, fye)} isZh={isZh} />
         </div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <KpiTile icon={TrendingUp} color="var(--cat-1)" label={dict.m.revenue} value={fmtM(totalRevenue)} unit={dict.common.yi} />

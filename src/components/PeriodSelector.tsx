@@ -23,12 +23,15 @@ export default function PeriodSelector({
   toMonth,
   years,
   isZh,
+  fyeMonth = 12,
 }: {
   year: number;
   fromMonth: number;
   toMonth: number;
   years: number[];
   isZh: boolean;
+  /** Month the financial year ends in (12 = calendar year). Month dropdowns then start at the first month of the financial year. */
+  fyeMonth?: number;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -55,7 +58,8 @@ export default function PeriodSelector({
 
   const selectCls = "rounded-lg border px-2.5 py-1.5 text-[12.5px] font-semibold";
   const selectStyle = { borderColor: "var(--border-strong)", background: "var(--surface)", color: "var(--ink-900)" } as const;
-  const monthName = (i: number) => (isZh ? `${i + 1} 月` : MONTH_EN[i]);
+  // Month names in fiscal order: position i is the (i+1)-th month of the financial year.
+  const monthName = (i: number) => (isZh ? `${((fyeMonth + i) % 12) + 1} 月` : MONTH_EN[(fyeMonth + i) % 12]);
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -65,10 +69,15 @@ export default function PeriodSelector({
       <select className={selectCls} style={selectStyle} value={year} onChange={(e) => go({ year: Number(e.target.value) })} aria-label={isZh ? "年度" : "Year"}>
         {years.map((y) => (
           <option key={y} value={y}>
-            {y}
+            {fyeMonth === 12 ? y : `FY${y}`}
           </option>
         ))}
       </select>
+      {fyeMonth !== 12 && (
+        <span className="text-[11px] font-semibold" style={{ color: "var(--ink-400)" }} title={isZh ? "财政年度结账月" : "Financial year-end month"}>
+          {isZh ? `财年止于 ${fyeMonth} 月` : `FY ends ${MONTH_EN[fyeMonth - 1]}`}
+        </span>
+      )}
 
       <div className="flex items-center gap-1 rounded-lg border p-1" style={{ borderColor: "var(--border)" }}>
         {PRESETS.map((p) => {
