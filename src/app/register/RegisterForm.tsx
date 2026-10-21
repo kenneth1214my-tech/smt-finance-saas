@@ -9,6 +9,7 @@ import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { localizedName } from "@/lib/localize";
 import type { Locale, DICTIONARIES } from "@/lib/i18n/dictionaries";
 import type { Subsidiary } from "@prisma/client";
+import { JURISDICTION_CONFIG, FRAMEWORKS, type JurisdictionCode } from "@/lib/jurisdiction";
 
 type Dict = (typeof DICTIONARIES)[Locale];
 
@@ -73,7 +74,8 @@ function CreateOrgForm({ isZh }: { dict: Dict; locale: Locale; isZh: boolean }) 
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [form, setForm] = useState({ companyName: "", name: "", email: "", password: "" });
+  const [form, setForm] = useState({ jurisdiction: "SG" as JurisdictionCode, companyName: "", name: "", email: "", password: "" });
+  const edition = JURISDICTION_CONFIG[form.jurisdiction];
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -106,6 +108,35 @@ function CreateOrgForm({ isZh }: { dict: Dict; locale: Locale; isZh: boolean }) 
       </p>
       {error && <ErrorBanner text={error} />}
       <form onSubmit={submit} className="space-y-3">
+        <Field label={isZh ? "公司注册地 / 适用版本" : "Where is the company registered? (country edition)"}>
+          <div className="grid grid-cols-2 gap-2">
+            {(["SG", "HK"] as const).map((code) => {
+              const c = JURISDICTION_CONFIG[code];
+              const active = form.jurisdiction === code;
+              return (
+                <button
+                  type="button"
+                  key={code}
+                  onClick={() => setForm({ ...form, jurisdiction: code })}
+                  className="rounded-xl border px-3 py-2.5 text-left"
+                  style={{ borderColor: active ? "var(--cat-1)" : "var(--border-strong)", background: active ? "color-mix(in srgb, var(--cat-1) 10%, transparent)" : "transparent" }}
+                >
+                  <div className="text-[13px] font-extrabold" style={{ color: "var(--ink-900)" }}>
+                    {c.flag} {isZh ? c.nameZh : c.nameEn}
+                  </div>
+                  <div className="mt-0.5 text-[10.8px] leading-snug" style={{ color: "var(--ink-400)" }}>
+                    {isZh ? c.taglineZh : c.taglineEn}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-1.5 text-[11px] leading-relaxed" style={{ color: "var(--ink-400)" }}>
+            {isZh
+              ? `将按 ${edition.nameZh} 的要求设置：会计准则 ${FRAMEWORKS[edition.defaultFramework].short}、${edition.taxAuthority.nameZh}（${edition.taxAuthority.abbr}）税务与申报日历、${edition.registry.nameZh}（${edition.registry.abbr}）、本位币 ${edition.baseCurrency}。可稍后在「设置 → 集团设置」调整。`
+              : `Set up under ${edition.nameEn} rules: ${FRAMEWORKS[edition.defaultFramework].short} accounting, ${edition.taxAuthority.nameEn} (${edition.taxAuthority.abbr}) tax and filing calendar, ${edition.registry.nameEn} (${edition.registry.abbr}), base currency ${edition.baseCurrency}. You can adjust this later under Settings → Group Settings.`}
+          </p>
+        </Field>
         <Field label={isZh ? "公司/集团名称" : "Company / group name"}>
           <input required value={form.companyName} onChange={(e) => setForm({ ...form, companyName: e.target.value })} className="hr-input" />
         </Field>

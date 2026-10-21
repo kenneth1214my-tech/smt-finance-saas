@@ -6,6 +6,8 @@ import { computeAuditedFinancialStatements } from "@/lib/consolidated-report";
 import Topbar from "@/components/Topbar";
 import Card from "@/components/ui/Card";
 import AuditedStatementsActions from "./AuditedStatementsActions";
+import { db } from "@/lib/db";
+import { getJurisdictionConfig, effectiveFramework } from "@/lib/jurisdiction";
 
 const fmt1 = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
@@ -20,6 +22,10 @@ export default async function AuditedStatementsPage(props: PageProps<"/report/au
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const fmtM = (n: number) => fmtMoney(n, locale);
 
+  const edition = await db.organization.findUniqueOrThrow({ where: { id: user.organizationId }, select: { jurisdiction: true, accountingFramework: true, registrationNo: true } });
+  const jcfg = getJurisdictionConfig(edition.jurisdiction);
+  const framework = effectiveFramework(edition.jurisdiction, edition.accountingFramework);
+  const isHk = jcfg.code === "HK";
   const report = await computeAuditedFinancialStatements(user.organizationId, year, locale);
   const { incomeStatement: cur, priorIncomeStatement: prior, balanceSheet, companyBalanceSheet, cashFlow, priorCashFlow, equityRollForward } = report;
 
@@ -53,8 +59,33 @@ export default async function AuditedStatementsPage(props: PageProps<"/report/au
             : "This is a management-prepared statement generated automatically from live on-file data — it has not been audited by an external auditor. It mirrors the format of a formal audited filing but is not an audit opinion and does not substitute for a statutory audit. Attach the auditor's signed Independent Auditor's Report once the external audit is complete."}
         </div>
 
-        {/* Directors' Statement-style summary */}
-        <Card title={isZh ? "董事声明摘要" : "Directors' Statement (Summary)"}>
+        {/* Basis of preparation — follows the organization's country edition and chosen framework */}
+        <Card title={isZh ? "编制基础" : "Basis of Preparation"}>
+          <div className="space-y-2 text-[12.6px]" style={{ color: "var(--ink-900)" }}>
+            <p>
+              {isZh
+                ? `本财务报表按 ${isZh ? framework.nameZh : framework.nameEn}（${framework.issuerZh}发布）及${jcfg.companiesLawZh}的规定编制。`
+                : `These financial statements are prepared in accordance with ${framework.nameEn}, issued by the ${framework.issuerEn}, and the requirements of the ${jcfg.companiesLawEn}.`}
+            </p>
+            <p style={{ color: "var(--ink-600)" }}>{isZh ? framework.noteZh : framework.noteEn}</p>
+            {edition.registrationNo && (
+              <p style={{ color: "var(--ink-600)" }}>
+                {isHk ? (isZh ? "商业登记号/公司注册编号：" : "Business Registration / CR No.: ") : "UEN: "}
+                {edition.registrationNo}
+              </p>
+            )}
+            {isHk && (
+              <p style={{ color: "var(--ink-600)" }}>
+                {isZh
+                  ? "香港私人公司须每年由执业会计师（HKICPA 会员）审计，并在周年大会（财政年度结束后9个月内）前向成员提交财务报表、董事会报告及核数师报告；报税时须连同经审计财务报表递交利得税报税表。"
+                  : "A Hong Kong company must have its financial statements audited each year by a practising HKICPA certified public accountant; the statements, directors' report and auditor's report go to the members within 9 months after year-end (private company AGM), and the Profits Tax Return is filed with the audited statements."}
+              </p>
+            )}
+          </div>
+        </Card>
+
+        {/* Directors' Statement (Singapore) / Report of the Directors (Hong Kong) — summary */}
+        <Card title={isHk ? (isZh ? "董事会报告摘要" : "Directors' Report (Summary)") : isZh ? "董事声明摘要" : "Directors' Statement (Summary)"}>
           <div className="space-y-2 text-[12.6px]" style={{ color: "var(--ink-900)" }}>
             <p>
               {isZh

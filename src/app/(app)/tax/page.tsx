@@ -5,6 +5,7 @@ import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary, withBaseCurrency, fmtMoney } from "@/lib/i18n/dictionaries";
 import { getBaseCurrency } from "@/lib/currency";
 import { computeCorporateTax, effectiveFilingStatus, currentGstQuarter } from "@/lib/tax";
+import { getJurisdictionConfig, computeHkProfitsTax, hkDraftFilings } from "@/lib/jurisdiction";
 import Topbar from "@/components/Topbar";
 import KpiTile from "@/components/ui/KpiTile";
 import TaxCenterClient from "./TaxCenterClient";
@@ -46,26 +47,52 @@ export default async function TaxPage() {
   // on TaxFiling's (subsidiaryId, type, periodLabel) unique constraint to stay correct under
   // concurrent page loads — a plain "check then create" here raced and produced a real duplicate
   // in production before that constraint existed.
-  const gstQuarter = currentGstQuarter();
-  const entities: { subsidiaryId: string | null }[] = [{ subsidiaryId: null }, ...subsidiaries.map((s) => ({ subsidiaryId: s.id }))];
-  await db.taxFiling.createMany({
-    data: entities.map((e) => ({
-      organizationId,
-      subsidiaryId: e.subsidiaryId,
-      type: "GST_F5" as const,
-      periodLabel: gstQuarter.periodLabel,
-      dueDate: gstQuarter.dueDate,
-      status: "UPCOMING" as const,
-      notes: "Auto-created from the quarterly GST filing schedule — delete if this entity isn't GST-registered for this period.",
-    })),
-    skipDuplicates: true,
-  });
+  // The country edition decides which obligations are auto-tracked: Singapore → the quarterly GST F5; Hong Kong has no GST,
+  // so → profits tax return (per year of assessment), Employer's Return (BIR56A) and the Annual Return (NAR1).
+  const org = await db.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { jurisdiction: true, fyeMonth: true, incorporationDate: true } });
+  const cfg = getJurisdictionConfig(org.jurisdiction);
+  if (cfg.hasGst) {
+    const gstQuarter = currentGstQuarter();
+    const entities: { subsidiaryId: string | null }[] = [{ subsidiaryId: null }, ...subsidiaries.map((s) => ({ subsidiaryId: s.id }))];
+    await db.taxFiling.createMany({
+      data: entities.map((e) => ({
+        organizationId,
+        subsidiaryId: e.subsidiaryId,
+        type: "GST_F5" as const,
+        periodLabel: gstQuarter.periodLabel,
+        dueDate: gstQuarter.dueDate,
+        status: "UPCOMING" as const,
+        notes: "Auto-created from the quarterly GST filing schedule — delete if this entity isn't GST-registered for this period.",
+      })),
+      skipDuplicates: true,
+    });
+  } else {
+    const nowDate = new Date();
+    const hkEntities = [
+      { subsidiaryId: null as string | null, fyeMonth: org.fyeMonth, annual: true },
+      ...subsidiaries.map((s) => ({ subsidiaryId: s.id as string | null, fyeMonth: s.fyeMonth, annual: false })),
+    ];
+    const drafts = hkEntities.flatMap((e) => hkDraftFilings({ now: nowDate, fyeMonth: e.fyeMonth, incorporationDate: org.incorporationDate, includeAnnualReturn: e.annual }).map((d) => ({ ...d, subsidiaryId: e.subsidiaryId })));
+    if (drafts.length > 0) {
+      await db.taxFiling.createMany({
+        data: drafts.map((d) => ({ organizationId, subsidiaryId: d.subsidiaryId, type: d.type, periodLabel: d.periodLabel, dueDate: d.dueDate, status: "UPCOMING" as const, notes: d.notes })),
+        skipDuplicates: true,
+      });
+    }
+  }
   const filings = await db.taxFiling.findMany({ where: { organizationId }, include: { subsidiary: true }, orderBy: [{ dueDate: "asc" }] });
 
   const currentYear = new Date().getFullYear();
   const netPayableCurrentYear = provisions
     .filter((p) => p.year === currentYear)
-    .reduce((sum, p) => sum + computeCorporateTax(Number(p.chargeableIncome), Number(p.taxRatePct), Number(p.rebatePct), Number(p.rebateCap)).netTaxPayable, 0);
+    .reduce(
+      (sum, p) =>
+        sum +
+        (cfg.code === "HK"
+          ? computeHkProfitsTax(Number(p.chargeableIncome), Number(p.taxRatePct), p.lowerRateElected, Number(p.rebatePct), Number(p.rebateCap)).netTaxPayable
+          : computeCorporateTax(Number(p.chargeableIncome), Number(p.taxRatePct), Number(p.rebatePct), Number(p.rebateCap)).netTaxPayable),
+      0
+    );
 
   const now = new Date();
   const upcomingFilings = filings.filter((f) => effectiveFilingStatus(f.status, f.dueDate, now) === "UPCOMING").length;
@@ -74,7 +101,7 @@ export default async function TaxPage() {
 
   return (
     <>
-      <Topbar dict={dict} locale={locale} title={dict.nav.tax} desc={dict.m.taxPageDesc} user={user} />
+      <Topbar dict={dict} locale={locale} title={dict.nav.tax} desc={cfg.code === "HK" ? (locale === "zh" || locale === "zh-Hant" ? "利得税预提、申报与缴款跟踪、递延税项及公司注册处/税务局申报日历（香港无 GST），按总部/子公司分主体记录" : "Profits tax provision, filing & payment tracking, deferred tax and the IRD / Companies Registry filing calendar (Hong Kong has no GST) — tracked per entity (HQ / subsidiary)") : dict.m.taxPageDesc} user={user} />
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <KpiTile icon={Landmark} color="var(--cat-1)" label={dict.m.taxKpiNetPayable} value={fmtM(netPayableCurrentYear)} unit={dict.common.yi} />
@@ -84,6 +111,7 @@ export default async function TaxPage() {
         </div>
 
         <TaxCenterClient
+          jurisdiction={cfg.code}
           locale={locale}
           unit={dict.common.yi}
           dict={dict}

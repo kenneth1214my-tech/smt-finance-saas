@@ -241,7 +241,8 @@ export async function deriveRiskAlerts(organizationId: string, locale: Locale, n
       .sort((a, b) => a.days - b.days);
     if (due.length > 0) {
       const { f, status, days } = due[0];
-      const kind = f.type === "GST_F5" ? "GST F5" : f.type === "ECI" ? "ECI" : "Form C-S/C";
+      const kind =
+        ({ GST_F5: "GST F5", ECI: "ECI", FORM_C_S: "Form C-S/C", PROFITS_TAX_RETURN: "Profits Tax Return (BIR51)", PROVISIONAL_TAX: "Provisional profits tax", EMPLOYERS_RETURN: "Employer's Return (BIR56A)", ANNUAL_RETURN: "Annual Return (NAR1)", BR_RENEWAL: "Business Registration renewal" } as Record<string, string>)[f.type] ?? f.type;
       const more = due.length > 1 ? (isZh ? `（另有 ${due.length - 1} 项）` : ` (+${due.length - 1} more)`) : "";
       const overdue = status === "OVERDUE";
       push({

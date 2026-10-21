@@ -111,6 +111,12 @@ export default async function SettingsPage() {
           hqInvestmentInSubsidiaries={org ? Number(org.investmentInSubsidiaries) : 0}
           hqDueToSubsidiaries={org ? Number(org.dueToSubsidiaries) : 0}
           hqHeadcount={org?.headcount ?? 0}
+          jurisdictionInfo={{
+            jurisdiction: org?.jurisdiction ?? "SG",
+            framework: org?.accountingFramework ?? "",
+            incorporationDate: org?.incorporationDate ? org.incorporationDate.toISOString().slice(0, 10) : "",
+            registrationNo: org?.registrationNo ?? "",
+          }}
           hqShareCapital={latestShareCapital ? Number(latestShareCapital.shareCapital) : 0}
           hqShare={{ shares: org?.sharesOutstanding?.toString() ?? "", price: org?.sharePrice?.toString() ?? "", dps: org?.dividendPerShare?.toString() ?? "" }}
           xeroConnections={toPlain(xeroConnections)}

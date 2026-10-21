@@ -74,10 +74,25 @@ enum AuditFindingStatus {
 
 // One row per tenant company. inviteCode is how new members join self-serve
 // (shared by an org admin); everything else is that company's own settings.
+// Country edition of the platform for an organization — chosen at registration. Drives the accounting framework,
+// the tax regime (Singapore IRAS vs Hong Kong IRD) and the compliance calendar; see lib/jurisdiction.ts.
+enum Jurisdiction {
+  SG
+  HK
+}
+
 model Organization {
   id           String   @id @default(cuid())
   name         String
   baseCurrency String   @default("CNY")
+  jurisdiction Jurisdiction @default(SG)
+  // Financial reporting framework the statements are prepared under (SFRS(I) / SFRS for SE, or HKFRS / HKFRS for
+  // Private Entities / SME-FRF & SME-FRS). Null = the jurisdiction's default.
+  accountingFramework String?
+  // Date of incorporation — drives the Hong Kong Annual Return (NAR1) due date (42 days after each anniversary).
+  incorporationDate DateTime?
+  // UEN (Singapore) or Business Registration / Companies Registry number (Hong Kong), for reference on statements.
+  registrationNo String?
   // Month the group's financial year ends in (1-12; 12 = calendar year). Drives which month
   // subsidiary-level year-end figures are read from for consolidated/audit reporting.
   fyeMonth     Int      @default(12)
@@ -682,6 +697,12 @@ enum TaxFilingType {
   ECI      // Estimated Chargeable Income — due within 3 months of financial year end
   FORM_C_S // or FORM_C for larger companies — annual return, due 30 Nov of the Year of Assessment
   GST_F5   // Quarterly (or monthly/half-yearly) GST return
+  // Hong Kong
+  PROFITS_TAX_RETURN // BIR51 — per year of assessment, with audited financial statements and a tax computation
+  PROVISIONAL_TAX    // provisional profits tax for the year of assessment (paid in instalments per the IRD notice)
+  EMPLOYERS_RETURN   // BIR56A + IR56B — issued 1 April, due within one month
+  ANNUAL_RETURN      // Companies Registry Form NAR1 — within 42 days after the incorporation anniversary
+  BR_RENEWAL         // Business Registration Certificate renewal
 }
 
 enum TaxFilingStatus {
@@ -710,6 +731,9 @@ model CorporateTaxProvision {
   taxRatePct       Decimal       @default(17) @db.Decimal(5, 2)
   rebatePct        Decimal       @default(0) @db.Decimal(5, 2)
   rebateCap        Decimal       @default(0) @db.Decimal(14, 2)
+  // Hong Kong two-tiered profits tax: only ONE entity in a group of connected entities may elect the lower rate
+  // (8.25% on the first HK$2m) for a given year of assessment. Ignored for Singapore.
+  lowerRateElected Boolean       @default(true)
   notes            String?       @db.Text
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt

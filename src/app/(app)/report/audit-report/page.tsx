@@ -4,6 +4,7 @@ import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary, withBaseCurrency, fmtMoney } from "@/lib/i18n/dictionaries";
 import { getBaseCurrency } from "@/lib/currency";
 import { computeAuditReport, matchesAuditScope, type AuditScope } from "@/lib/audit";
+import { db } from "@/lib/db";
 import { JURISDICTIONS, defaultJurisdictionForCurrency, getJurisdictionText, type AuditJurisdiction } from "@/lib/audit-jurisdiction";
 import Topbar from "@/components/Topbar";
 import Card from "@/components/ui/Card";
@@ -37,7 +38,9 @@ export default async function AuditReportPage(props: PageProps<"/report/audit-re
 
   const jurisdictionParam = typeof searchParams.jurisdiction === "string" ? searchParams.jurisdiction : null;
   const validJurisdiction = JURISDICTIONS.some((j) => j.code === jurisdictionParam);
-  const jurisdiction: AuditJurisdiction = validJurisdiction ? (jurisdictionParam as AuditJurisdiction) : defaultJurisdictionForCurrency(baseCurrency);
+  // Default to the organization's country edition (chosen at registration), falling back to the base currency's country.
+  const orgEdition = await db.organization.findUnique({ where: { id: user.organizationId }, select: { jurisdiction: true } });
+  const jurisdiction: AuditJurisdiction = validJurisdiction ? (jurisdictionParam as AuditJurisdiction) : orgEdition?.jurisdiction === "HK" ? "HK" : orgEdition?.jurisdiction === "SG" && baseCurrency === "SGD" ? "SG" : defaultJurisdictionForCurrency(baseCurrency);
   const jt = getJurisdictionText(jurisdiction);
 
   const scopeParam = typeof searchParams.scope === "string" ? searchParams.scope : "all";

@@ -5,6 +5,7 @@ import { createSessionCookie } from "@/lib/session";
 import { createOrganizationSchema } from "@/lib/validation";
 import { generateInviteCode } from "@/lib/company";
 import { rateLimit, clientKeyFromRequest } from "@/lib/rateLimit";
+import { getJurisdictionConfig } from "@/lib/jurisdiction";
 
 export async function POST(req: Request) {
   const ip = clientKeyFromRequest(req);
@@ -14,7 +15,9 @@ export async function POST(req: Request) {
   const raw = await req.json().catch(() => null);
   const parsed = createOrganizationSchema.safeParse(raw);
   if (!parsed.success) return NextResponse.json({ error: "invalid_input" }, { status: 400 });
-  const { companyName, name, email, password } = parsed.data;
+  const { companyName, name, email, password, jurisdiction } = parsed.data;
+  // The country edition fixes the starting currency, financial year-end and accounting framework; all stay editable in Settings.
+  const edition = getJurisdictionConfig(jurisdiction);
 
   const emailLower = email.toLowerCase();
   const existingUser = await db.user.findUnique({ where: { email: emailLower } });
@@ -27,7 +30,16 @@ export async function POST(req: Request) {
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       user = await db.$transaction(async (tx) => {
-        const org = await tx.organization.create({ data: { name: companyName, inviteCode: generateInviteCode() } });
+        const org = await tx.organization.create({
+          data: {
+            name: companyName,
+            inviteCode: generateInviteCode(),
+            jurisdiction: edition.code,
+            baseCurrency: edition.baseCurrency,
+            fyeMonth: edition.defaultFyeMonth,
+            accountingFramework: edition.defaultFramework,
+          },
+        });
         return tx.user.create({ data: { organizationId: org.id, name, email: emailLower, passwordHash, role: "ADMIN", status: "ACTIVE" } });
       });
       break;

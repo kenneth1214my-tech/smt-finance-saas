@@ -8,6 +8,7 @@ import type { Locale, DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { fmtMoney } from "@/lib/i18n/dictionaries";
 import { localizedName } from "@/lib/localize";
 import { computeCorporateTax, effectiveFilingStatus, type TaxFilingStatusComputed } from "@/lib/tax";
+import { computeHkProfitsTax, JURISDICTION_CONFIG, HK_CORPORATE_RATE_PCT, HK_LOWER_TIER_CAP, type JurisdictionCode } from "@/lib/jurisdiction";
 import Card from "@/components/ui/Card";
 import CrudTable, { type FieldConfig } from "@/components/admin/CrudTable";
 import GstBreakdownPanel, { type GstBreakdownView } from "./GstBreakdownPanel";
@@ -18,11 +19,6 @@ type ProvisionRow = CorporateTaxProvision & { subsidiary: Subsidiary | null };
 type FilingRow = TaxFiling & { subsidiary: Subsidiary | null };
 type DeferredRow = DeferredTaxItem & { subsidiary: Subsidiary | null };
 
-const TYPE_OPTIONS = [
-  { value: "ECI", label: "ECI" },
-  { value: "FORM_C_S", label: "Form C-S/C" },
-  { value: "GST_F5", label: "GST F5" },
-];
 const STATUS_OPTIONS = [
   { value: "UPCOMING", label: "UPCOMING" },
   { value: "FILED", label: "FILED" },
@@ -37,6 +33,7 @@ const STATUS_TONE: Record<TaxFilingStatusComputed, string> = {
 };
 
 export default function TaxCenterClient({
+  jurisdiction,
   locale,
   unit,
   dict,
@@ -46,6 +43,7 @@ export default function TaxCenterClient({
   deferredItems,
   netProfitByEntity,
 }: {
+  jurisdiction: JurisdictionCode;
   locale: Locale;
   unit: string;
   dict: Dict;
@@ -56,6 +54,8 @@ export default function TaxCenterClient({
   netProfitByEntity: Record<string, Record<number, number>>;
 }) {
   const isZh = locale === "zh" || locale === "zh-Hant";
+  const cfg = JURISDICTION_CONFIG[jurisdiction];
+  const isHk = jurisdiction === "HK";
   const [tab, setTab] = useState<"provision" | "filing" | "deferred">("provision");
   const fmtM = (n: number) => fmtMoney(n, locale);
   const router = useRouter();
@@ -143,7 +143,14 @@ export default function TaxCenterClient({
           subsidiaryId: e.subsidiaryId ?? "",
           year,
           chargeableIncome: netProfit,
-          notes: isZh ? "根据Xero已同步的净利润(税前)自动生成草稿，请核对税务调整项后再确认" : "Draft generated from Xero-synced net profit before tax — review tax adjustments before relying on this figure",
+          ...(isHk ? { taxRatePct: HK_CORPORATE_RATE_PCT } : {}),
+          notes: isHk
+            ? isZh
+              ? "根据Xero已同步的净利润(税前)自动生成草稿；应评税利润须另行调整（离岸/境外来源收入、资本性收益、折旧免税额等），请核对后再确认"
+              : "Draft generated from Xero-synced net profit before tax — assessable profits need further adjustment (offshore / non-taxable income, capital items, depreciation allowances) before relying on this figure"
+            : isZh
+              ? "根据Xero已同步的净利润(税前)自动生成草稿，请核对税务调整项后再确认"
+              : "Draft generated from Xero-synced net profit before tax — review tax adjustments before relying on this figure",
         }),
       });
       if (res.ok) created++;
@@ -168,17 +175,31 @@ export default function TaxCenterClient({
   const provisionFields: FieldConfig[] = [
     { key: "subsidiaryId", label: dict.m.taxEntity, type: "select", options: subsidiaryOrHqOptions, displayValue: subsidiaryOrHqLabel },
     { key: "year", label: dict.m.taxYear, type: "number" },
-    { key: "chargeableIncome", label: `${dict.m.taxChargeableIncome} (${unit})`, type: "number", step: "0.01" },
-    { key: "taxRatePct", label: isZh ? "税率 %" : "Tax Rate %", type: "number", step: "0.01" },
-    { key: "rebatePct", label: isZh ? "回扣比例 %" : "Rebate %", type: "number", step: "0.01" },
-    { key: "rebateCap", label: `${isZh ? "回扣上限" : "Rebate Cap"} (${unit})`, type: "number", step: "0.01" },
+    { key: "chargeableIncome", label: isHk ? `${isZh ? "应评税利润(估算)" : "Assessable profits (est.)"} (${unit})` : `${dict.m.taxChargeableIncome} (${unit})`, type: "number", step: "0.01" },
+    { key: "taxRatePct", label: isHk ? (isZh ? "标准税率 %（公司 16.5%）" : "Standard rate % (corporations 16.5%)") : isZh ? "税率 %" : "Tax Rate %", type: "number", step: "0.01" },
+    ...(isHk
+      ? [
+          {
+            key: "lowerRateElected",
+            label: isZh ? "选用两级制税率（首200万港元按8.25%）" : "Elect two-tiered rate (8.25% on first HK$2m)",
+            type: "select" as const,
+            options: [
+              { value: "true", label: isZh ? "是" : "Yes" },
+              { value: "false", label: isZh ? "否" : "No" },
+            ],
+            displayValue: (row: Row) => (row.lowerRateElected === false ? (isZh ? "否" : "No") : isZh ? "是" : "Yes"),
+          },
+        ]
+      : []),
+    { key: "rebatePct", label: isHk ? (isZh ? "利得税宽减比例 %" : "Profits tax reduction %") : isZh ? "回扣比例 %" : "Rebate %", type: "number", step: "0.01" },
+    { key: "rebateCap", label: `${isHk ? (isZh ? "宽减上限" : "Reduction cap") : isZh ? "回扣上限" : "Rebate Cap"} (${unit})`, type: "number", step: "0.01" },
     { key: "notes", label: isZh ? "备注" : "Notes", type: "textarea" },
   ];
-  const provisionTableKeys = ["subsidiaryId", "year", "chargeableIncome", "taxRatePct", "rebatePct", "rebateCap"];
+  const provisionTableKeys = isHk ? ["subsidiaryId", "year", "chargeableIncome", "taxRatePct", "lowerRateElected", "rebatePct", "rebateCap"] : ["subsidiaryId", "year", "chargeableIncome", "taxRatePct", "rebatePct", "rebateCap"];
 
-  const filingFields: FieldConfig[] = [
+  const filingFieldsAll: FieldConfig[] = [
     { key: "subsidiaryId", label: dict.m.taxEntity, type: "select", options: subsidiaryOrHqOptions, displayValue: subsidiaryOrHqLabel },
-    { key: "type", label: isZh ? "类型" : "Type", type: "select", options: TYPE_OPTIONS },
+    { key: "type", label: isZh ? "类型" : "Type", type: "select", options: cfg.filingTypes },
     { key: "periodLabel", label: isZh ? "期间" : "Period", type: "text" },
     { key: "dueDate", label: isZh ? "到期日" : "Due Date", type: "date" },
     { key: "filedAt", label: isZh ? "申报日期" : "Filed At", type: "date" },
@@ -204,7 +225,9 @@ export default function TaxCenterClient({
     },
     { key: "notes", label: isZh ? "备注" : "Notes", type: "textarea" },
   ];
-  const filingTableKeys = ["subsidiaryId", "type", "periodLabel", "dueDate", "outputTax", "inputTax", "amount", "status"];
+  // Hong Kong has no GST, so its filings carry no output / input tax columns.
+  const filingFields = cfg.hasGst ? filingFieldsAll : filingFieldsAll.filter((f) => f.key !== "outputTax" && f.key !== "inputTax");
+  const filingTableKeys = cfg.hasGst ? ["subsidiaryId", "type", "periodLabel", "dueDate", "outputTax", "inputTax", "amount", "status"] : ["subsidiaryId", "type", "periodLabel", "dueDate", "amount", "status"];
 
   const deferredFields: FieldConfig[] = [
     { key: "subsidiaryId", label: dict.m.taxEntity, type: "select", options: subsidiaryOrHqOptions, displayValue: subsidiaryOrHqLabel },
@@ -228,32 +251,53 @@ export default function TaxCenterClient({
     .map((p) => ({
       id: p.id,
       name: p.subsidiary ? localizedName(p.subsidiary, locale) : dict.m.taxGroupHQ,
-      ...computeCorporateTax(Number(p.chargeableIncome), Number(p.taxRatePct), Number(p.rebatePct), Number(p.rebateCap)),
+      tier1Profits: 0,
+      tier2Profits: 0,
+      lowerRateElected: p.lowerRateElected,
+      ...(isHk
+        ? computeHkProfitsTax(Number(p.chargeableIncome), Number(p.taxRatePct), p.lowerRateElected, Number(p.rebatePct), Number(p.rebateCap))
+        : computeCorporateTax(Number(p.chargeableIncome), Number(p.taxRatePct), Number(p.rebatePct), Number(p.rebateCap))),
     }))
     .sort((a, b) => b.netTaxPayable - a.netTaxPayable);
   const groupTotal = breakdownRows.reduce((sum, r) => sum + r.netTaxPayable, 0);
+  // Only ONE entity in a group of connected entities may elect the lower rate for a year of assessment.
+  const lowerRateElections = isHk ? breakdownRows.filter((r) => r.lowerRateElected && r.chargeableIncome > 0).length : 0;
 
   return (
     <div className="space-y-4">
       {tab === "provision" && (
-        <Card title={`${dict.m.taxProvisionBreakdownCard} (${latestYear})`} unit={unit}>
+        <Card title={`${isHk ? (isZh ? "利得税预提估算" : "Profits Tax Provision Estimate") : dict.m.taxProvisionBreakdownCard} (${latestYear})`} unit={unit}>
+          {lowerRateElections > 1 && (
+            <div className="mb-3 rounded-lg px-3 py-2 text-[12px] font-semibold" style={{ background: "color-mix(in srgb, var(--status-warning) 14%, transparent)", color: "var(--status-warning)" }}>
+              {isZh
+                ? `有 ${lowerRateElections} 个主体选用了两级制税率。关连实体（持股/控制超过50%）中，每个课税年度只有一个实体可选用 8.25% 的较低税率，且选择不可撤回 — 请只保留一个主体选「是」。`
+                : `${lowerRateElections} entities have elected the two-tiered rate. Among connected entities (more than 50% control), only ONE may elect the 8.25% lower rate for a year of assessment, and the election is irrevocable — keep "Yes" on a single entity only.`}
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-[12.6px]">
               <thead>
                 <tr className="text-left text-[11px] font-semibold" style={{ color: "var(--ink-400)" }}>
                   <th className="pb-2 pr-3">{dict.m.taxEntity}</th>
-                  <th className="pb-2 pr-3">{dict.m.taxChargeableIncome}</th>
-                  <th className="pb-2 pr-3">{dict.m.taxExemptAmount}</th>
+                  <th className="pb-2 pr-3">{isHk ? (isZh ? "应评税利润(估算)" : "Assessable profits (est.)") : dict.m.taxChargeableIncome}</th>
+                  {isHk ? (
+                    <>
+                      <th className="pb-2 pr-3">{isZh ? "按 8.25% 课税部分" : "Profits at 8.25%"}</th>
+                      <th className="pb-2 pr-3">{isZh ? "按 16.5% 课税部分" : "Profits at 16.5%"}</th>
+                    </>
+                  ) : (
+                    <th className="pb-2 pr-3">{dict.m.taxExemptAmount}</th>
+                  )}
                   <th className="pb-2 pr-3">{dict.m.taxGrossTax}</th>
-                  <th className="pb-2 pr-3">{dict.m.taxRebateAmount}</th>
-                  <th className="pb-2 pr-3">{dict.m.taxNetPayable}</th>
+                  <th className="pb-2 pr-3">{isHk ? (isZh ? "利得税宽减" : "Tax reduction") : dict.m.taxRebateAmount}</th>
+                  <th className="pb-2 pr-3">{isHk ? (isZh ? "预计应缴利得税" : "Est. profits tax payable") : dict.m.taxNetPayable}</th>
                   <th className="pb-2 pr-3">{dict.m.taxEffectiveRate}</th>
                 </tr>
               </thead>
               <tbody>
                 {breakdownRows.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="py-4 text-center text-[12px]" style={{ color: "var(--ink-400)" }}>
+                    <td colSpan={isHk ? 8 : 7} className="py-4 text-center text-[12px]" style={{ color: "var(--ink-400)" }}>
                       {dict.m.taxNoProvisionData}
                     </td>
                   </tr>
@@ -264,7 +308,14 @@ export default function TaxCenterClient({
                       {r.name}
                     </td>
                     <td className="whitespace-nowrap py-2 pr-3">{fmtM(r.chargeableIncome)}</td>
-                    <td className="whitespace-nowrap py-2 pr-3">{fmtM(r.exemptAmount)}</td>
+                    {isHk ? (
+                      <>
+                        <td className="whitespace-nowrap py-2 pr-3">{fmtM(r.tier1Profits)}</td>
+                        <td className="whitespace-nowrap py-2 pr-3">{fmtM(r.tier2Profits)}</td>
+                      </>
+                    ) : (
+                      <td className="whitespace-nowrap py-2 pr-3">{fmtM(r.exemptAmount)}</td>
+                    )}
                     <td className="whitespace-nowrap py-2 pr-3">{fmtM(r.grossTax)}</td>
                     <td className="whitespace-nowrap py-2 pr-3">{fmtM(r.rebateAmount)}</td>
                     <td className="whitespace-nowrap py-2 pr-3 font-bold" style={{ color: "var(--ink-900)" }}>
@@ -278,7 +329,7 @@ export default function TaxCenterClient({
                     <td className="whitespace-nowrap py-2 pr-3 font-bold" style={{ color: "var(--ink-900)" }}>
                       {isZh ? "集团合计(仅供参考)" : "Group Total (for reference only)"}
                     </td>
-                    <td colSpan={4}></td>
+                    <td colSpan={isHk ? 5 : 4}></td>
                     <td className="whitespace-nowrap py-2 pr-3 font-bold" style={{ color: "var(--ink-900)" }}>
                       {fmtM(groupTotal)}
                     </td>
@@ -289,12 +340,20 @@ export default function TaxCenterClient({
             </table>
           </div>
           <p className="mt-3 text-[11.5px] leading-relaxed" style={{ color: "var(--ink-400)" }}>
-            {isZh
-              ? "新加坡税务局(IRAS)不接受集团合并纳税申报，每个法律主体(总部及各子公司)须独立申报。以上「集团合计」仅为管理层参考汇总，并非一份实际申报。"
-              : "IRAS does not accept a consolidated group tax return — every legal entity (HQ and each subsidiary) files independently. The \"Group Total\" above is a management reference sum only, not an actual filing."}
+            {isHk
+              ? isZh
+                ? "香港税务局(IRD)不接受集团合并报税，每个法律主体(总部及各子公司)须独立提交利得税报税表(BIR51)。以上「集团合计」仅为管理层参考汇总，并非一份实际申报。"
+                : "The IRD does not accept a consolidated group return — every legal entity (HQ and each subsidiary) files its own Profits Tax Return (BIR51). The \"Group Total\" above is a management reference sum only, not an actual filing."
+              : isZh
+                ? "新加坡税务局(IRAS)不接受集团合并纳税申报，每个法律主体(总部及各子公司)须独立申报。以上「集团合计」仅为管理层参考汇总，并非一份实际申报。"
+                : "IRAS does not accept a consolidated group tax return — every legal entity (HQ and each subsidiary) files independently. The \"Group Total\" above is a management reference sum only, not an actual filing."}
           </p>
           <p className="mt-2 text-[11.5px] leading-relaxed" style={{ color: "var(--ink-400)" }}>
-            {dict.m.taxEstimateDisclaimer}
+            {isHk
+              ? isZh
+                ? `应评税利润为管理层估算值（默认取自税前利润），未计入利得税调整项：香港按地域来源原则征税（离岸/境外来源利润可申请豁免）、资本性收益不征税、会计折旧须以折旧免税额替代、不可扣减开支须加回等。法团利得税两级制：首 ${HK_LOWER_TIER_CAP.toLocaleString("en-US")} 港元按 8.25%，其余按 16.5%；亏损可无限期结转。政府每年预算案的一次性利得税宽减（如 2025/26 课税年度建议为 100%、上限 3,000 港元）只减免最终税款，不减免暂缴税，请在「宽减比例/上限」按当年已通过的数字填写。实际应缴税款以税务局评税及税务顾问计算为准。`
+                : `Assessable profits are a management ESTIMATE (defaulting to accounting profit before tax) and do not apply the profits-tax adjustments: Hong Kong taxes on a territorial basis (offshore / foreign-sourced profits can be excluded), capital gains are not taxed, accounting depreciation is replaced by depreciation allowances, and non-deductible expenses are added back. Two-tiered corporate rates: 8.25% on the first HK${HK_LOWER_TIER_CAP.toLocaleString("en-US")}, 16.5% on the rest; losses carry forward without time limit. The Budget's one-off profits tax reduction (e.g. YA 2025/26 proposed at 100%, capped at HK$3,000) reduces FINAL tax only, not provisional tax — enter the enacted figures under reduction % / cap. Actual tax is set by the IRD's assessment and your tax adviser.`
+              : dict.m.taxEstimateDisclaimer}
           </p>
         </Card>
       )}
@@ -318,7 +377,7 @@ export default function TaxCenterClient({
             <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border p-2.5" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
               <Sparkles size={14} style={{ color: "var(--cat-1)" }} />
               <span className="text-[12px] font-semibold" style={{ color: "var(--ink-900)" }}>
-                {isZh ? "从Xero已同步财务数据生成草稿" : "Generate drafts from Xero-synced financials"}
+                {isHk ? (isZh ? "从Xero已同步财务数据生成利得税草稿" : "Generate profits-tax drafts from Xero-synced financials") : isZh ? "从Xero已同步财务数据生成草稿" : "Generate drafts from Xero-synced financials"}
               </span>
               <input
                 type="number"
@@ -352,7 +411,7 @@ export default function TaxCenterClient({
               tableKeys={provisionTableKeys}
               initialRows={provisions as unknown as Row[]}
               emptyLabel={dict.m.taxNoProvisionData}
-              addLabel={isZh ? "新增预提记录" : "Add provision"}
+              addLabel={isHk ? (isZh ? "新增利得税预提记录" : "Add profits tax provision") : isZh ? "新增预提记录" : "Add provision"}
             />
           </>
         )}
@@ -361,7 +420,11 @@ export default function TaxCenterClient({
             <div className="mb-3 flex items-center gap-2 rounded-lg border p-2.5" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
               <Sparkles size={14} style={{ color: "var(--cat-1)" }} />
               <span className="text-[11.5px]" style={{ color: "var(--ink-400)" }}>
-                {isZh
+                {isHk
+                  ? isZh
+                    ? "香港没有 GST/增值税。系统按注册地版本自动跟踪：利得税报税表(BIR51，按课税年度)、雇主报税表(BIR56A + IR56B，每年4月1日发出、一个月内递交)、周年申报表(NAR1，注册成立周年日后42天内；需在「设置」填写成立日期)。到期日为估算，请按税务局当年通告核对并可直接修改。"
+                    : "Hong Kong has no GST / VAT. The system tracks, per the country edition: the Profits Tax Return (BIR51, per year of assessment), the Employer's Return (BIR56A + IR56B, issued 1 April and due within one month) and the Annual Return (NAR1, within 42 days after the incorporation anniversary — set the date under Settings). Due dates are ESTIMATES: check them against the IRD's notice each year and edit as needed."
+                  : isZh
                   ? "GST F5 行操作栏：闪光图标 = 从Xero发票/账单/贷项通知单自动估算销项/进项税额；清单图标 = 打开按 IRAS GST F5 栏位的明细清单，逐项核对（需已连接Xero并授权发票读取权限；大型主体可能需要1-3分钟）。"
                   : "GST F5 row actions: sparkle = auto-estimate output/input tax from Xero invoices, bills and credit notes; checklist = open the IRAS GST F5 breakdown to double-check every figure (needs Xero connected with the invoices-read permission; large entities can take 1-3 minutes)."}
               </span>
@@ -379,7 +442,7 @@ export default function TaxCenterClient({
               emptyLabel={dict.m.taxNoFilingData}
               addLabel={isZh ? "新增申报记录" : "Add filing"}
               rowActions={(row, refresh) => {
-                if (row.type !== "GST_F5") return null;
+                if (!cfg.hasGst || row.type !== "GST_F5") return null;
                 const id = String(row.id);
                 const busy = estimatingId === id || breakdownLoadingId === id;
                 return (
@@ -426,6 +489,75 @@ export default function TaxCenterClient({
           />
         )}
       </Card>
+
+      {isHk && (
+        <Card title={isZh ? "香港合规指引（税务局 / 公司注册处 / 强积金局 / 会计师公会）" : "Hong Kong compliance guide (IRD · Companies Registry · MPFA · HKICPA)"}>
+          <div className="space-y-3 text-[12.4px] leading-relaxed" style={{ color: "var(--ink-600)" }}>
+            {(
+              [
+                [
+                  isZh ? "利得税报税表 (BIR51)" : "Profits Tax Return (BIR51)",
+                  isZh
+                    ? "税务局每年4月发出，原则上一个月内递交；通过税务代表可按「分批延期计划」依财政年度结算日顺延：N 类（4月1日至11月30日结算）、D 类（12月结算）、M 类（1月至3月结算），具体日期由税务局每年通告。须连同经审计财务报表及税务计算表递交。香港按地域来源原则征税，法团利得税两级制（首200万港元 8.25%，其余 16.5%），关连实体只有一个可选用较低税率。"
+                    : "Issued by the IRD each April and due within one month; tax representatives can use the Block Extension Scheme by year-end code — N (year-end 1 Apr–30 Nov), D (December), M (Jan–Mar) — with exact dates set by IRD circular each year. File with the audited financial statements and a tax computation. Territorial basis of tax; corporate two-tiered rates (8.25% on the first HK$2m, 16.5% on the rest), and only one connected entity may elect the lower rate.",
+                ],
+                [
+                  isZh ? "暂缴利得税" : "Provisional profits tax",
+                  isZh
+                    ? "按上一课税年度的应评税利润计算，分期缴付；若预期本年利润低于上年应评税利润的 90% 等，可申请暂缴税「缓缴」。预算案的一次性宽减只减最终税款，不减暂缴税。"
+                    : "Calculated on the previous year's assessed profits and paid in instalments per the IRD notice; a holdover can be applied for if profits are expected to be below 90% of the prior year's, among other grounds. The Budget's one-off reduction applies to final tax only, not provisional tax.",
+                ],
+                [
+                  isZh ? "雇主报税表 (BIR56A + IR56B)" : "Employer's Return (BIR56A + IR56B)",
+                  isZh
+                    ? "每年4月1日发出，一个月内连同每名须申报雇员的 IR56B 一并递交（没有雇员也须递交并勾选「否」）；新雇员入职后3个月内递交 IR56E，雇员离职前一个月递交 IR56F。违规罚款最高 10,000 港元。"
+                    : "Issued 1 April each year and filed within one month together with an IR56B for every reportable employee (even with no employees — tick NO); IR56E within 3 months of an employee starting, IR56F one month before cessation. Non-compliance carries a fine of up to HK$10,000.",
+                ],
+                [
+                  isZh ? "强积金 (MPF)" : "Mandatory Provident Fund (MPF)",
+                  isZh
+                    ? "雇主与雇员各按有关入息的 5% 供款，月薪有关入息下限 7,100 港元、上限 30,000 港元（雇主每月最高 1,500 港元）；每月供款须于次月 10 日（遇周六/公众假期顺延）前缴交受托人，逾期附加费为欠款的 5%。强积金计入用工成本。"
+                    : "Employer and employee each contribute 5% of relevant income, between HK$7,100 and HK$30,000 a month (employer maximum HK$1,500); contributions are due on or before the 10th of the following month (next working day if it falls on a Saturday or holiday), with a 5% surcharge on late payment. MPF is counted in employment cost.",
+                ],
+                [
+                  isZh ? "周年申报表 (NAR1)" : "Annual Return (NAR1)",
+                  isZh
+                    ? "私人公司须在每年注册成立周年日后 42 天内向公司注册处递交，注册处无权延期；逾期须缴较高费用，且属刑事罪行。休眠公司可获豁免。请在「设置」填写注册成立日期以便自动跟踪。"
+                    : "A private company must file with the Companies Registry within 42 days after each incorporation anniversary; the Registrar cannot extend this, late filing costs more and is an offence. Dormant companies are exempt. Set the incorporation date under Settings so it is tracked automatically.",
+                ],
+                [
+                  isZh ? "审计与周年大会" : "Audit and AGM",
+                  isZh
+                    ? "香港公司须每年由 HKICPA 执业会计师审计。非公众公司附属公司的私人公司须在会计参照期结束后 9 个月内举行周年大会（可由书面决议取代）并向成员提交财务报表、董事会报告及核数师报告。"
+                    : "A Hong Kong company must be audited every year by a practising HKICPA certified public accountant. A private company that is not a subsidiary of a public company holds its AGM within 9 months after the accounting reference period (written resolution is possible) and lays the financial statements, directors' report and auditor's report before the members.",
+                ],
+                [
+                  isZh ? "会计准则" : "Accounting framework",
+                  isZh
+                    ? "HKFRS（与 IFRS 趋同）、HKFRS for Private Entities（以 IFRS for SMEs 为基础），或符合《公司条例》第359条报告豁免的私人公司可用 SME-FRF & SME-FRS（有附属公司/编制合并报表者不得使用）。可在「设置 → 集团设置」选择。"
+                    : "HKFRS (converged with IFRS), HKFRS for Private Entities (based on IFRS for SMEs), or — for private companies using the Companies Ordinance s.359 reporting exemption — SME-FRF & SME-FRS (not available to a company with subsidiaries or for consolidated statements). Choose under Settings → Group Settings.",
+                ],
+                [
+                  isZh ? "没有 GST / 增值税" : "No GST / VAT",
+                  isZh ? "香港不征收 GST、增值税或销售税，因此没有 GST 申报与销项/进项税额。" : "Hong Kong has no GST, VAT or sales tax, so there are no GST returns or output / input tax.",
+                ],
+              ] as [string, string][]
+            ).map(([title, body]) => (
+              <div key={title}>
+                <div className="font-bold" style={{ color: "var(--ink-900)" }}>
+                  {title}
+                </div>
+                <p>{body}</p>
+              </div>
+            ))}
+            <p className="text-[11px]" style={{ color: "var(--ink-400)" }}>
+              {isZh
+                ? "以上规则及数字已对照税务局、公司注册处、强积金计划管理局及香港会计师公会官方网页核对；预算案宽减、分批延期日期、强积金入息上下限等每年或每数年调整，请以官方最新公布为准。系统中的到期日为估算，可直接修改。"
+                : "These rules and figures were checked against the IRD, Companies Registry, MPFA and HKICPA websites; Budget reductions, Block Extension dates and the MPF income limits change every year or every few years — treat the authorities' latest notices as final. Due dates in the tracker are estimates and can be edited."}
+            </p>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

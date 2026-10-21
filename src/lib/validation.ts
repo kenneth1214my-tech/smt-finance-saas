@@ -29,6 +29,8 @@ export const registerSchema = z.object({
 // Create-a-new-company flow: no approval needed — this person becomes that company's
 // first ADMIN immediately, since there's no existing admin to approve them.
 export const createOrganizationSchema = z.object({
+  // Country edition, chosen on the registration page: drives currency, accounting framework, tax and compliance.
+  jurisdiction: z.enum(["SG", "HK"]).default("SG"),
   companyName: z.string().trim().min(1).max(80),
   name: z.string().trim().min(1).max(60),
   email: z.string().trim().email(),
@@ -281,6 +283,14 @@ export const hqBalanceSheetSchema = z.object({
   dueToSubsidiaries: z.coerce.number().default(0),
 });
 
+// Organization's country edition and accounting framework (Settings → Group Settings).
+export const jurisdictionSettingsSchema = z.object({
+  jurisdiction: z.enum(["SG", "HK"]),
+  accountingFramework: z.enum(["SFRS_I", "SFRS_SE", "HKFRS", "HKFRS_PE", "SME_FRF"]).nullable().optional(),
+  incorporationDate: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : v), z.coerce.date().nullable()),
+  registrationNo: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : v), z.string().trim().max(40).nullable()),
+});
+
 export const hqHeadcountSchema = z.object({
   headcount: z.coerce.number().int().min(0),
 });
@@ -311,12 +321,14 @@ export const corporateTaxProvisionSchema = z.object({
   taxRatePct: z.coerce.number().min(0).max(100).default(17),
   rebatePct: z.coerce.number().min(0).max(100).default(0),
   rebateCap: z.coerce.number().min(0).default(0),
+  // Hong Kong only: whether this entity elects the two-tiered (lower) rate. Accepts "true"/"false" from a select.
+  lowerRateElected: z.preprocess((v) => (v === "true" ? true : v === "false" ? false : v === "" || v === null ? undefined : v), z.boolean().optional()),
   notes: z.string().trim().max(2000).nullable().optional(),
 });
 
 export const taxFilingSchema = z.object({
   subsidiaryId: z.preprocess((v) => (v === "" ? null : v), z.string().trim().min(1).nullable().optional()),
-  type: z.enum(["ECI", "FORM_C_S", "GST_F5"]),
+  type: z.enum(["ECI", "FORM_C_S", "GST_F5", "PROFITS_TAX_RETURN", "PROVISIONAL_TAX", "EMPLOYERS_RETURN", "ANNUAL_RETURN", "BR_RENEWAL"]),
   periodLabel: z.string().trim().min(1).max(40),
   dueDate: z.coerce.date(),
   filedAt: z.coerce.date().nullable().optional(),

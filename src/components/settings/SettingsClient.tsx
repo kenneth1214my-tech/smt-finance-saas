@@ -20,6 +20,7 @@ import { parseAgingSummary } from "@/lib/aging-summary-parser";
 import type { Locale, DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { LOCALES, LOCALE_LABELS } from "@/lib/i18n/dictionaries";
 import KpiTile from "@/components/ui/KpiTile";
+import { JURISDICTION_CONFIG, FRAMEWORKS, isFrameworkAllowed, type JurisdictionCode } from "@/lib/jurisdiction";
 import Card from "@/components/ui/Card";
 import StatusPill from "@/components/ui/StatusPill";
 import CrudTable, { type FieldConfig } from "@/components/admin/CrudTable";
@@ -65,6 +66,7 @@ export default function SettingsClient({
   hqDueToSubsidiaries,
   hqHeadcount,
   hqShare,
+  jurisdictionInfo,
   hqShareCapital,
   xeroConnections,
   xeroGroupConnected,
@@ -109,6 +111,7 @@ export default function SettingsClient({
   hqDueToSubsidiaries: number;
   hqHeadcount: number;
   hqShare: { shares: string; price: string; dps: string };
+  jurisdictionInfo: { jurisdiction: string; framework: string; incorporationDate: string; registrationNo: string };
   hqShareCapital: number;
   xeroConnections: XeroConnection[];
   xeroGroupConnected: boolean;
@@ -196,6 +199,7 @@ export default function SettingsClient({
           hqDueToSubsidiaries={hqDueToSubsidiaries}
           hqHeadcount={hqHeadcount}
           hqShare={hqShare}
+          jurisdictionInfo={jurisdictionInfo}
           hqShareCapital={hqShareCapital}
           exchangeRates={exchangeRates as unknown as Row[]}
           onToast={showToast}
@@ -809,6 +813,7 @@ function CurrencyTab({
   hqDueToSubsidiaries,
   hqHeadcount,
   hqShare,
+  jurisdictionInfo,
   hqShareCapital,
   exchangeRates,
   onToast,
@@ -824,6 +829,7 @@ function CurrencyTab({
   hqDueToSubsidiaries: number;
   hqHeadcount: number;
   hqShare: { shares: string; price: string; dps: string };
+  jurisdictionInfo: { jurisdiction: string; framework: string; incorporationDate: string; registrationNo: string };
   hqShareCapital: number;
   exchangeRates: Row[];
   onToast: (m: string) => void;
@@ -847,6 +853,28 @@ function CurrencyTab({
   const [sharePrice, setSharePrice] = useState(hqShare.price);
   const [dividendPerShare, setDividendPerShare] = useState(hqShare.dps);
   const [savingShare, setSavingShare] = useState(false);
+  const [edition, setEdition] = useState<JurisdictionCode>(jurisdictionInfo.jurisdiction === "HK" ? "HK" : "SG");
+  const [framework, setFramework] = useState(jurisdictionInfo.framework);
+  const [incorporationDate, setIncorporationDate] = useState(jurisdictionInfo.incorporationDate);
+  const [registrationNo, setRegistrationNo] = useState(jurisdictionInfo.registrationNo);
+  const [savingEdition, setSavingEdition] = useState(false);
+  const editionCfg = JURISDICTION_CONFIG[edition];
+  const frameworkValue = isFrameworkAllowed(edition, framework) ? framework : editionCfg.defaultFramework;
+  async function saveEdition() {
+    setSavingEdition(true);
+    const res = await fetch("/api/admin/jurisdiction", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jurisdiction: edition, accountingFramework: frameworkValue, incorporationDate, registrationNo }),
+    });
+    setSavingEdition(false);
+    if (res.ok) {
+      onToast(isZh ? "所在地区版本与会计准则已更新" : "Country edition and accounting framework updated");
+      router.refresh();
+    } else {
+      onToast(isZh ? "保存失败" : "Could not save");
+    }
+  }
   async function saveShareData() {
     setSavingShare(true);
     const res = await fetch("/api/admin/hq-share-data", {
@@ -1140,6 +1168,62 @@ function CurrencyTab({
           {isZh
             ? "集团/总部层面的员工人数（与各子公司「子公司主数据」中的员工人数是同一类数据，但归属于总部本身）。用于统计集团整体人员编制。"
             : "Group/HQ-level headcount (the same kind of field as each subsidiary's own Headcount under Subsidiary master data, but belonging to the holding entity itself). Used to track the group's overall headcount."}
+        </p>
+      </Card>
+
+      <Card title={isZh ? "注册地版本与会计准则" : "Country edition & accounting framework"}>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1 text-[12.5px]">
+            <span className="font-semibold" style={{ color: "var(--ink-600)" }}>{isZh ? "注册地 / 版本" : "Country edition"}</span>
+            <select
+              value={edition}
+              onChange={(e) => {
+                const next = e.target.value === "HK" ? "HK" : "SG";
+                setEdition(next);
+                setFramework(JURISDICTION_CONFIG[next].defaultFramework);
+              }}
+              className="rounded-lg border px-3 py-2 text-[12.8px]"
+              style={{ borderColor: "var(--border)", background: "var(--surface)" }}
+            >
+              {(["SG", "HK"] as const).map((c) => (
+                <option key={c} value={c}>
+                  {JURISDICTION_CONFIG[c].flag} {isZh ? JURISDICTION_CONFIG[c].nameZh : JURISDICTION_CONFIG[c].nameEn}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-[12.5px]">
+            <span className="font-semibold" style={{ color: "var(--ink-600)" }}>{isZh ? "会计准则" : "Accounting framework"}</span>
+            <select value={frameworkValue} onChange={(e) => setFramework(e.target.value)} className="rounded-lg border px-3 py-2 text-[12.8px]" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+              {editionCfg.frameworks.map((f) => (
+                <option key={f} value={f}>
+                  {FRAMEWORKS[f].short} — {isZh ? FRAMEWORKS[f].nameZh : FRAMEWORKS[f].nameEn}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-[12.5px]">
+            <span className="font-semibold" style={{ color: "var(--ink-600)" }}>{isZh ? "注册成立日期" : "Date of incorporation"}</span>
+            <input type="date" value={incorporationDate} onChange={(e) => setIncorporationDate(e.target.value)} className="rounded-lg border px-3 py-2 text-[12.8px]" style={{ borderColor: "var(--border)", background: "var(--surface)" }} />
+          </label>
+          <label className="flex flex-col gap-1 text-[12.5px]">
+            <span className="font-semibold" style={{ color: "var(--ink-600)" }}>{edition === "HK" ? (isZh ? "商业登记号 / 公司注册编号" : "Business Registration / CR number") : "UEN"}</span>
+            <input value={registrationNo} onChange={(e) => setRegistrationNo(e.target.value)} className="w-52 rounded-lg border px-3 py-2 text-[12.8px]" style={{ borderColor: "var(--border)", background: "var(--surface)" }} />
+          </label>
+          <button
+            disabled={savingEdition || (edition === (jurisdictionInfo.jurisdiction === "HK" ? "HK" : "SG") && frameworkValue === (jurisdictionInfo.framework || editionCfg.defaultFramework) && incorporationDate === jurisdictionInfo.incorporationDate && registrationNo === jurisdictionInfo.registrationNo)}
+            onClick={saveEdition}
+            className="rounded-lg px-3.5 py-2 text-[12.5px] font-bold text-white disabled:opacity-50"
+            style={{ background: "var(--cat-1)" }}
+          >
+            {isZh ? "保存" : "Save"}
+          </button>
+        </div>
+        <p className="mt-2 text-[11.8px] leading-relaxed" style={{ color: "var(--ink-400)" }}>
+          {isZh ? FRAMEWORKS[frameworkValue].noteZh : FRAMEWORKS[frameworkValue].noteEn}{" "}
+          {isZh
+            ? `税务与申报按 ${editionCfg.taxAuthority.nameZh}（${editionCfg.taxAuthority.abbr}）、公司注册按 ${editionCfg.registry.nameZh}（${editionCfg.registry.abbr}）、法定报表按 ${editionCfg.companiesLawZh}。切换版本只改变税务中心、申报日历和法定报表的措辞，已有税务记录不会删除，也不会改变本位币（本位币在「货币设置」中单独设置）。`
+            : `Tax and filings follow the ${editionCfg.taxAuthority.nameEn} (${editionCfg.taxAuthority.abbr}), company registration the ${editionCfg.registry.nameEn} (${editionCfg.registry.abbr}), and statutory reports the ${editionCfg.companiesLawEn}. Switching edition changes the Tax Center, filing calendar and statutory-report wording only — existing tax records are kept and the base currency is not touched (it has its own setting).`}
         </p>
       </Card>
 
