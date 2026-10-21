@@ -27,7 +27,7 @@ export async function POST(req: Request, ctx: RouteContext<"/api/admin/requests/
     return NextResponse.json({ ok: true, approved: false });
   }
 
-  const existing = await db.user.findUnique({ where: { email: request.email } });
+  const existing = await db.user.findUnique({ where: { organizationId_email: { organizationId: request.organizationId, email: request.email } } });
   if (existing) {
     return NextResponse.json({ error: "email_taken" }, { status: 409 });
   }

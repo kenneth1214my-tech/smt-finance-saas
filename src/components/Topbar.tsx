@@ -3,6 +3,7 @@ import LanguageSwitcher from "@/components/LanguageSwitcher";
 import GlobalSearch from "@/components/GlobalSearch";
 import UserMenu from "@/components/UserMenu";
 import { getLastDataUpdate } from "@/lib/lastUpdate";
+import { getLinkedCompanies } from "@/lib/dal";
 import type { Locale, DICTIONARIES } from "@/lib/i18n/dictionaries";
 
 type Dict = (typeof DICTIONARIES)[Locale];
@@ -28,6 +29,7 @@ export default async function Topbar({
   user: { name: string; email: string; role: Role; organizationId: string };
 }) {
   const lastUpdate = await getLastDataUpdate(user.organizationId);
+  const companies = await getLinkedCompanies();
   return (
     <div
       className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-4 border-b px-[26px] py-[14px] backdrop-blur"
@@ -50,7 +52,7 @@ export default async function Topbar({
           <Clock size={13} />
           {dict.common.updateTime}: {lastUpdate ? formatUpdateTime(lastUpdate, locale) : locale === "en" ? "No data yet" : "暂无数据"}
         </div>
-        <UserMenu dict={dict} name={user.name} email={user.email} role={user.role} />
+        <UserMenu dict={dict} name={user.name} email={user.email} role={user.role} isZh={locale === "zh" || locale === "zh-Hant"} companies={companies} />
       </div>
     </div>
   );

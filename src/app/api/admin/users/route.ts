@@ -15,7 +15,7 @@ export async function POST(req: Request) {
   const parsed = createUserSchema.safeParse(raw);
   if (!parsed.success) return NextResponse.json({ error: "invalid_input", issues: parsed.error.issues }, { status: 400 });
 
-  const existing = await db.user.findUnique({ where: { email: parsed.data.email } });
+  const existing = await db.user.findUnique({ where: { organizationId_email: { organizationId: admin.organizationId, email: parsed.data.email } } });
   if (existing) return NextResponse.json({ error: "email_taken" }, { status: 409 });
 
   if (parsed.data.subsidiaryId) {

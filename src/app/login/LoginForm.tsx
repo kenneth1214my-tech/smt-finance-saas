@@ -17,6 +17,19 @@ export default function LoginForm({ dict, locale }: { dict: Dict; locale: Locale
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  // Set when this e-mail + password belongs to several companies: the user picks which one to open.
+  const [choices, setChoices] = useState<{ userId: string; company: string; role: string; current: boolean }[] | null>(null);
+
+  async function pick(userId: string) {
+    setLoading(true);
+    const res = await fetch("/api/auth/switch-company", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId }) });
+    if (res.ok) {
+      window.location.href = "/overview";
+      return;
+    }
+    setLoading(false);
+    setError(dict.auth.errInvalid);
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -29,6 +42,11 @@ export default function LoginForm({ dict, locale }: { dict: Dict; locale: Locale
     });
     setLoading(false);
     if (res.ok) {
+      const ok = await res.json().catch(() => ({}));
+      if (Array.isArray(ok.choices) && ok.choices.length > 1) {
+        setChoices(ok.choices);
+        return;
+      }
       router.push("/overview");
       router.refresh();
       return;
@@ -84,7 +102,29 @@ export default function LoginForm({ dict, locale }: { dict: Dict; locale: Locale
           </div>
         )}
 
-        <form onSubmit={submit} className="space-y-3">
+        {choices && (
+          <div className="space-y-2">
+            <div className="text-[13px] font-bold" style={{ color: "var(--ink-900)" }}>
+              {isZh ? "选择要进入的公司" : "Choose a company"}
+            </div>
+            {choices.map((c) => (
+              <button
+                key={c.userId}
+                disabled={loading}
+                onClick={() => pick(c.userId)}
+                className="flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-left text-sm font-semibold disabled:opacity-60"
+                style={{ borderColor: c.current ? "var(--cat-1)" : "var(--border-strong)", color: "var(--ink-900)" }}
+              >
+                <span>{c.company}</span>
+                <span className="text-[11px]" style={{ color: "var(--ink-400)" }}>
+                  {dict.role[c.role as keyof typeof dict.role]}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <form onSubmit={submit} className="space-y-3" hidden={!!choices}>
           <div className="space-y-1.5">
             <label className="text-xs font-bold" style={{ color: "var(--ink-600)" }}>
               {dict.auth.email}

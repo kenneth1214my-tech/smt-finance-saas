@@ -21,12 +21,12 @@ export async function POST(req: Request) {
   const org = await findOrganizationByInviteCode(inviteCode);
   if (!org) return NextResponse.json({ error: "invalid_invite_code" }, { status: 404 });
 
-  const existingUser = await db.user.findUnique({ where: { email: email.toLowerCase() } });
+  const existingUser = await db.user.findUnique({ where: { organizationId_email: { organizationId: org.id, email: email.toLowerCase() } } });
   if (existingUser) {
     return NextResponse.json({ error: "email_taken" }, { status: 409 });
   }
   const existingRequest = await db.accessRequest.findFirst({
-    where: { email: email.toLowerCase(), status: "PENDING" },
+    where: { email: email.toLowerCase(), organizationId: org.id, status: "PENDING" },
   });
   if (existingRequest) {
     return NextResponse.json({ error: "already_pending" }, { status: 409 });

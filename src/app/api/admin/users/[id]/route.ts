@@ -20,7 +20,7 @@ export async function PUT(req: Request, ctx: RouteContext<"/api/admin/users/[id]
   }
 
   if (parsed.data.email !== target.email) {
-    const existing = await db.user.findUnique({ where: { email: parsed.data.email } });
+    const existing = await db.user.findUnique({ where: { organizationId_email: { organizationId: admin.organizationId, email: parsed.data.email } } });
     if (existing) return NextResponse.json({ error: "email_taken" }, { status: 409 });
   }
 

@@ -10,7 +10,7 @@ export async function PUT(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: "invalid_input" }, { status: 400 });
 
   const email = parsed.data.email.toLowerCase();
-  const existing = await db.user.findUnique({ where: { email } });
+  const existing = await db.user.findUnique({ where: { organizationId_email: { organizationId: user.organizationId, email } } });
   if (existing && existing.id !== user.id) {
     return NextResponse.json({ error: "email_taken" }, { status: 409 });
   }

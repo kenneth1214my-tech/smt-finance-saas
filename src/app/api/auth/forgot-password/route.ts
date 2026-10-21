@@ -23,7 +23,7 @@ export async function POST(req: Request) {
 
   // Always respond ok regardless of whether the email exists — don't let this endpoint be
   // used to enumerate registered accounts.
-  const user = await db.user.findUnique({ where: { email } });
+  const user = await db.user.findFirst({ where: { email, status: "ACTIVE" }, orderBy: { lastLoginAt: { sort: "desc", nulls: "last" } } });
   if (user && user.status === "ACTIVE") {
     const token = crypto.randomBytes(32).toString("hex");
     await db.passwordResetToken.create({

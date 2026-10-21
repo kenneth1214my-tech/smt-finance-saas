@@ -15,6 +15,8 @@ function getSecretKey() {
 
 export type SessionPayload = {
   userId: string;
+  /** Other company accounts (User ids) that share this login's e-mail + password, proven at sign-in. Signed, so it can't be forged. */
+  linked?: string[];
 };
 
 export async function encryptSession(payload: SessionPayload) {
@@ -37,8 +39,8 @@ export async function decryptSession(token: string | undefined) {
   }
 }
 
-export async function createSessionCookie(userId: string) {
-  const token = await encryptSession({ userId });
+export async function createSessionCookie(userId: string, linked: string[] = []) {
+  const token = await encryptSession({ userId, linked: linked.length > 1 ? linked : undefined });
   const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE, token, {
     httpOnly: true,

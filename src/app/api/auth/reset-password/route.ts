@@ -18,9 +18,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid_or_expired_token" }, { status: 400 });
   }
 
+  const owner = await db.user.findUnique({ where: { id: record.userId }, select: { email: true } });
   const passwordHash = await hashPassword(parsed.data.newPassword);
   await db.$transaction([
-    db.user.update({ where: { id: record.userId }, data: { passwordHash } }),
+    db.user.updateMany({ where: owner ? { email: owner.email, status: "ACTIVE" } : { id: record.userId }, data: { passwordHash } }),
     db.passwordResetToken.update({ where: { id: record.id }, data: { usedAt: new Date() } }),
   ]);
 

@@ -23,6 +23,18 @@ export const getCurrentUser = cache(async () => {
   return user;
 });
 
+// Company accounts reachable from this session without signing in again (same e-mail + password at login).
+export const getLinkedCompanies = cache(async () => {
+  const session = await readSessionFromCookies();
+  if (!session?.userId) return [];
+  const ids = [...new Set([session.userId as string, ...(Array.isArray(session.linked) ? session.linked : [])])];
+  if (ids.length < 2) return [];
+  const rows = await db.user.findMany({ where: { id: { in: ids }, status: "ACTIVE" }, include: { organization: { select: { name: true, jurisdiction: true } } } });
+  return rows
+    .map((u) => ({ userId: u.id, company: u.organization.name, jurisdiction: u.organization.jurisdiction, role: u.role, current: u.id === session.userId }))
+    .sort((a, b) => a.company.localeCompare(b.company));
+});
+
 export const requireUser = cache(async () => {
   const user = await getCurrentUser();
   if (!user) redirect("/login");

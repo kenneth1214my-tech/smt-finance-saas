@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { hashPassword } from "@/lib/password";
 import { createSessionCookie } from "@/lib/session";
+import { verifyPassword } from "@/lib/password";
 import { createOrganizationSchema } from "@/lib/validation";
 import { generateInviteCode } from "@/lib/company";
 import { rateLimit, clientKeyFromRequest } from "@/lib/rateLimit";
@@ -20,8 +21,14 @@ export async function POST(req: Request) {
   const edition = getJurisdictionConfig(jurisdiction);
 
   const emailLower = email.toLowerCase();
-  const existingUser = await db.user.findUnique({ where: { email: emailLower } });
-  if (existingUser) return NextResponse.json({ error: "email_taken" }, { status: 409 });
+  // Registering a second company under an e-mail that already has an account adds it to that login — but only when the
+  // existing password is supplied, so nobody can attach a company to someone else's e-mail.
+  const existingUsers = await db.user.findMany({ where: { email: emailLower } });
+  let linkedIds: string[] = [];
+  if (existingUsers.length > 0) {
+    for (const u of existingUsers) if (u.status === "ACTIVE" && (await verifyPassword(password, u.passwordHash))) linkedIds.push(u.id);
+    if (linkedIds.length === 0) return NextResponse.json({ error: "email_taken" }, { status: 409 });
+  }
 
   const passwordHash = await hashPassword(password);
 
@@ -50,6 +57,6 @@ export async function POST(req: Request) {
   }
   if (!user) return NextResponse.json({ error: "server_error" }, { status: 500 });
 
-  await createSessionCookie(user.id);
+  await createSessionCookie(user.id, [user.id, ...linkedIds]);
   return NextResponse.json({ ok: true });
 }

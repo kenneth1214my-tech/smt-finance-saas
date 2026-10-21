@@ -18,6 +18,10 @@ export async function POST(req: Request) {
   if (!ok) return NextResponse.json({ error: "wrong_password" }, { status: 401 });
 
   const passwordHash = await hashPassword(parsed.data.newPassword);
-  await db.user.update({ where: { id: user.id }, data: { passwordHash } });
+  // Every company account under this e-mail that still has the old password moves to the new one together.
+  const siblings = await db.user.findMany({ where: { email: user.email, NOT: { id: user.id } } });
+  const sameLogin: string[] = [user.id];
+  for (const s of siblings) if (await verifyPassword(parsed.data.currentPassword, s.passwordHash)) sameLogin.push(s.id);
+  await db.user.updateMany({ where: { id: { in: sameLogin } }, data: { passwordHash } });
   return NextResponse.json({ ok: true });
 }

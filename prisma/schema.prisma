@@ -161,7 +161,7 @@ model User {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   name           String
-  email          String       @unique
+  email          String
   passwordHash   String
   role           Role         @default(VIEWER)
   status         UserStatus   @default(ACTIVE)
@@ -175,6 +175,8 @@ model User {
   importBatches       ImportBatch[]
   passwordResetTokens PasswordResetToken[]
 
+  // The same e-mail (and password) can belong to several companies — one row per company, each with its own role.
+  @@unique([organizationId, email])
   @@index([email])
   @@index([organizationId])
 }
