@@ -8,6 +8,7 @@ import Card from "@/components/ui/Card";
 import AuditedStatementsActions from "./AuditedStatementsActions";
 import { db } from "@/lib/db";
 import { getJurisdictionConfig, effectiveFramework } from "@/lib/jurisdiction";
+import { fyEndLabel, fyRangeLabel } from "@/lib/financial-year";
 
 const fmt1 = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
@@ -29,6 +30,7 @@ export default async function AuditedStatementsPage(props: PageProps<"/report/au
   const report = await computeAuditedFinancialStatements(user.organizationId, year, locale);
   const { incomeStatement: cur, priorIncomeStatement: prior, balanceSheet, companyBalanceSheet, cashFlow, priorCashFlow, equityRollForward } = report;
 
+  const fyeMonth = report.fyeMonth;
   const groupRoll = equityRollForward.find((r) => r.scope === "group")!;
   const companyRoll = equityRollForward.find((r) => r.scope === "company") ?? null;
   const companyIncome = cur.byEntity.find((e) => e.id === "__hq__") ?? null;
@@ -46,7 +48,7 @@ export default async function AuditedStatementsPage(props: PageProps<"/report/au
               {report.companyName}
             </div>
             <div className="text-[12px]" style={{ color: "var(--ink-400)" }}>
-              {isZh ? "及其子公司 (AND ITS SUBSIDIARY)" : "AND ITS SUBSIDIARY"} · {isZh ? `会计年度 ${year}` : `Fiscal Year ${year}`} · {isZh ? "生成于" : "Generated"}{" "}
+              {isZh ? "及其子公司 (AND ITS SUBSIDIARY)" : "AND ITS SUBSIDIARY"} · {isZh ? `会计年度 ${year}` : `Fiscal Year ${year}`}{fyeMonth !== 12 ? ` (${fyRangeLabel(year, fyeMonth, isZh)})` : ""} · {isZh ? "生成于" : "Generated"}{" "}
               {report.generatedAt.toISOString().slice(0, 16).replace("T", " ")}
             </div>
           </div>
@@ -89,8 +91,8 @@ export default async function AuditedStatementsPage(props: PageProps<"/report/au
           <div className="space-y-2 text-[12.6px]" style={{ color: "var(--ink-900)" }}>
             <p>
               {isZh
-                ? `管理层提呈 ${report.companyName}（"公司"）及其子公司（"集团"）截至 ${year} 年 12 月 31 日的合并财务状况表，以及截至该日止财政年度的合并综合收益表、权益变动表与合并现金流量表。`
-                : `Management presents the consolidated statement of financial position of ${report.companyName} (the "Company") and its subsidiary (the "Group") as at 31 December ${year}, and the consolidated statement of comprehensive income, statement of changes in equity and consolidated statement of cash flows for the financial year then ended.`}
+                ? `管理层提呈 ${report.companyName}（"公司"）及其子公司（"集团"）截至 ${fyEndLabel(year, fyeMonth, true)}的合并财务状况表，以及截至该日止财政年度的合并综合收益表、权益变动表与合并现金流量表。`
+                : `Management presents the consolidated statement of financial position of ${report.companyName} (the "Company") and its subsidiary (the "Group") as at ${fyEndLabel(year, fyeMonth, false)}, and the consolidated statement of comprehensive income, statement of changes in equity and consolidated statement of cash flows for the financial year then ended.`}
             </p>
             <p className="font-semibold">
               {isZh ? "管理层意见：" : "In the opinion of management:"}
@@ -118,7 +120,7 @@ export default async function AuditedStatementsPage(props: PageProps<"/report/au
         </Card>
 
         {/* Statement of Financial Position */}
-        <Card title={isZh ? `财务状况表 — 截至 ${year} 年 12 月 31 日` : `Statement of Financial Position — as at 31 December ${year}`} unit={dict.common.yi}>
+        <Card title={isZh ? `财务状况表 — 截至 ${fyEndLabel(year, fyeMonth, true)}` : `Statement of Financial Position — as at ${fyEndLabel(year, fyeMonth, false)}`} unit={dict.common.yi}>
           <div className="overflow-x-auto">
             <table className="w-full text-[12.6px]">
               <thead>
@@ -162,8 +164,12 @@ export default async function AuditedStatementsPage(props: PageProps<"/report/au
           </div>
           <p className="mt-2 text-[11px]" style={{ color: "var(--ink-400)" }}>
             {isZh
-              ? "以当前最新余额生成，非历史快照 — 与正式审计报表中按财年结账日的历史结存不同。"
-              : "Generated from the current on-file balance, not a historical year-end snapshot the way a real audited report's figures are."}
+              ? balanceSheet.fromSnapshot
+                ? "按财政年度结账日（月末）存档的资产负债表编制（来自 Xero 同步存档）。"
+                : "以当前最新余额生成，非历史快照 — 与正式审计报表中按财年结账日的历史结存不同；该财年末尚无存档资产负债表的主体用最新余额代替。"
+              : balanceSheet.fromSnapshot
+                ? "Prepared from the balance sheets archived at the financial year-end (captured from Xero on sync)."
+                : "Generated from the current on-file balance, not a historical year-end snapshot — entities with no balance sheet archived at this year-end use their latest balance instead."}
           </p>
           {(balanceSheet.investmentInSubsidiariesEliminated !== 0 || balanceSheet.intercompanyEliminated !== 0) && (
             <p className="mt-1 text-[11px]" style={{ color: "var(--ink-400)" }}>
@@ -175,7 +181,7 @@ export default async function AuditedStatementsPage(props: PageProps<"/report/au
         </Card>
 
         {/* Consolidated Statement of Comprehensive Income */}
-        <Card title={isZh ? `合并综合收益表 — 截至 ${year} 年 12 月 31 日止财政年度` : `Consolidated Statement of Comprehensive Income — FY ${year}`} unit={dict.common.yi}>
+        <Card title={isZh ? `合并综合收益表 — 截至 ${fyEndLabel(year, fyeMonth, true)}止财政年度` : `Consolidated Statement of Comprehensive Income — FY ${year}`} unit={dict.common.yi}>
           <div className="overflow-x-auto">
             <table className="w-full text-[12.6px]">
               <thead>
@@ -260,7 +266,7 @@ export default async function AuditedStatementsPage(props: PageProps<"/report/au
         </Card>
 
         {/* Statement of Changes in Equity */}
-        <Card title={isZh ? `权益变动表 — 截至 ${year} 年 12 月 31 日止财政年度` : `Statement of Changes in Equity — FY ${year}`} unit={dict.common.yi}>
+        <Card title={isZh ? `权益变动表 — 截至 ${fyEndLabel(year, fyeMonth, true)}止财政年度` : `Statement of Changes in Equity — FY ${year}`} unit={dict.common.yi}>
           <div className="overflow-x-auto">
             <table className="w-full text-[12.6px]">
               <thead>
@@ -273,7 +279,7 @@ export default async function AuditedStatementsPage(props: PageProps<"/report/au
               <tbody>
                 <tr className="border-t" style={{ borderColor: "var(--border)" }}>
                   <td className="py-2" style={{ color: "var(--ink-900)" }}>
-                    {isZh ? `期初权益（推算）` : "Opening Equity (derived)"}
+                    {groupRoll.openingFromSnapshot ? (isZh ? "期初权益（上一财年末存档）" : "Opening Equity (prior year-end balance sheet)") : isZh ? "期初权益（推算）" : "Opening Equity (derived)"}
                   </td>
                   <td className="tabular-nums py-2 text-right">{fmtM(groupRoll.openingEquity)}</td>
                   <td className="tabular-nums py-2 text-right">{companyRoll ? fmtM(companyRoll.openingEquity) : "—"}</td>
@@ -285,6 +291,15 @@ export default async function AuditedStatementsPage(props: PageProps<"/report/au
                   <td className="tabular-nums py-2 text-right">{fmtM(groupRoll.netProfit)}</td>
                   <td className="tabular-nums py-2 text-right">{companyRoll ? fmtM(companyRoll.netProfit) : "—"}</td>
                 </tr>
+                {groupRoll.openingFromSnapshot && (
+                  <tr className="border-t" style={{ borderColor: "var(--border)" }}>
+                    <td className="py-2" style={{ color: "var(--ink-900)" }}>
+                      {isZh ? "其他变动（股本、股息等）" : "Other movements (share capital, dividends, etc.)"}
+                    </td>
+                    <td className="tabular-nums py-2 text-right">{fmtM(groupRoll.otherMovements)}</td>
+                    <td className="tabular-nums py-2 text-right">{companyRoll ? fmtM(companyRoll.otherMovements) : "—"}</td>
+                  </tr>
+                )}
                 <tr className="border-t" style={{ borderColor: "var(--border)" }}>
                   <td className="py-2 font-bold" style={{ color: "var(--ink-900)" }}>
                     {isZh ? "期末权益" : "Closing Equity"}
@@ -296,14 +311,18 @@ export default async function AuditedStatementsPage(props: PageProps<"/report/au
             </table>
           </div>
           <p className="mt-2 text-[11px]" style={{ color: "var(--ink-400)" }}>
-            {isZh
+            {groupRoll.openingFromSnapshot
+              ? isZh
+                ? "「期初权益」取自上一财政年度结账日存档的资产负债表；「其他变动」为期末权益减期初权益及本年度净利润后的余额（股本、股息、储备变动等）。"
+                : "Opening Equity is the balance sheet archived at the prior financial year-end; Other movements is what remains after net profit (share capital, dividends, reserves)."
+              : isZh
               ? "「期初权益」为当前权益减去本年度净利润的推算值，假设年内无股本或储备变动 — 并非存档的历史期初余额，实际数字请以审计后账目为准。"
               : "Opening Equity is derived as current equity minus this year's net profit, assuming no share capital/reserve movements during the year — not a stored historical opening balance. Treat the audited accounts as the source of truth."}
           </p>
         </Card>
 
         {/* Consolidated Statement of Cash Flows */}
-        <Card title={isZh ? `合并现金流量表 — 截至 ${year} 年 12 月 31 日止财政年度` : `Consolidated Statement of Cash Flows — FY ${year}`} unit={dict.common.yi}>
+        <Card title={isZh ? `合并现金流量表 — 截至 ${fyEndLabel(year, fyeMonth, true)}止财政年度` : `Consolidated Statement of Cash Flows — FY ${year}`} unit={dict.common.yi}>
           <div className="overflow-x-auto">
             <table className="w-full text-[12.6px]">
               <thead>

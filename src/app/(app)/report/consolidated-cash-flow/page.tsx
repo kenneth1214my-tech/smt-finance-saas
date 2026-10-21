@@ -1,5 +1,6 @@
 import { TrendingUp, TrendingDown, Wallet, ArrowLeftRight } from "lucide-react";
 import { requireUser } from "@/lib/dal";
+import { fyRangeLabel } from "@/lib/financial-year";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary, withBaseCurrency, fmtMoney } from "@/lib/i18n/dictionaries";
 import { getBaseCurrency } from "@/lib/currency";
@@ -21,6 +22,7 @@ export default async function ConsolidatedCashFlowPage(props: PageProps<"/report
   const fmtM = (n: number) => fmtMoney(n, locale);
 
   const report = await computeConsolidatedCashFlow(user.organizationId, year, locale);
+  const fyeMonth = report.fyeMonth;
 
   const title = isZh ? "合并现金流量表" : "Consolidated Cash Flow Statement";
 
@@ -34,7 +36,7 @@ export default async function ConsolidatedCashFlowPage(props: PageProps<"/report
               {report.companyName}
             </div>
             <div className="text-[12px]" style={{ color: "var(--ink-400)" }}>
-              {isZh ? `会计年度 ${year}` : `Fiscal Year ${year}`} · {isZh ? "生成于" : "Generated"} {report.generatedAt.toISOString().slice(0, 16).replace("T", " ")}
+              {isZh ? `会计年度 ${year}` : `Fiscal Year ${year}`}{fyeMonth !== 12 ? ` (${fyRangeLabel(year, fyeMonth, isZh)})` : ""} · {isZh ? "生成于" : "Generated"} {report.generatedAt.toISOString().slice(0, 16).replace("T", " ")}
             </div>
           </div>
           <ConsolidatedCashFlowActions report={report} locale={locale} baseCurrency={baseCurrency} />

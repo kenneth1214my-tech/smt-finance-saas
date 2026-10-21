@@ -6,6 +6,8 @@ import { getDictionary, withBaseCurrency, fmtMoney } from "@/lib/i18n/dictionari
 import { getBaseCurrency } from "@/lib/currency";
 import { computeCorporateTax, effectiveFilingStatus, currentGstQuarter } from "@/lib/tax";
 import { getJurisdictionConfig, computeHkProfitsTax, hkDraftFilings } from "@/lib/jurisdiction";
+import { computeHkSchedule, type HkScheduleInput, type HkScheduleRow } from "@/lib/hk-tax-schedule";
+import { fyMonths, fyOf, fyOpen } from "@/lib/financial-year";
 import Topbar from "@/components/Topbar";
 import KpiTile from "@/components/ui/KpiTile";
 import TaxCenterClient from "./TaxCenterClient";
@@ -28,9 +30,13 @@ export default async function TaxPage() {
     db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } }),
     db.corporateTaxProvision.findMany({ where: { organizationId }, include: { subsidiary: true }, orderBy: [{ year: "desc" }] }),
     db.deferredTaxItem.findMany({ where: { organizationId }, include: { subsidiary: true }, orderBy: [{ year: "desc" }] }),
-    db.monthlyFinancial.findMany({ where: { organizationId }, select: { subsidiaryId: true, year: true, netProfit: true } }),
+    db.monthlyFinancial.findMany({ where: { organizationId }, select: { subsidiaryId: true, year: true, month: true, netProfit: true } }),
   ]);
 
+  const orgRow = await db.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { jurisdiction: true, fyeMonth: true, incorporationDate: true } });
+  // Each legal entity closes its own financial year (Subsidiary.fyeMonth; the group's for HQ) — profits are bucketed by FINANCIAL year.
+  const fyeByKey: Record<string, number> = { HQ: orgRow.fyeMonth };
+  for (const s of subsidiaries) fyeByKey[s.id] = s.fyeMonth;
   // Net profit before tax, per entity per year, straight from Xero-synced P&L data already in
   // the system (MonthlyFinancial) — feeds the "generate draft provisions" shortcut so chargeable
   // income doesn't have to be retyped from a number that's already on file.
@@ -38,7 +44,8 @@ export default async function TaxPage() {
   for (const mf of monthlyFinancials) {
     const key = mf.subsidiaryId ?? "HQ";
     netProfitByEntity[key] ??= {};
-    netProfitByEntity[key][mf.year] = (netProfitByEntity[key][mf.year] ?? 0) + Number(mf.netProfit);
+    const fy = fyOf(mf.year, mf.month, fyeByKey[key] ?? 12);
+    netProfitByEntity[key][fy] = (netProfitByEntity[key][fy] ?? 0) + Number(mf.netProfit);
   }
 
   // Auto-create this quarter's GST F5 filing as a draft (due date only, figures left for the
@@ -49,7 +56,7 @@ export default async function TaxPage() {
   // in production before that constraint existed.
   // The country edition decides which obligations are auto-tracked: Singapore → the quarterly GST F5; Hong Kong has no GST,
   // so → profits tax return (per year of assessment), Employer's Return (BIR56A) and the Annual Return (NAR1).
-  const org = await db.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { jurisdiction: true, fyeMonth: true, incorporationDate: true } });
+  const org = orgRow;
   const cfg = getJurisdictionConfig(org.jurisdiction);
   if (cfg.hasGst) {
     const gstQuarter = currentGstQuarter();
@@ -82,6 +89,52 @@ export default async function TaxPage() {
   }
   const filings = await db.taxFiling.findMany({ where: { organizationId }, include: { subsidiary: true }, orderBy: [{ dueDate: "asc" }] });
 
+  // Hong Kong: the profits tax computation schedule (accounting profit → assessable profits, losses carried forward, tax).
+  // Accounting depreciation is added back automatically, derived from the fixed-asset movement over the financial year
+  // (investing cash flow and the archived month-end balance sheets); every other adjustment is entered per provision.
+  let adjustmentRows: Awaited<ReturnType<typeof db.taxAdjustment.findMany>> = [];
+  const scheduleByProvision: Record<string, HkScheduleRow> = {};
+  if (cfg.code === "HK" && provisions.length > 0) {
+    const [adj, cashflows, balances] = await Promise.all([
+      db.taxAdjustment.findMany({ where: { organizationId } }),
+      db.cashFlowMonthly.findMany({ where: { organizationId }, select: { subsidiaryId: true, year: true, month: true, icf: true } }),
+      db.balanceSheetMonthly.findMany({ where: { organizationId }, select: { subsidiaryId: true, year: true, month: true, fixedAssets: true } }),
+    ]);
+    adjustmentRows = adj;
+    const fixedAt = new Map(balances.map((b) => [`${b.subsidiaryId ?? "HQ"}|${b.year}-${b.month}`, Number(b.fixedAssets)]));
+    const icfAt = new Map(cashflows.map((c) => [`${c.subsidiaryId ?? "HQ"}|${c.year}-${c.month}`, Number(c.icf)]));
+    const derivedDepreciation = (entityKey: string, fy: number, fye: number): number | null => {
+      let icf = 0;
+      for (const m of fyMonths(fy, fye)) {
+        const v = icfAt.get(`${entityKey}|${m.year}-${m.month}`);
+        if (v === undefined) return null; // a month of the year has no derived cash flow
+        icf += v;
+      }
+      const open = fyOpen(fy, fye);
+      const fo = fixedAt.get(`${entityKey}|${open.year}-${open.month}`);
+      const fc = fixedAt.get(`${entityKey}|${fy}-${fye}`);
+      if (fo === undefined || fc === undefined) return null; // no archived balance sheet at one of the year-ends
+      return Math.max(0, -icf - (fc - fo)); // investing outflow = additions = Δ net fixed assets + depreciation
+    };
+    const inputs: HkScheduleInput[] = provisions.map((p) => {
+      const entityKey = p.subsidiaryId ?? "HQ";
+      return {
+        id: p.id,
+        entityKey,
+        year: p.year,
+        accountingProfit: Number(p.chargeableIncome),
+        autoDepreciation: derivedDepreciation(entityKey, p.year, fyeByKey[entityKey] ?? 12),
+        adjustments: adjustmentRows.filter((a) => a.provisionId === p.id).map((a) => ({ category: a.category, amount: Number(a.amount) })),
+        lossesBroughtForward: Number(p.lossesBroughtForward),
+        standardRatePct: Number(p.taxRatePct),
+        lowerRateElected: p.lowerRateElected,
+        rebatePct: Number(p.rebatePct),
+        rebateCap: Number(p.rebateCap),
+      };
+    });
+    for (const [id, row] of computeHkSchedule(inputs)) scheduleByProvision[id] = row;
+  }
+
   const currentYear = new Date().getFullYear();
   const netPayableCurrentYear = provisions
     .filter((p) => p.year === currentYear)
@@ -89,7 +142,7 @@ export default async function TaxPage() {
       (sum, p) =>
         sum +
         (cfg.code === "HK"
-          ? computeHkProfitsTax(Number(p.chargeableIncome), Number(p.taxRatePct), p.lowerRateElected, Number(p.rebatePct), Number(p.rebateCap)).netTaxPayable
+          ? (scheduleByProvision[p.id]?.tax.netTaxPayable ?? computeHkProfitsTax(Number(p.chargeableIncome), Number(p.taxRatePct), p.lowerRateElected, Number(p.rebatePct), Number(p.rebateCap)).netTaxPayable)
           : computeCorporateTax(Number(p.chargeableIncome), Number(p.taxRatePct), Number(p.rebatePct), Number(p.rebateCap)).netTaxPayable),
       0
     );
@@ -112,6 +165,9 @@ export default async function TaxPage() {
 
         <TaxCenterClient
           jurisdiction={cfg.code}
+          adjustments={toPlain(adjustmentRows)}
+          schedule={scheduleByProvision}
+          fyeByKey={fyeByKey}
           locale={locale}
           unit={dict.common.yi}
           dict={dict}

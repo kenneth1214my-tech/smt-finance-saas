@@ -1,5 +1,6 @@
 import { Building2, Landmark, PieChart, Percent } from "lucide-react";
 import { requireUser } from "@/lib/dal";
+import { fyRangeLabel } from "@/lib/financial-year";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary, withBaseCurrency, fmtMoney } from "@/lib/i18n/dictionaries";
 import { getBaseCurrency } from "@/lib/currency";
@@ -23,6 +24,7 @@ export default async function ConsolidatedBalanceSheetPage(props: PageProps<"/re
   const fmtM = (n: number) => fmtMoney(n, locale);
 
   const report = await computeConsolidatedBalanceSheet(user.organizationId, year, locale);
+  const fyeMonth = report.fyeMonth;
 
   const title = isZh ? "合并资产负债表" : "Consolidated Balance Sheet";
 
@@ -36,9 +38,9 @@ export default async function ConsolidatedBalanceSheetPage(props: PageProps<"/re
               {report.companyName}
             </div>
             <div className="text-[12px]" style={{ color: "var(--ink-400)" }}>
-              {isZh ? `会计年度 ${year}` : `Fiscal Year ${year}`} · {isZh ? "生成于" : "Generated"} {report.generatedAt.toISOString().slice(0, 16).replace("T", " ")}
+              {isZh ? `会计年度 ${year}` : `Fiscal Year ${year}`}{fyeMonth !== 12 ? ` (${fyRangeLabel(year, fyeMonth, isZh)})` : ""} · {isZh ? "生成于" : "Generated"} {report.generatedAt.toISOString().slice(0, 16).replace("T", " ")}
               {" · "}
-              {isZh ? "以当前最新余额生成，非历史快照" : "Generated from the current on-file balance, not a historical snapshot"}
+              {report.fromSnapshot ? (isZh ? "按财政年度结账日存档的资产负债表编制" : "Prepared from the balance sheets archived at the financial year-end") : isZh ? "以当前最新余额生成，非历史快照" : "Generated from the current on-file balance, not a historical snapshot"}
               {(report.investmentInSubsidiariesEliminated !== 0 || report.intercompanyEliminated !== 0) && (
                 <>
                   {" · "}

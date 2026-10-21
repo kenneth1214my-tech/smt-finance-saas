@@ -1,5 +1,6 @@
 import { TrendingUp, Percent, Wallet, PieChart } from "lucide-react";
 import { requireUser } from "@/lib/dal";
+import { fyRangeLabel } from "@/lib/financial-year";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary, withBaseCurrency, fmtMoney } from "@/lib/i18n/dictionaries";
 import { getBaseCurrency } from "@/lib/currency";
@@ -23,6 +24,7 @@ export default async function ConsolidatedReportPage(props: PageProps<"/report/c
   const fmtM = (n: number) => fmtMoney(n, locale);
 
   const report = await computeConsolidatedIncomeStatement(user.organizationId, year, locale);
+  const fyeMonth = report.fyeMonth;
 
   const title = isZh ? "合并利润表" : "Consolidated Income Statement";
 
@@ -36,7 +38,7 @@ export default async function ConsolidatedReportPage(props: PageProps<"/report/c
               {report.companyName}
             </div>
             <div className="text-[12px]" style={{ color: "var(--ink-400)" }}>
-              {isZh ? `会计年度 ${year}` : `Fiscal Year ${year}`} · {isZh ? "生成于" : "Generated"} {report.generatedAt.toISOString().slice(0, 16).replace("T", " ")}
+              {isZh ? `会计年度 ${year}` : `Fiscal Year ${year}`}{fyeMonth !== 12 ? ` (${fyRangeLabel(year, fyeMonth, isZh)})` : ""} · {isZh ? "生成于" : "Generated"} {report.generatedAt.toISOString().slice(0, 16).replace("T", " ")}
             </div>
           </div>
           <ConsolidatedReportActions report={report} locale={locale} baseCurrency={baseCurrency} />

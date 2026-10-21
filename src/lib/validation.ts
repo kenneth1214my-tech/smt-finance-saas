@@ -322,6 +322,7 @@ export const corporateTaxProvisionSchema = z.object({
   rebatePct: z.coerce.number().min(0).max(100).default(0),
   rebateCap: z.coerce.number().min(0).default(0),
   // Hong Kong only: whether this entity elects the two-tiered (lower) rate. Accepts "true"/"false" from a select.
+  lossesBroughtForward: z.coerce.number().min(0).default(0),
   lowerRateElected: z.preprocess((v) => (v === "true" ? true : v === "false" ? false : v === "" || v === null ? undefined : v), z.boolean().optional()),
   notes: z.string().trim().max(2000).nullable().optional(),
 });
@@ -338,6 +339,14 @@ export const taxFilingSchema = z.object({
   paidAt: z.coerce.date().nullable().optional(),
   status: z.enum(["UPCOMING", "FILED", "OVERDUE", "PAID"]).default("UPCOMING"),
   notes: z.string().trim().max(2000).nullable().optional(),
+});
+
+// One adjustment on a Hong Kong profits tax provision. Amount is entered positive; the category sets its direction.
+export const taxAdjustmentSchema = z.object({
+  provisionId: z.string().trim().min(1),
+  category: z.enum(["NON_DEDUCTIBLE", "PROVISIONS", "OTHER_ADD", "OFFSHORE", "CAPITAL_GAIN", "EXEMPT_INCOME", "DEPRECIATION_ALLOWANCE", "OTHER_DEDUCT"]),
+  description: z.string().trim().min(1).max(200),
+  amount: z.coerce.number().min(0),
 });
 
 export const deferredTaxItemSchema = z.object({

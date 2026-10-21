@@ -8,7 +8,10 @@ import type { Locale, DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { fmtMoney } from "@/lib/i18n/dictionaries";
 import { localizedName } from "@/lib/localize";
 import { computeCorporateTax, effectiveFilingStatus, type TaxFilingStatusComputed } from "@/lib/tax";
-import { computeHkProfitsTax, JURISDICTION_CONFIG, HK_CORPORATE_RATE_PCT, HK_LOWER_TIER_CAP, type JurisdictionCode } from "@/lib/jurisdiction";
+import { computeHkProfitsTax, JURISDICTION_CONFIG, HK_CORPORATE_RATE_PCT, HK_LOWER_TIER_CAP, hkYearOfAssessmentLabel, hkYearOfAssessmentStart, type JurisdictionCode } from "@/lib/jurisdiction";
+import { HK_ADJUSTMENT_CATEGORIES, signedAdjustment, type HkScheduleRow } from "@/lib/hk-tax-schedule";
+import KpiBreakdown from "@/components/ui/KpiBreakdown";
+import type { BreakdownSection } from "@/lib/treasury-breakdown";
 import Card from "@/components/ui/Card";
 import CrudTable, { type FieldConfig } from "@/components/admin/CrudTable";
 import GstBreakdownPanel, { type GstBreakdownView } from "./GstBreakdownPanel";
@@ -18,6 +21,7 @@ type Row = Record<string, unknown>;
 type ProvisionRow = CorporateTaxProvision & { subsidiary: Subsidiary | null };
 type FilingRow = TaxFiling & { subsidiary: Subsidiary | null };
 type DeferredRow = DeferredTaxItem & { subsidiary: Subsidiary | null };
+type AdjustmentRow = { id: string; provisionId: string; category: string; description: string; amount: unknown };
 
 const STATUS_OPTIONS = [
   { value: "UPCOMING", label: "UPCOMING" },
@@ -34,6 +38,9 @@ const STATUS_TONE: Record<TaxFilingStatusComputed, string> = {
 
 export default function TaxCenterClient({
   jurisdiction,
+  adjustments,
+  schedule,
+  fyeByKey,
   locale,
   unit,
   dict,
@@ -44,6 +51,9 @@ export default function TaxCenterClient({
   netProfitByEntity,
 }: {
   jurisdiction: JurisdictionCode;
+  adjustments: AdjustmentRow[];
+  schedule: Record<string, HkScheduleRow>;
+  fyeByKey: Record<string, number>;
   locale: Locale;
   unit: string;
   dict: Dict;
@@ -56,7 +66,7 @@ export default function TaxCenterClient({
   const isZh = locale === "zh" || locale === "zh-Hant";
   const cfg = JURISDICTION_CONFIG[jurisdiction];
   const isHk = jurisdiction === "HK";
-  const [tab, setTab] = useState<"provision" | "filing" | "deferred">("provision");
+  const [tab, setTab] = useState<"provision" | "filing" | "adjust" | "deferred">("provision");
   const fmtM = (n: number) => fmtMoney(n, locale);
   const router = useRouter();
   const [genYear, setGenYear] = useState(String(new Date().getFullYear()));
@@ -175,7 +185,7 @@ export default function TaxCenterClient({
   const provisionFields: FieldConfig[] = [
     { key: "subsidiaryId", label: dict.m.taxEntity, type: "select", options: subsidiaryOrHqOptions, displayValue: subsidiaryOrHqLabel },
     { key: "year", label: dict.m.taxYear, type: "number" },
-    { key: "chargeableIncome", label: isHk ? `${isZh ? "应评税利润(估算)" : "Assessable profits (est.)"} (${unit})` : `${dict.m.taxChargeableIncome} (${unit})`, type: "number", step: "0.01" },
+    { key: "chargeableIncome", label: isHk ? `${isZh ? "会计税前利润(估算)" : "Accounting profit before tax (est.)"} (${unit})` : `${dict.m.taxChargeableIncome} (${unit})`, type: "number", step: "0.01" },
     { key: "taxRatePct", label: isHk ? (isZh ? "标准税率 %（公司 16.5%）" : "Standard rate % (corporations 16.5%)") : isZh ? "税率 %" : "Tax Rate %", type: "number", step: "0.01" },
     ...(isHk
       ? [
@@ -191,6 +201,7 @@ export default function TaxCenterClient({
           },
         ]
       : []),
+    ...(isHk ? [{ key: "lossesBroughtForward", label: `${isZh ? "承前亏损（本系统启用前）" : "Losses brought forward (before this system)"} (${unit})`, type: "number" as const, step: "0.01" }] : []),
     { key: "rebatePct", label: isHk ? (isZh ? "利得税宽减比例 %" : "Profits tax reduction %") : isZh ? "回扣比例 %" : "Rebate %", type: "number", step: "0.01" },
     { key: "rebateCap", label: `${isHk ? (isZh ? "宽减上限" : "Reduction cap") : isZh ? "回扣上限" : "Rebate Cap"} (${unit})`, type: "number", step: "0.01" },
     { key: "notes", label: isZh ? "备注" : "Notes", type: "textarea" },
@@ -241,6 +252,7 @@ export default function TaxCenterClient({
   const tabs: { id: typeof tab; label: string }[] = [
     { id: "provision", label: dict.m.taxProvisionCard },
     { id: "filing", label: dict.m.taxFilingCard },
+    ...(isHk ? [{ id: "adjust" as const, label: isZh ? "税务调整" : "Tax adjustments" }] : []),
     { id: "deferred", label: dict.m.taxDeferredCard },
   ];
 
@@ -263,6 +275,106 @@ export default function TaxCenterClient({
   // Only ONE entity in a group of connected entities may elect the lower rate for a year of assessment.
   const lowerRateElections = isHk ? breakdownRows.filter((r) => r.lowerRateElected && r.chargeableIncome > 0).length : 0;
 
+  // ---- Hong Kong: schedule rows for the latest year, and the pro forma computation behind each ----
+  const catLabel = (key: string) => {
+    const c = HK_ADJUSTMENT_CATEGORIES.find((x) => x.key === key);
+    return c ? (isZh ? c.labelZh : c.labelEn) : key;
+  };
+  const entityKeyOf = (p: ProvisionRow) => p.subsidiaryId ?? "HQ";
+  const yaOf = (p: ProvisionRow) => hkYearOfAssessmentLabel(hkYearOfAssessmentStart(p.year, fyeByKey[entityKeyOf(p)] ?? 12));
+  const entityNameOf = (p: ProvisionRow) => (p.subsidiary ? localizedName(p.subsidiary, locale) : dict.m.taxGroupHQ);
+  const hkRows = isHk
+    ? provisions
+        .filter((p) => p.year === latestYear)
+        .map((p) => {
+          const sch = schedule[p.id];
+          const accounting = Number(p.chargeableIncome);
+          const fallbackTax = computeHkProfitsTax(accounting, Number(p.taxRatePct), p.lowerRateElected, Number(p.rebatePct), Number(p.rebateCap));
+          return {
+            id: p.id,
+            name: entityNameOf(p),
+            ya: yaOf(p),
+            accounting,
+            adjustmentsNet: sch?.adjustmentsNet ?? 0,
+            lossesUtilised: sch?.lossesUtilised ?? 0,
+            lossesClosing: sch?.lossesClosing ?? 0,
+            assessable: sch?.assessableProfits ?? Math.max(0, accounting),
+            tax: sch?.tax ?? fallbackTax,
+          };
+        })
+        .sort((a, b) => b.tax.netTaxPayable - a.tax.netTaxPayable)
+    : [];
+  const proFormaSections: BreakdownSection[] = isHk
+    ? provisions
+        .filter((p) => p.year === latestYear)
+        .map((p) => {
+          const sch = schedule[p.id];
+          const accounting = Number(p.chargeableIncome);
+          const t = sch?.tax ?? computeHkProfitsTax(accounting, Number(p.taxRatePct), p.lowerRateElected, Number(p.rebatePct), Number(p.rebateCap));
+          const rows: BreakdownSection["rows"] = [
+            { label: isZh ? "会计税前利润" : "Accounting profit before tax", values: [accounting] },
+            {
+              label: isZh ? "＋ 会计折旧加回（自动推算）" : "+ Accounting depreciation added back (derived automatically)",
+              hint: isZh ? "取自财政年度内固定资产变动与投资现金流；缺少存档资产负债表时为 0" : "From the fixed-asset movement and investing cash flow over the financial year; 0 when the archived balance sheets are missing",
+              values: [sch?.autoDepreciation ?? 0],
+            },
+            ...(sch?.byCategory ?? []).map((c) => ({ label: catLabel(c.key), values: [signedAdjustment(c.key, c.amount)] })),
+            { label: isZh ? "＝ 亏损抵销前应评税利润" : "= Assessable profits before losses", values: [sch?.assessableBeforeLosses ?? accounting], kind: "total" as const },
+            { label: isZh ? "－ 动用承前亏损" : "− Losses brought forward utilised", hint: isZh ? `承前亏损合计 ${fmtM(sch?.lossesOpening ?? 0)}` : `Losses available: ${fmtM(sch?.lossesOpening ?? 0)}`, values: [-(sch?.lossesUtilised ?? 0)] },
+            { label: isZh ? "＝ 应评税利润" : "= Assessable profits", values: [sch?.assessableProfits ?? Math.max(0, accounting)], kind: "total" as const },
+            { label: isZh ? `首 ${HK_LOWER_TIER_CAP.toLocaleString("en-US")} 港元按 8.25% 课税` : `Tax at 8.25% on the first HK${HK_LOWER_TIER_CAP.toLocaleString("en-US")}`, hint: p.lowerRateElected ? `${fmtM(t.tier1Profits)} × 8.25%` : isZh ? "未选用两级制税率" : "Two-tiered rate not elected", values: [t.tier1Tax] },
+            { label: isZh ? "其余部分按 16.5% 课税" : "Tax at 16.5% on the rest", hint: `${fmtM(t.tier2Profits)} × ${Number(p.taxRatePct)}%`, values: [t.tier2Tax] },
+            { label: isZh ? "＝ 宽减前利得税" : "= Profits tax before reduction", values: [t.grossTax], kind: "total" as const },
+            { label: isZh ? "－ 利得税宽减" : "− Profits tax reduction", values: [-t.rebateAmount] },
+            { label: isZh ? "＝ 预计应缴利得税" : "= Estimated profits tax payable", values: [t.netTaxPayable], kind: "total" as const },
+            { label: isZh ? "结转下年亏损（承前亏损余额）" : "Losses carried forward to next year", values: [sch?.lossesClosing ?? 0], kind: "muted" as const },
+          ];
+          return {
+            id: p.id,
+            title: `${entityNameOf(p)} — FY${p.year} (${yaOf(p)})`,
+            result: t.netTaxPayable,
+            formula: isZh
+              ? "会计税前利润 ＋ 加回 － 扣除 ＝ 亏损抵销前应评税利润；减动用承前亏损 ＝ 应评税利润；按两级制税率计税，再减当年宽减"
+              : "Accounting profit + add-backs − deductions = assessable profits before losses; less losses brought forward = assessable profits; taxed at the two-tiered rates, less the year's reduction",
+            cols: [isZh ? "金额" : "Amount"],
+            rows,
+            notes: [
+              isZh
+                ? "仅会计折旧自动加回；其余调整（不可扣减开支、离岸利润、资本性收益、折旧免税额等）请在「税务调整」页逐项录入。香港对来源于境外的利润及资本性利润不征税，且境外/资本性亏损不得抵销应评税利润。"
+                : "Only accounting depreciation is added back automatically; enter every other adjustment (non-deductible items, offshore profits, capital gains, depreciation allowances…) under Tax adjustments. Hong Kong does not tax offshore or capital profits, and offshore / capital losses cannot be set off against assessable profits.",
+            ],
+          } satisfies BreakdownSection;
+        })
+    : [];
+  const adjustmentProvisionOptions = provisions.map((p) => ({ value: p.id, label: `${entityNameOf(p)} — FY${p.year}` }));
+  const adjustmentFields: FieldConfig[] = [
+    {
+      key: "provisionId",
+      label: isZh ? "对应预提记录（主体 — 财政年度）" : "Provision (entity — financial year)",
+      type: "select",
+      options: adjustmentProvisionOptions,
+      displayValue: (row) => adjustmentProvisionOptions.find((o) => o.value === row.provisionId)?.label ?? "—",
+    },
+    {
+      key: "category",
+      label: isZh ? "调整类别" : "Adjustment type",
+      type: "select",
+      options: HK_ADJUSTMENT_CATEGORIES.map((c) => ({ value: c.key, label: isZh ? c.labelZh : c.labelEn })),
+      displayValue: (row) => catLabel(String(row.category)),
+    },
+    { key: "description", label: isZh ? "说明" : "Description", type: "text" },
+    {
+      key: "amount",
+      label: `${isZh ? "金额（输入正数）" : "Amount (enter a positive number)"} (${unit})`,
+      type: "number",
+      step: "0.01",
+      displayValue: (row) => {
+        const effect = signedAdjustment(String(row.category), Number(row.amount));
+        return <span style={{ color: effect < 0 ? "var(--status-critical)" : undefined }}>{fmtM(effect)}</span>;
+      },
+    },
+  ];
+
   return (
     <div className="space-y-4">
       {tab === "provision" && (
@@ -274,6 +386,71 @@ export default function TaxCenterClient({
                 : `${lowerRateElections} entities have elected the two-tiered rate. Among connected entities (more than 50% control), only ONE may elect the 8.25% lower rate for a year of assessment, and the election is irrevocable — keep "Yes" on a single entity only.`}
             </div>
           )}
+          {isHk && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-[12.6px]">
+                <thead>
+                  <tr className="text-left text-[11px] font-semibold" style={{ color: "var(--ink-400)" }}>
+                    <th className="pb-2 pr-3">{dict.m.taxEntity}</th>
+                    <th className="pb-2 pr-3">{isZh ? "会计税前利润" : "Accounting profit"}</th>
+                    <th className="pb-2 pr-3">{isZh ? "税务调整(净)" : "Adjustments (net)"}</th>
+                    <th className="pb-2 pr-3">{isZh ? "动用承前亏损" : "Losses used"}</th>
+                    <th className="pb-2 pr-3">{isZh ? "应评税利润" : "Assessable profits"}</th>
+                    <th className="pb-2 pr-3">{isZh ? "按 8.25%" : "At 8.25%"}</th>
+                    <th className="pb-2 pr-3">{isZh ? "按 16.5%" : "At 16.5%"}</th>
+                    <th className="pb-2 pr-3">{dict.m.taxGrossTax}</th>
+                    <th className="pb-2 pr-3">{isZh ? "利得税宽减" : "Reduction"}</th>
+                    <th className="pb-2 pr-3">{isZh ? "预计应缴利得税" : "Est. profits tax payable"}</th>
+                    <th className="pb-2 pr-3">{dict.m.taxEffectiveRate}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {hkRows.length === 0 && (
+                    <tr>
+                      <td colSpan={11} className="py-4 text-center text-[12px]" style={{ color: "var(--ink-400)" }}>
+                        {dict.m.taxNoProvisionData}
+                      </td>
+                    </tr>
+                  )}
+                  {hkRows.map((r) => (
+                    <tr key={r.id} className="border-t" style={{ borderColor: "var(--border)" }}>
+                      <td className="whitespace-nowrap py-2 pr-3 font-semibold" style={{ color: "var(--ink-900)" }}>
+                        {r.name}
+                        <div className="text-[10.5px] font-normal" style={{ color: "var(--ink-400)" }}>
+                          FY{latestYear} · {r.ya}
+                        </div>
+                      </td>
+                      <td className="whitespace-nowrap py-2 pr-3">{fmtM(r.accounting)}</td>
+                      <td className="whitespace-nowrap py-2 pr-3">{fmtM(r.adjustmentsNet)}</td>
+                      <td className="whitespace-nowrap py-2 pr-3">{fmtM(r.lossesUtilised)}</td>
+                      <td className="whitespace-nowrap py-2 pr-3 font-semibold">{fmtM(r.assessable)}</td>
+                      <td className="whitespace-nowrap py-2 pr-3">{fmtM(r.tax.tier1Profits)}</td>
+                      <td className="whitespace-nowrap py-2 pr-3">{fmtM(r.tax.tier2Profits)}</td>
+                      <td className="whitespace-nowrap py-2 pr-3">{fmtM(r.tax.grossTax)}</td>
+                      <td className="whitespace-nowrap py-2 pr-3">{fmtM(r.tax.rebateAmount)}</td>
+                      <td className="whitespace-nowrap py-2 pr-3 font-bold" style={{ color: "var(--ink-900)" }}>
+                        {fmtM(r.tax.netTaxPayable)}
+                      </td>
+                      <td className="whitespace-nowrap py-2 pr-3">{r.tax.effectiveRatePct.toFixed(2)}%</td>
+                    </tr>
+                  ))}
+                  {hkRows.length > 0 && (
+                    <tr className="border-t" style={{ borderColor: "var(--border)" }}>
+                      <td className="whitespace-nowrap py-2 pr-3 font-bold" style={{ color: "var(--ink-900)" }}>
+                        {isZh ? "集团合计(仅供参考)" : "Group Total (for reference only)"}
+                      </td>
+                      <td colSpan={8}></td>
+                      <td className="whitespace-nowrap py-2 pr-3 font-bold" style={{ color: "var(--ink-900)" }}>
+                        {fmtM(hkRows.reduce((a, r) => a + r.tax.netTaxPayable, 0))}
+                      </td>
+                      <td></td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!isHk && (
           <div className="overflow-x-auto">
             <table className="w-full text-[12.6px]">
               <thead>
@@ -339,6 +516,7 @@ export default function TaxCenterClient({
               </tbody>
             </table>
           </div>
+          )}
           <p className="mt-3 text-[11.5px] leading-relaxed" style={{ color: "var(--ink-400)" }}>
             {isHk
               ? isZh
@@ -356,6 +534,16 @@ export default function TaxCenterClient({
               : dict.m.taxEstimateDisclaimer}
           </p>
         </Card>
+      )}
+
+      {tab === "provision" && isHk && proFormaSections.length > 0 && (
+        <KpiBreakdown
+          sections={proFormaSections}
+          locale={locale}
+          unit={unit}
+          heading={isZh ? "利得税计算表（Pro forma）" : "Profits tax computation (pro forma)"}
+          hint={isZh ? "点击展开，逐项查看从会计利润到应缴利得税的计算过程，便于核对 BIR51 报税表。" : "Click an entity to see the step-by-step computation from accounting profit to tax payable, to check against the BIR51 return."}
+        />
       )}
 
       <Card title={isZh ? "税务中心" : "Tax Center"}>
@@ -477,6 +665,28 @@ export default function TaxCenterClient({
               </div>
             )}
             {breakdown && <GstBreakdownPanel isZh={isZh} breakdown={breakdown} unit={unit} fmtM={fmtM} onClose={() => setBreakdown(null)} />}
+          </>
+        )}
+        {tab === "adjust" && (
+          <>
+            <div className="mb-3 rounded-lg border p-2.5 text-[11.8px] leading-relaxed" style={{ borderColor: "var(--border)", background: "var(--surface-2)", color: "var(--ink-600)" }}>
+              {isZh
+                ? "把会计利润调整为应评税利润：每一行属于某个「预提记录（主体 — 财政年度）」。会计折旧会自动加回，无需在此录入。加回类增加应评税利润，扣除类减少；金额一律输入正数，系统按类别决定方向。折旧免税额（机器及设备首年 60% + 每年 10%/20%/30%）、离岸利润及资本性利润的数字需来自你的固定资产登记册/税务顾问 — 系统无法自行判断。"
+                : "Take accounting profit to assessable profits: every row belongs to a provision (entity — financial year). Accounting depreciation is added back automatically, so don't enter it here. Add-backs increase assessable profits and deductions reduce them; always enter a positive amount — the type sets the direction. Depreciation allowances (initial 60% + annual 10/20/30% on plant & machinery), offshore profits and capital profits have to come from your fixed-asset register or tax adviser — the system cannot judge them."}
+            </div>
+            {provisions.length === 0 ? (
+              <p className="py-4 text-center text-[12px]" style={{ color: "var(--ink-400)" }}>
+                {isZh ? "请先在「预提」页创建该主体该财政年度的利得税预提记录。" : "Create the profits tax provision for the entity and financial year first (Provision tab)."}
+              </p>
+            ) : (
+              <CrudTable
+                apiBase="/api/admin/tax-adjustments"
+                fields={adjustmentFields}
+                initialRows={adjustments as unknown as Row[]}
+                emptyLabel={isZh ? "暂无税务调整" : "No tax adjustments yet"}
+                addLabel={isZh ? "新增税务调整" : "Add tax adjustment"}
+              />
+            )}
           </>
         )}
         {tab === "deferred" && (
