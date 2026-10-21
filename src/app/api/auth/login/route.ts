@@ -48,6 +48,8 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     ok: true,
+    company: (active[0] as { organization: { name: string } }).organization.name,
+    role: user.role,
     choices: active.length > 1 ? active.map((a) => ({ userId: a.id, company: a.organization.name, role: a.role, current: a.id === user.id })) : undefined,
   });
 }
