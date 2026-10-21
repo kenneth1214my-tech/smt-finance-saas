@@ -11,6 +11,9 @@ import { fyMonths, fyOf, fyOpen } from "@/lib/financial-year";
 import Topbar from "@/components/Topbar";
 import KpiTile from "@/components/ui/KpiTile";
 import TaxCenterClient from "./TaxCenterClient";
+import KpiBreakdown from "@/components/ui/KpiBreakdown";
+import { localizedName } from "@/lib/localize";
+import { buildTaxKpiSections, type TaxProvisionView } from "@/lib/tax-kpi-breakdown";
 
 // Prisma Decimal / Date instances aren't plain-serializable across the server->client
 // boundary; round-trip through JSON so every field becomes a plain string/number.
@@ -152,6 +155,46 @@ export default async function TaxPage() {
   const overdueFilings = filings.filter((f) => effectiveFilingStatus(f.status, f.dueDate, now) === "OVERDUE").length;
   const netDeferredTax = deferredItems.reduce((sum, d) => sum + Number(d.deferredTaxAmount), 0);
 
+  // ---- Workings behind the four KPI tiles (see KpiBreakdown) ----
+  const isZhLocale = locale === "zh" || locale === "zh-Hant";
+  const entityName = (s: Parameters<typeof localizedName>[0] | null) => (s ? localizedName(s, locale) : dict.m.taxGroupHQ);
+  const kpiProvisions: TaxProvisionView[] = provisions
+    .filter((p) => p.year === currentYear)
+    .map((p) => {
+      const rate = Number(p.taxRatePct);
+      const sg = computeCorporateTax(Number(p.chargeableIncome), rate, Number(p.rebatePct), Number(p.rebateCap));
+      const sch = scheduleByProvision[p.id];
+      const hkTax = sch?.tax ?? computeHkProfitsTax(Number(p.chargeableIncome), rate, p.lowerRateElected, Number(p.rebatePct), Number(p.rebateCap));
+      const base = cfg.code === "HK" ? hkTax : sg;
+      return {
+        name: entityName(p.subsidiary),
+        taxRatePct: rate,
+        chargeableIncome: Number(p.chargeableIncome),
+        exemptAmount: base.exemptAmount,
+        taxableAfterExemption: cfg.code === "HK" ? 0 : sg.taxableAfterExemption,
+        grossTax: base.grossTax,
+        rebateAmount: base.rebateAmount,
+        netTaxPayable: base.netTaxPayable,
+        effectiveRatePct: base.effectiveRatePct,
+        hk:
+          cfg.code === "HK"
+            ? { adjustmentsNet: sch?.adjustmentsNet ?? 0, lossesUtilised: sch?.lossesUtilised ?? 0, assessableProfits: sch?.assessableProfits ?? Math.max(0, Number(p.chargeableIncome)), tier1Tax: hkTax.tier1Tax, tier2Tax: hkTax.tier2Tax }
+            : undefined,
+      };
+    });
+  const typeLabelOf = new Map(cfg.filingTypes.map((t) => [t.value, t.label]));
+  const filingView = (f: (typeof filings)[number]) => ({ name: entityName(f.subsidiary), typeLabel: typeLabelOf.get(f.type) ?? f.type, periodLabel: f.periodLabel, dueDate: f.dueDate });
+  const kpiSections = buildTaxKpiSections({
+    jurisdiction: cfg.code,
+    isZh: isZhLocale,
+    year: currentYear,
+    provisions: kpiProvisions,
+    upcoming: filings.filter((f) => effectiveFilingStatus(f.status, f.dueDate, now) === "UPCOMING").map(filingView),
+    overdue: filings.filter((f) => effectiveFilingStatus(f.status, f.dueDate, now) === "OVERDUE").map(filingView),
+    deferred: deferredItems.map((d) => ({ name: entityName(d.subsidiary), year: d.year, description: d.description, temporaryDifference: Number(d.temporaryDifference), deferredTax: Number(d.deferredTaxAmount) })),
+    now,
+  });
+
   return (
     <>
       <Topbar dict={dict} locale={locale} title={dict.nav.tax} desc={cfg.code === "HK" ? (locale === "zh" || locale === "zh-Hant" ? "利得税预提、申报与缴款跟踪、递延税项及公司注册处/税务局申报日历（香港无 GST），按总部/子公司分主体记录" : "Profits tax provision, filing & payment tracking, deferred tax and the IRD / Companies Registry filing calendar (Hong Kong has no GST) — tracked per entity (HQ / subsidiary)") : dict.m.taxPageDesc} user={user} />
@@ -162,6 +205,14 @@ export default async function TaxPage() {
           <KpiTile icon={AlertTriangle} color="var(--status-critical)" label={dict.m.taxKpiOverdueFilings} value={String(overdueFilings)} />
           <KpiTile icon={Scale} color="var(--cat-2)" label={dict.m.taxKpiDeferredTax} value={fmtM(netDeferredTax)} unit={dict.common.yi} />
         </div>
+
+        <KpiBreakdown
+          sections={kpiSections}
+          locale={locale}
+          unit={baseCurrency}
+          heading={isZhLocale ? "指标明细与计算过程" : "KPI breakdown & calculation"}
+          hint={isZhLocale ? "点击展开，查看每个税务指标的计算公式、逐项明细与说明，便于复核。" : "Click a KPI to see its formula, line items and an explanation so every figure can be re-checked."}
+        />
 
         <TaxCenterClient
           jurisdiction={cfg.code}
