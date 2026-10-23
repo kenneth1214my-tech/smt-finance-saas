@@ -23,8 +23,10 @@ export default async function BudgetPage() {
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const fmtM = (n: number) => fmtMoney(n, locale);
   const currentYear = new Date().getFullYear();
-  const budgets = await db.budget.findMany({ where: { year: currentYear, organizationId }, include: { subsidiary: true }, orderBy: { subsidiary: { sortOrder: "asc" } } });
+  const subsidiaries = await db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } });
+  const budgets = await db.budget.findMany({ where: { year: currentYear, organizationId }, include: { subsidiary: true } });
   const monthly = await db.monthlyFinancial.findMany({ where: { year: currentYear, organizationId } });
+  const priorMonthly = await db.monthlyFinancial.findMany({ where: { year: currentYear - 1, organizationId } });
   // Per-entity, not a single count shared across the whole org — entities don't necessarily have
   // data entered through the same month (a newly onboarded subsidiary, or one whose sync lagged,
   // would otherwise get pro-rated against months of budget it was never expected to have hit yet).
@@ -37,13 +39,36 @@ export default async function BudgetPage() {
   const subOrHqName = (sub: { nameZh: string; nameZhTw: string; nameEn: string; nameMs: string; nameId: string } | null) =>
     sub ? localizedName(sub, locale) : isZh ? "集团总部" : "Group HQ";
 
-  const rows = budgets.map((b) => {
-    const actual = monthly.filter((m) => m.subsidiaryId === b.subsidiaryId).reduce((a, r) => a + Number(r.revenue), 0);
-    const budget = Number(b.revenueBudget);
+  const totals = (rowsIn: typeof monthly) => ({
+    revenue: rowsIn.reduce((a, m) => a + Number(m.revenue), 0),
+    cost: rowsIn.reduce((a, m) => a + Number(m.opCost), 0),
+    expense: rowsIn.reduce((a, m) => a + Number(m.sellExp) + Number(m.adminExp) + Number(m.rndExp) + Number(m.financeExp), 0),
+  });
+
+  // Every entity gets a row. Where no annual budget exists (none in the ledger, none entered), an automatic baseline is used:
+  // last year's actual revenue and cost / expense ratios — so the page never sits empty, and a real budget replaces it the
+  // moment one is synced or entered.
+  const entities: { sub: (typeof subsidiaries)[number] | null }[] = [{ sub: null }, ...subsidiaries.map((s) => ({ sub: s }))];
+  const rows = entities.map(({ sub }) => {
+    const subId = sub?.id ?? null;
+    const b = budgets.find((x) => x.subsidiaryId === subId);
+    const now = totals(monthly.filter((m) => m.subsidiaryId === subId));
+    const prev = totals(priorMonthly.filter((m) => m.subsidiaryId === subId));
+    let budget = b ? Number(b.revenueBudget) : 0;
+    let costRate = b ? Number(b.costBudgetRate) : 0;
+    let expRate = b ? Number(b.expenseBudgetRate) : 0;
+    let auto = false;
+    if (!(budget > 0) && prev.revenue > 0) {
+      budget = prev.revenue;
+      costRate = (prev.cost / prev.revenue) * 100;
+      expRate = (prev.expense / prev.revenue) * 100;
+      auto = true;
+    }
+    const actual = now.revenue;
     const rate = budget > 0 ? (actual / budget) * 100 : 0;
-    const proRatedBudget = budget * (monthCountFor(b.subsidiaryId) / 12);
+    const proRatedBudget = budget * (monthCountFor(subId) / 12);
     const variance = actual - proRatedBudget;
-    return { sub: b.subsidiary, budget, actual, rate, variance, costRate: Number(b.costBudgetRate), expRate: Number(b.expenseBudgetRate) };
+    return { sub, budget, actual, rate, variance, costRate, expRate, auto, actualCost: now.cost, actualExp: now.expense, budgetCost: proRatedBudget * (costRate / 100), budgetExp: proRatedBudget * (expRate / 100) };
   });
 
   const totalActual = rows.reduce((a, r) => a + r.actual, 0);
@@ -52,9 +77,14 @@ export default async function BudgetPage() {
   // Only entities that actually have a budget count — an entity with none is "not budgeted", not "0%".
   const budgeted = rows.filter((r) => r.budget > 0);
   const hasBudget = budgeted.length > 0;
-  const avgCostRate = hasBudget ? budgeted.reduce((a, r) => a + r.costRate, 0) / budgeted.length : 0;
-  const avgExpRate = hasBudget ? budgeted.reduce((a, r) => a + r.expRate, 0) / budgeted.length : 0;
+  const anyAuto = budgeted.some((r) => r.auto);
+  const allAuto = hasBudget && budgeted.every((r) => r.auto);
+  // Execution = what was actually spent ÷ the budget for the months elapsed (budget revenue × the budgeted cost / expense ratio).
+  const sumOf = (pick: (r: (typeof rows)[number]) => number) => budgeted.reduce((a, r) => a + pick(r), 0);
+  const costExec = hasBudget && sumOf((r) => r.budgetCost) > 0 ? (sumOf((r) => r.actualCost) / sumOf((r) => r.budgetCost)) * 100 : null;
+  const expExec = hasBudget && sumOf((r) => r.budgetExp) > 0 ? (sumOf((r) => r.actualExp) / sumOf((r) => r.budgetExp)) * 100 : null;
   const noBudgetNote = isZh ? "未设置年度预算 — 在 Xero 建立预算后将自动同步" : "No annual budget set — it syncs automatically once one is created in Xero";
+  const autoNote = isZh ? "自动基准：以去年实际数为预算（账中尚无年度预算）" : "Automatic baseline: last year's actuals (no annual budget on file)";
   const forecast = orgMonthCount > 0 ? (totalActual / orgMonthCount) * 12 : 0;
 
   return (
@@ -62,9 +92,9 @@ export default async function BudgetPage() {
       <Topbar dict={dict} locale={locale} title={dict.nav.budget} desc={dict.nav.budget} user={user} />
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <KpiTile icon={Target} color="var(--cat-1)" label={dict.m.revBudgetRate} value={hasBudget ? fmt1(revBudgetRate) : "—"} unit={hasBudget ? "%" : undefined} note={hasBudget ? `${isZh ? "年度目标" : "Annual target"} ${fmtM(totalBudget)} ${dict.common.yi}` : noBudgetNote} />
-          <KpiTile icon={TrendingDown} color="var(--cat-2)" label={dict.m.costBudgetRate} value={hasBudget ? fmt1(avgCostRate) : "—"} unit={hasBudget ? "%" : undefined} />
-          <KpiTile icon={Wallet} color="var(--cat-4)" label={dict.m.expBudgetRate} value={hasBudget ? fmt1(avgExpRate) : "—"} unit={hasBudget ? "%" : undefined} />
+          <KpiTile icon={Target} color="var(--cat-1)" label={dict.m.revBudgetRate} value={hasBudget ? fmt1(revBudgetRate) : "—"} unit={hasBudget ? "%" : undefined} note={hasBudget ? `${isZh ? "年度目标" : "Annual target"} ${fmtM(totalBudget)} ${dict.common.yi}${anyAuto ? ` · ${allAuto ? autoNote : isZh ? "部分主体使用去年实际数作基准" : "some entities use last year's actuals as the baseline"}` : ""}` : noBudgetNote} />
+          <KpiTile icon={TrendingDown} color="var(--cat-2)" label={dict.m.costBudgetRate} value={costExec === null ? "—" : fmt1(costExec)} unit={costExec === null ? undefined : "%"} note={costExec === null ? undefined : isZh ? "实际成本 ÷ 已过月份的成本预算" : "Actual cost ÷ cost budget for the months elapsed"} />
+          <KpiTile icon={Wallet} color="var(--cat-4)" label={dict.m.expBudgetRate} value={expExec === null ? "—" : fmt1(expExec)} unit={expExec === null ? undefined : "%"} note={expExec === null ? undefined : isZh ? "实际费用 ÷ 已过月份的费用预算" : "Actual expenses ÷ expense budget for the months elapsed"} />
           <KpiTile icon={TrendingUp} color="var(--status-good)" label={dict.m.revForecast} value={fmtM(forecast)} unit={dict.common.yi} />
         </div>
 
@@ -151,7 +181,14 @@ export default async function BudgetPage() {
                     <td className="py-2.5 font-semibold" style={{ color: "var(--ink-900)" }}>
                       {subOrHqName(r.sub)}
                     </td>
-                    <td className="tabular-nums py-2.5 text-right">{r.budget > 0 ? fmtM(r.budget) : "—"}</td>
+                    <td className="tabular-nums py-2.5 text-right">
+                      {r.budget > 0 ? fmtM(r.budget) : "—"}
+                      {r.auto && (
+                        <span className="ml-1 text-[10.5px] font-semibold" style={{ color: "var(--ink-400)" }} title={autoNote}>
+                          ({isZh ? "自动" : "auto"})
+                        </span>
+                      )}
+                    </td>
                     <td className="tabular-nums py-2.5 text-right">{fmtM(r.actual)}</td>
                     <td className="tabular-nums py-2.5 text-right font-bold" style={{ color: r.budget <= 0 ? "var(--ink-400)" : r.variance >= 0 ? "var(--delta-up)" : "var(--delta-down)" }}>
                       {r.budget > 0 ? `${r.variance >= 0 ? "+" : ""}${fmtM(r.variance)}` : "—"}
