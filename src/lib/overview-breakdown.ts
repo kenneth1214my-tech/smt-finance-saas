@@ -53,7 +53,7 @@ export function buildPnlSections(args: {
   const last = revenue.length - 1;
   const neg = (xs: number[]) => xs.map((x) => -x + 0);
   const ratio = (a: number[], b: number[]) => a.map((x, i) => (b[i] > 0 ? (x / b[i]) * 100 : null));
-  const lastRatio = (a: number[], b: number[]) => (b[last] > 0 ? (a[last] / b[last]) * 100 : 0);
+  const lastRatio = (a: number[], b: number[]) => ((b[last] ?? 0) > 0 ? ((a[last] ?? 0) / (b[last] ?? 0)) * 100 : 0);
 
   // Months that actually have data (a full-year view of the current year only has data up to the latest month).
   const dataMonths = rows.map((r) => r.month).filter((m) => m >= fromMonth && m <= toMonth);
@@ -77,7 +77,7 @@ export function buildPnlSections(args: {
   sections.push({
     id: "revenue",
     title: t("营业收入", "Revenue"),
-    result: revenue[last],
+    result: (revenue[last] ?? 0),
     formula: t("所选期间内每个主体各月利润表营业收入（来自月度利润表）之和", "Sum of each entity's monthly P&L revenue over the selected period (from the monthly P&L)"),
     cols,
     rows: [...monthlyRows((r) => num(r.revenue)), { label: t("营业收入合计", "Total revenue"), values: revenue, kind: "total" }],
@@ -87,7 +87,7 @@ export function buildPnlSections(args: {
   sections.push({
     id: "cost",
     title: t("营业成本", "Cost of sales"),
-    result: cost[last],
+    result: (cost[last] ?? 0),
     formula: t("所选期间内每个主体各月利润表销售成本（毛利润线以上的成本）之和", "Sum of each entity's monthly cost of sales (costs above the gross-profit line) over the selected period"),
     cols,
     rows: [...monthlyRows((r) => num(r.opCost)), { label: t("营业成本合计", "Total cost of sales"), values: cost, kind: "total" }],
@@ -150,7 +150,7 @@ export function buildPnlSections(args: {
     sections.push({
       id: "perhead",
       title: t("人均创收", "Revenue per employee"),
-      result: hc[last] > 0 ? revenue[last] / hc[last] : 0,
+      result: (hc[last] ?? 0) > 0 ? (revenue[last] ?? 0) / (hc[last] ?? 0) : 0,
       formula: t("营业收入 ÷ 员工人数（取期间内最新一个月的人数；该月未填则用主体当前人数）", "Revenue ÷ headcount (latest month in the period; the entity's current headcount if that month has none)"),
       cols,
       rows: [
@@ -197,7 +197,7 @@ export function buildPnlSections(args: {
   sections.push({
     id: "op",
     title: t("营业利润", "Operating profit"),
-    result: opProfit[last],
+    result: (opProfit[last] ?? 0),
     formula: t("营业收入 − 销售成本 − 销售费用 − 管理费用 − 研发费用 − 财务费用", "Revenue − cost of sales − selling − administrative − R&D − finance expenses"),
     cols,
     rows: [
@@ -216,7 +216,7 @@ export function buildPnlSections(args: {
   sections.push({
     id: "np",
     title: t("净利润", "Net profit"),
-    result: net[last],
+    result: (net[last] ?? 0),
     formula: t("利润表净利润；与营业利润的差额为其他收入/支出及税项", "Net profit as reported in the monthly P&L; the gap to operating profit is other income / expenses and tax"),
     cols,
     rows: [

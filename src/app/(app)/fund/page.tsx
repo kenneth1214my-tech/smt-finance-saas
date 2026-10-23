@@ -204,6 +204,7 @@ export default async function FundPage(props: PageProps<"/fund">) {
       { label: t("合计", "Total"), values: [cashBalance, borrowings, cashBalance - borrowings], kind: "total" as const },
     ],
   };
+  const noCashFlowShort = isZh ? "暂无现金流数据" : "No cash-flow data";
   const noFlowSection = (id: string, title: string): BreakdownSection => ({ id, title, result: null, formula: noCashFlowShort, cols: [], rows: [] });
   const breakdownSections: BreakdownSection[] = [
     cashSection,
@@ -224,7 +225,6 @@ export default async function FundPage(props: PageProps<"/fund">) {
     return acc;
   }, []);
 
-  const noCashFlowShort = isZh ? "暂无现金流数据" : "No cash-flow data";
   const noCashFlowLong = isZh
     ? "本年度暂无现金流量数据。系统会在每次 Xero 同步时，根据月末资产负债表与利润表自动推算经营/投资/筹资现金流（间接法）——请在「设置 → 数据导入与ERP」点击「全部同步」；如未连接 Xero，也可通过「批量导入 → 月度现金流」手动导入。"
     : "No cash-flow data for this year yet. It is derived automatically on every Xero sync from month-end balance sheets and the P&L (indirect method) — click Sync all under Settings → Data Import & ERP, or import monthly cash flow manually if Xero isn't connected.";
