@@ -1,5 +1,7 @@
 "use client";
 
+import AcraXbrlPanel from "./AcraXbrlPanel";
+
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sparkles, ListChecks } from "lucide-react";
@@ -49,6 +51,7 @@ export default function TaxCenterClient({
   filings,
   deferredItems,
   netProfitByEntity,
+  acra,
 }: {
   jurisdiction: JurisdictionCode;
   adjustments: AdjustmentRow[];
@@ -62,11 +65,13 @@ export default function TaxCenterClient({
   filings: FilingRow[];
   deferredItems: DeferredRow[];
   netProfitByEntity: Record<string, Record<number, number>>;
+  /** Singapore only: ACRA XBRL tab settings (financial years offered, default year, stored UEN). */
+  acra?: { years: number[]; defaultYear: number; registrationNo: string | null };
 }) {
   const isZh = locale === "zh" || locale === "zh-Hant";
   const cfg = JURISDICTION_CONFIG[jurisdiction];
   const isHk = jurisdiction === "HK";
-  const [tab, setTab] = useState<"provision" | "filing" | "adjust" | "deferred">("provision");
+  const [tab, setTab] = useState<"provision" | "filing" | "adjust" | "deferred" | "xbrl">("provision");
   const fmtM = (n: number) => fmtMoney(n, locale);
   const router = useRouter();
   const [genYear, setGenYear] = useState(String(new Date().getFullYear()));
@@ -254,6 +259,7 @@ export default function TaxCenterClient({
     { id: "filing", label: dict.m.taxFilingCard },
     ...(isHk ? [{ id: "adjust" as const, label: isZh ? "税务调整" : "Tax adjustments" }] : []),
     { id: "deferred", label: dict.m.taxDeferredCard },
+    ...(acra ? [{ id: "xbrl" as const, label: isZh ? "XBRL（ACRA 申报）" : "XBRL (ACRA filing)" }] : []),
   ];
 
   const currentYear = new Date().getFullYear();
@@ -689,6 +695,7 @@ export default function TaxCenterClient({
             )}
           </>
         )}
+        {tab === "xbrl" && acra && <AcraXbrlPanel locale={locale} years={acra.years} defaultYear={acra.defaultYear} registrationNo={acra.registrationNo} />}
         {tab === "deferred" && (
           <CrudTable
             apiBase="/api/admin/deferred-tax-items"

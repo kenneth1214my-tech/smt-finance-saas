@@ -14,6 +14,7 @@ import TaxCenterClient from "./TaxCenterClient";
 import KpiBreakdown from "@/components/ui/KpiBreakdown";
 import { localizedName } from "@/lib/localize";
 import { buildTaxKpiSections, type TaxProvisionView } from "@/lib/tax-kpi-breakdown";
+import { currentFiscal } from "@/lib/fiscal";
 
 // Prisma Decimal / Date instances aren't plain-serializable across the server->client
 // boundary; round-trip through JSON so every field becomes a plain string/number.
@@ -195,6 +196,16 @@ export default async function TaxPage() {
     now,
   });
 
+  // Singapore: ACRA XBRL tab — the latest financial year that has already ended is the one being filed.
+  let acra: { years: number[]; defaultYear: number; registrationNo: string | null } | undefined;
+  if (cfg.code === "SG") {
+    const org = await db.organization.findUniqueOrThrow({ where: { id: user.organizationId }, select: { fyeMonth: true, registrationNo: true } });
+    const cur = currentFiscal(org.fyeMonth, now);
+    const curEnd = new Date(Date.UTC(cur.year, org.fyeMonth, 0)); // last day of the financial year-end month
+    const defaultYear = curEnd.getTime() < now.getTime() ? cur.year : cur.year - 1;
+    acra = { years: [cur.year, cur.year - 1, cur.year - 2, cur.year - 3, cur.year - 4], defaultYear, registrationNo: org.registrationNo };
+  }
+
   return (
     <>
       <Topbar dict={dict} locale={locale} title={dict.nav.tax} desc={cfg.code === "HK" ? (locale === "zh" || locale === "zh-Hant" ? "利得税预提、申报与缴款跟踪、递延税项及公司注册处/税务局申报日历（香港无 GST），按总部/子公司分主体记录" : "Profits tax provision, filing & payment tracking, deferred tax and the IRD / Companies Registry filing calendar (Hong Kong has no GST) — tracked per entity (HQ / subsidiary)") : dict.m.taxPageDesc} user={user} />
@@ -227,6 +238,7 @@ export default async function TaxPage() {
           filings={toPlain(filings)}
           deferredItems={toPlain(deferredItems)}
           netProfitByEntity={netProfitByEntity}
+          acra={acra}
         />
       </div>
     </>
