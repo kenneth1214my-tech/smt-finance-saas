@@ -86,11 +86,17 @@ export function buildRatioSections(args: {
   // ---------- Labour cost productivity ----------
   const revenue = withTotal(entities.map((e) => r2(e.revenue)));
   const empCost = withTotal(entities.map((e) => r2(e.employmentCost)));
-  const labourComplete = entities.filter((e) => e.revenue !== 0).every((e) => e.employmentComplete);
-  const labourPerEntity = entities.map((e) => (e.employmentComplete && e.employmentCost > 0 ? e.revenue / e.employmentCost : null));
-  const totalCost = entities.reduce((a, e) => a + e.employmentCost, 0);
-  const totalRev = entities.reduce((a, e) => a + e.revenue, 0);
-  const labourGroup = labourComplete && totalCost > 0 ? totalRev / totalCost : null;
+  const labourOk = (e: (typeof entities)[number]) => e.employmentComplete && e.employmentCost > 0;
+  const labourPerEntity = entities.map((e) => (labourOk(e) ? e.revenue / e.employmentCost : null));
+  // The group figure uses only the entities that have employment-cost records for the whole period — an entity with none
+  // (e.g. a subsidiary whose staff are paid through HQ) is left out of both revenue and cost rather than blanking the group,
+  // (keeping its revenue in while its cost is missing would overstate the ratio).
+  const labourUsed = entities.filter(labourOk);
+  const labourLeftOut = entities.filter((e) => e.revenue !== 0 && !labourOk(e));
+  const labourComplete = labourLeftOut.length === 0;
+  const totalCost = labourUsed.reduce((a, e) => a + e.employmentCost, 0);
+  const totalRev = labourUsed.reduce((a, e) => a + e.revenue, 0);
+  const labourGroup = labourUsed.length > 0 && totalCost > 0 ? totalRev / totalCost : null;
   const labourVals = multi ? [...labourPerEntity, labourGroup] : labourPerEntity;
   const labour = labourGroup;
 
@@ -162,7 +168,11 @@ export function buildRatioSections(args: {
       { label: t("劳动成本生产率", "Labour cost productivity"), values: labourVals, kind: "total", format: "x" },
     ],
     notes: [
-      ...(labourComplete ? [] : [labourMissingNote ?? t("部分月份尚未识别到用工成本，因此不显示比率（否则会虚高）— 下一次 Xero 同步后补全，请点击「全部同步」。", "Employment cost has not been picked up for some months yet, so the ratio is not shown (it would be overstated) — it fills in on the next Xero sync; click Sync all.")]),
+      ...(labourComplete
+        ? []
+        : labourGroup !== null
+          ? [t(`以下主体没有用工成本记录，集团比率只按有记录的主体（收入与用工成本均只计入这些主体）计算：${labourLeftOut.map((e) => e.label).join("、")}。`, `These entities have no employment-cost records, so the group ratio uses only the entities that do (both their revenue and cost): ${labourLeftOut.map((e) => e.label).join(", ")}.`)]
+          : [labourMissingNote ?? t("部分月份尚未识别到用工成本，因此不显示比率（否则会虚高）— 下一次 Xero 同步后补全，请点击「全部同步」。", "Employment cost has not been picked up for some months yet, so the ratio is not shown (it would be overstated) — it fills in on the next Xero sync; click Sync all.")]),
       t("用工成本取自利润表中名称含工资/薪酬/CPF/奖金/董事酬金/员工等字样的科目，不含销售佣金。", "Employment cost = P&L accounts whose names mention salary / wages / CPF / bonus / remuneration / staff etc.; sales commissions are not included."),
     ],
     explanation: {
