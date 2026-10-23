@@ -1,6 +1,6 @@
 "use client";
 
-import AcraXbrlPanel from "./AcraXbrlPanel";
+import AcraXbrlPanel, { type AcraEntityOption } from "./AcraXbrlPanel";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -66,7 +66,7 @@ export default function TaxCenterClient({
   deferredItems: DeferredRow[];
   netProfitByEntity: Record<string, Record<number, number>>;
   /** Singapore only: ACRA XBRL tab settings (financial years offered, default year, stored UEN). */
-  acra?: { years: number[]; defaultYear: number; registrationNo: string | null };
+  acra?: { years: number[]; defaultYear: number; entities: AcraEntityOption[] };
 }) {
   const isZh = locale === "zh" || locale === "zh-Hant";
   const cfg = JURISDICTION_CONFIG[jurisdiction];
@@ -695,7 +695,7 @@ export default function TaxCenterClient({
             )}
           </>
         )}
-        {tab === "xbrl" && acra && <AcraXbrlPanel locale={locale} years={acra.years} defaultYear={acra.defaultYear} registrationNo={acra.registrationNo} />}
+        {tab === "xbrl" && acra && <AcraXbrlPanel locale={locale} years={acra.years} defaultYear={acra.defaultYear} entities={acra.entities} />}
         {tab === "deferred" && (
           <CrudTable
             apiBase="/api/admin/deferred-tax-items"

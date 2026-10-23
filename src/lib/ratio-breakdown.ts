@@ -34,6 +34,8 @@ export interface RatioValues {
   de: number | null;
   eps: number | null;
   pe: number | null;
+  /** True when P/E is blank only because the last 12 months were loss-making (n/m), not because data is missing. */
+  peLossMaking: boolean;
   yield: number | null;
 }
 
@@ -402,5 +404,5 @@ export function buildRatioSections(args: {
     },
   });
 
-  return { sections, values: { labour, current, quick, de, eps, pe, yield: yieldPct } };
+  return { sections, values: { labour, current, quick, de, eps, pe, peLossMaking: marketValue !== null && ttmComplete && ttmNetProfit <= 0, yield: yieldPct } };
 }

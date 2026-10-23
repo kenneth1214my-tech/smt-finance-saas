@@ -227,6 +227,8 @@ model Subsidiary {
   // Month this subsidiary's own financial year ends in (1-12) — subsidiaries in a group can
   // legitimately close on different dates (e.g. a foreign subsidiary on a local statutory FYE).
   fyeMonth       Int          @default(12)
+  // The subsidiary's own UEN — each Singapore legal entity files its ACRA XBRL statements under its own number.
+  registrationNo String?
   // Current headcount snapshot for this entity (a company-profile fact, edited directly here) —
   // distinct from MonthlyFinancial.headcount, which is a per-month historical value feeding the
   // Revenue per Employee trend and can differ from today's count.

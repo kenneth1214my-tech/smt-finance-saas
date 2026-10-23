@@ -6,14 +6,16 @@ import { buildAcraPack, type AcraPack, type AcraScope, type AcraTemplate, type B
 type Num = { toString(): string } | number | null | undefined;
 const n = (v: Num) => Number(v ?? 0);
 
-// Company level = the legal entity itself (the group/HQ rows); group = every entity added together (no eliminations).
-const scopeWhere = (scope: AcraScope) => (scope === "company" ? { subsidiaryId: null } : {});
+/** Which legal entity the statements are for: the company itself ("hq"), the sum of everything ("group"), or one subsidiary (its id). */
+export type AcraEntity = "hq" | "group" | (string & {});
 
-async function periodOf(organizationId: string, year: number, fyeMonth: number, scope: AcraScope): Promise<PeriodInput> {
+const entityFilter = (entity: AcraEntity) => (entity === "group" ? {} : entity === "hq" ? { subsidiaryId: null } : { subsidiaryId: entity });
+
+async function periodOf(organizationId: string, year: number, fyeMonth: number, entity: AcraEntity): Promise<PeriodInput> {
   const [monthly, cash, balances] = await Promise.all([
-    db.monthlyFinancial.findMany({ where: { organizationId, ...fyWhere(year, fyeMonth), ...scopeWhere(scope) } }),
-    db.cashFlowMonthly.findMany({ where: { organizationId, ...fyWhere(year, fyeMonth), ...scopeWhere(scope) } }),
-    db.balanceSheetMonthly.findMany({ where: { organizationId, year, month: fyeMonth, ...scopeWhere(scope) } }),
+    db.monthlyFinancial.findMany({ where: { organizationId, ...fyWhere(year, fyeMonth), ...entityFilter(entity) } }),
+    db.cashFlowMonthly.findMany({ where: { organizationId, ...fyWhere(year, fyeMonth), ...entityFilter(entity) } }),
+    db.balanceSheetMonthly.findMany({ where: { organizationId, year, month: fyeMonth, ...entityFilter(entity) } }),
   ]);
 
   const sum = <T,>(rows: T[], pick: (r: T) => Num) => rows.reduce((a, r) => a + n(pick(r)), 0);
@@ -57,15 +59,20 @@ async function periodOf(organizationId: string, year: number, fyeMonth: number, 
   return { pnl, bs, cf };
 }
 
-export async function loadAcraPack(opts: { organizationId: string; year: number; scope: AcraScope; template?: AcraTemplate; isZh: boolean }): Promise<AcraPack> {
+export async function loadAcraPack(opts: { organizationId: string; year: number; entity: AcraEntity; template?: AcraTemplate; isZh: boolean }): Promise<AcraPack> {
   const org = await db.organization.findUniqueOrThrow({ where: { id: opts.organizationId } });
-  const [current, prior] = await Promise.all([periodOf(org.id, opts.year, org.fyeMonth, opts.scope), periodOf(org.id, opts.year - 1, org.fyeMonth, opts.scope)]);
+  const sub = opts.entity === "hq" || opts.entity === "group" ? null : await db.subsidiary.findFirst({ where: { id: opts.entity, organizationId: org.id } });
+  if (opts.entity !== "hq" && opts.entity !== "group" && !sub) throw new Error("unknown_entity");
+  // Each legal entity files with its own name, UEN and year-end (a subsidiary can close on a different month).
+  const fyeMonth = sub ? sub.fyeMonth : org.fyeMonth;
+  const [current, prior] = await Promise.all([periodOf(org.id, opts.year, fyeMonth, opts.entity), periodOf(org.id, opts.year - 1, fyeMonth, opts.entity)]);
+  const scope: AcraScope = opts.entity === "group" ? "group" : "company";
   return buildAcraPack({
-    entityName: org.name,
-    uen: org.registrationNo,
-    scope: opts.scope,
+    entityName: sub ? sub.nameEn : org.name,
+    uen: sub ? sub.registrationNo : org.registrationNo,
+    scope,
     year: opts.year,
-    fyeMonth: org.fyeMonth,
+    fyeMonth,
     template: opts.template,
     accountingFramework: org.accountingFramework === "SFRS_SE" ? "SFRS_SE" : "SFRS_I",
     isZh: opts.isZh,

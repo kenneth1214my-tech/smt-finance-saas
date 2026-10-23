@@ -5,24 +5,30 @@ import { CheckCircle2, XCircle, MinusCircle, Download, FileCode2, Loader2 } from
 import { fmtMoney, type Locale } from "@/lib/i18n/dictionaries";
 import type { AcraPack, AcraLine, LineSection } from "@/lib/acra-xbrl";
 
-type Scope = "company" | "group";
+export interface AcraEntityOption {
+  id: string; // "hq" | "group" | subsidiary id
+  name: string;
+  uen: string | null;
+}
 type TemplateChoice = "auto" | "full" | "simplified";
 
 // Tax Center → "XBRL (ACRA)": the company's statements laid out line by line against the ACRA taxonomy tags, the checks that
 // they add up, and the .xbrl / CSV downloads for BizFinx.
-export default function AcraXbrlPanel({ locale, years, defaultYear, registrationNo }: { locale: Locale; years: number[]; defaultYear: number; registrationNo: string | null }) {
+export default function AcraXbrlPanel({ locale, years, defaultYear, entities, defaultEntity = "hq" }: { locale: Locale; years: number[]; defaultYear: number; entities: AcraEntityOption[]; defaultEntity?: string }) {
   const isZh = locale === "zh" || locale === "zh-Hant";
   const t = (zh: string, en: string) => (isZh ? zh : en);
   const [year, setYear] = useState(defaultYear);
-  const [scope, setScope] = useState<Scope>("company");
+  const [entity, setEntity] = useState(defaultEntity);
   const [tpl, setTpl] = useState<TemplateChoice>("auto");
   const [pack, setPack] = useState<AcraPack | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
-  const [uen, setUen] = useState(registrationNo ?? "");
+  const [uens, setUens] = useState<Record<string, string>>(() => Object.fromEntries(entities.map((e) => [e.id, e.uen ?? ""])));
+  const uen = uens[entity] ?? "";
+  const setUen = (v: string) => setUens((m) => ({ ...m, [entity]: v }));
   const [uenMsg, setUenMsg] = useState("");
 
-  const query = `year=${year}&scope=${scope}${tpl === "auto" ? "" : `&template=${tpl}`}`;
+  const query = `year=${year}&entity=${encodeURIComponent(entity)}${tpl === "auto" ? "" : `&template=${tpl}`}`;
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -40,7 +46,7 @@ export default function AcraXbrlPanel({ locale, years, defaultYear, registration
 
   async function saveUen() {
     setUenMsg("");
-    const res = await fetch("/api/admin/registration-no", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ registrationNo: uen }) });
+    const res = await fetch("/api/admin/registration-no", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ registrationNo: uen, subsidiaryId: entity === "hq" || entity === "group" ? undefined : entity }) });
     if (res.ok) {
       setUenMsg(t("已保存。", "Saved."));
       await load();
@@ -78,9 +84,12 @@ export default function AcraXbrlPanel({ locale, years, defaultYear, registration
             </option>
           ))}
         </select>
-        <select className={selectCls} style={selectStyle} value={scope} onChange={(e) => setScope(e.target.value as Scope)} aria-label={t("范围", "Scope")}>
-          <option value="company">{t("公司层面（法律主体本身）", "Company level (the legal entity)")}</option>
-          <option value="group">{t("集团合计（未抵销）", "Group total (no eliminations)")}</option>
+        <select className={selectCls} style={selectStyle} value={entity} onChange={(e) => setEntity(e.target.value)} aria-label={t("主体", "Entity")}>
+          {entities.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.id === "group" ? t("集团合计（未抵销）", "Group total (no eliminations)") : e.id === "hq" ? `${e.name} — ${t("总公司", "company")}` : `${e.name} — ${t("子公司（独立申报）", "subsidiary (files separately)")}`}
+            </option>
+          ))}
         </select>
         <select className={selectCls} style={selectStyle} value={tpl} onChange={(e) => setTpl(e.target.value as TemplateChoice)} aria-label={t("XBRL 模板", "XBRL template")}>
           <option value="auto">{t("模板：按 ACRA 规模标准自动判断", "Template: decided by ACRA's size test")}</option>
@@ -115,7 +124,7 @@ export default function AcraXbrlPanel({ locale, years, defaultYear, registration
             </div>
             <div className="rounded-lg border p-3" style={{ borderColor: "var(--border)" }}>
               <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: "var(--ink-400)" }}>
-                {t("公司 UEN（ACRA 申报必填）", "Company UEN (required by ACRA)")}
+                {t("该主体的 UEN（ACRA 申报必填）", "This entity's UEN (required by ACRA)")}
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-2">
                 <input

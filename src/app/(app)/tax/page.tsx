@@ -197,13 +197,22 @@ export default async function TaxPage() {
   });
 
   // Singapore: ACRA XBRL tab — the latest financial year that has already ended is the one being filed.
-  let acra: { years: number[]; defaultYear: number; registrationNo: string | null } | undefined;
+  let acra: { years: number[]; defaultYear: number; entities: { id: string; name: string; uen: string | null }[] } | undefined;
   if (cfg.code === "SG") {
-    const org = await db.organization.findUniqueOrThrow({ where: { id: user.organizationId }, select: { fyeMonth: true, registrationNo: true } });
+    const org = await db.organization.findUniqueOrThrow({ where: { id: user.organizationId }, select: { fyeMonth: true, registrationNo: true, name: true } });
     const cur = currentFiscal(org.fyeMonth, now);
     const curEnd = new Date(Date.UTC(cur.year, org.fyeMonth, 0)); // last day of the financial year-end month
     const defaultYear = curEnd.getTime() < now.getTime() ? cur.year : cur.year - 1;
-    acra = { years: [cur.year, cur.year - 1, cur.year - 2, cur.year - 3, cur.year - 4], defaultYear, registrationNo: org.registrationNo };
+    // Each legal entity files its own statements: the company itself, every subsidiary, plus the (unfileable) group total.
+    acra = {
+      years: [cur.year, cur.year - 1, cur.year - 2, cur.year - 3, cur.year - 4],
+      defaultYear,
+      entities: [
+        { id: "hq", name: org.name, uen: org.registrationNo },
+        ...subsidiaries.map((s) => ({ id: s.id, name: s.nameEn, uen: s.registrationNo })),
+        { id: "group", name: dict.m.taxGroupHQ, uen: org.registrationNo },
+      ],
+    };
   }
 
   return (
