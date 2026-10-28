@@ -3,8 +3,8 @@
 //
 //  - Spend / receive money (BankTransactions): bank-paid purchases and receipts coded with GST.
 //  - Manual journals: ledger adjustments that carry a tax code.
-//  - Expense claims: staff purchase claims. Xero's granular scopes expose no expense-claim endpoint, so they are read from the
-//    ledger journals (source type EXPCLAIM) — the only place they are reachable.
+//  - Expense claims: staff claims entered through Xero's own expenses (Receipts). That endpoint is deprecated and needs its own
+//    permission, so it is optional; claims paid as spend money or entered as bills are already covered by the other sources.
 //
 // Anything GST-relevant that this file cannot reach is reported by the caller as a coverage gap, never silently dropped.
 
@@ -141,89 +141,45 @@ export async function fetchManualJournalsForGst(get: XeroGet, from: Date, to: Da
 }
 
 // ---------------------------------------------------------------------------------------------
-// Expense claims, via the ledger journals
+// Expense claims (Xero's own claims / receipts)
 // ---------------------------------------------------------------------------------------------
-interface XeroJournal {
-  JournalID?: string;
-  JournalNumber?: number;
-  JournalDate?: string;
+interface XeroReceipt {
+  ReceiptID?: string;
+  ReceiptNumber?: string | number;
   Reference?: string;
-  SourceType?: string;
-  JournalLines?: { NetAmount?: number; GrossAmount?: number; TaxAmount?: number; TaxType?: string; AccountType?: string }[];
+  Date?: string;
+  DateString?: string;
+  Status?: string;
+  Contact?: { Name?: string };
+  User?: { FirstName?: string; LastName?: string };
+  LineAmountTypes?: string;
+  LineItems?: { TaxType?: string; LineAmount?: number; TaxAmount?: number }[];
 }
 
-export function expenseClaimJournalsToDocs(journals: XeroJournal[], from: string, to: string): GstRawDoc[] {
+export function receiptsToDocs(items: XeroReceipt[]): GstRawDoc[] {
   const out: GstRawDoc[] = [];
-  for (const j of journals) {
-    if (j.SourceType !== "EXPCLAIM") continue;
-    const date = parseXeroDate(j.JournalDate) ?? "";
-    if (!date || date < from || date > to) continue;
-    // Only the expense lines carry a tax code; the GST control line and the payable line to the employee are coded NONE.
-    const lines: GstRawLine[] = (j.JournalLines ?? [])
-      .filter((l) => hasTaxCode(l.TaxType))
-      .map((l) => ({ taxType: l.TaxType ?? "", lineAmount: l.NetAmount ?? 0, taxAmount: l.TaxAmount ?? 0 }));
-    if (lines.length === 0) continue;
-    out.push({ kind: "ExpenseClaim", direction: "PURCHASE", number: j.Reference || `J${j.JournalNumber ?? ""}`, contact: "Expense claim", date, status: "POSTED", currency: "", currencyRate: 1, lineAmountTypes: "Exclusive", lines });
+  for (const r of items) {
+    // Only approved receipts reach the ledger; drafts, submitted, declined and voided ones carry no GST yet.
+    if (r.Status !== "AUTHORISED") continue;
+    const who = [r.User?.FirstName, r.User?.LastName].filter(Boolean).join(" ");
+    out.push({
+      kind: "ExpenseClaim",
+      direction: "PURCHASE",
+      number: String(r.ReceiptNumber ?? r.Reference ?? (r.ReceiptID ?? "").slice(0, 8)),
+      contact: r.Contact?.Name || who || "Expense claim",
+      date: parseXeroDate(r.DateString ?? r.Date) ?? "",
+      status: r.Status ?? "",
+      currency: "",
+      currencyRate: 1,
+      lineAmountTypes: r.LineAmountTypes ?? "Exclusive",
+      lines: (r.LineItems ?? []).map((l) => ({ taxType: l.TaxType ?? "", lineAmount: l.LineAmount ?? 0, taxAmount: l.TaxAmount ?? 0 })),
+    });
   }
   return out;
 }
 
-export interface JournalScanResult {
-  docs: GstRawDoc[];
-  calls: number;
-  truncated: boolean;
-}
-
-/**
- * Journals can only be listed by journal number ("offset"), not by date. The scan therefore (1) gallops to find the end of the
- * ledger, (2) binary-searches for the first journal dated on or after `from` minus a safety margin, then (3) reads forward to the
- * end — forward, not just to `to`, because a claim approved or back-dated after the quarter closed gets a LATER journal number.
- * `maxCalls` bounds the cost; hitting it is reported as a truncated scan rather than a silent gap.
- */
-export async function scanExpenseClaimJournals(get: XeroGet, from: Date, to: Date, maxCalls = 220): Promise<JournalScanResult> {
-  let calls = 0;
-  const fromIso = iso(from);
-  const toIso = iso(to);
-  const margin = new Date(from.getTime() - 45 * 86_400_000);
-  const marginIso = iso(margin);
-  const page = async (offset: number): Promise<XeroJournal[]> => {
-    calls++;
-    const body = (await get(`${API}/Journals?offset=${offset}`)) as { Journals?: XeroJournal[] };
-    return body.Journals ?? [];
-  };
-
-  // 1. find an offset past the start date (gallop), then 2. binary-search the earliest offset worth reading from
-  let lo = 0; // known: journals after `lo` start before the margin (or lo is 0)
-  let hi = -1; // known: first journal after `hi` is on/after the margin
-  let probe = 100;
-  while (hi < 0 && calls < maxCalls) {
-    const first = (await page(probe))[0];
-    if (!first) { hi = probe; break; } // ran off the end
-    const d = parseXeroDate(first.JournalDate) ?? "";
-    if (d >= marginIso) hi = probe;
-    else { lo = probe; probe *= 2; }
-  }
-  if (hi < 0) hi = probe;
-  while (hi - lo > 100 && calls < maxCalls) {
-    const mid = Math.floor((lo + hi) / 2);
-    const first = (await page(mid))[0];
-    const d = first ? parseXeroDate(first.JournalDate) ?? "" : "9999-12-31";
-    if (d >= marginIso) hi = mid;
-    else lo = mid;
-  }
-
-  // 3. read forward from `lo` to the end of the ledger
-  const docs: GstRawDoc[] = [];
-  let offset = lo;
-  let truncated = false;
-  for (;;) {
-    if (calls >= maxCalls) { truncated = true; break; }
-    const rows = await page(offset);
-    if (rows.length === 0) break;
-    docs.push(...expenseClaimJournalsToDocs(rows, fromIso, toIso));
-    const last = Math.max(...rows.map((r) => r.JournalNumber ?? 0));
-    if (last <= offset) break; // no progress guard
-    offset = last;
-  }
-  return { docs, calls, truncated };
+export async function fetchReceiptsForGst(get: XeroGet, from: Date, to: Date): Promise<GstRawDoc[]> {
+  const where = `Status=="AUTHORISED"&&Date>=${dtArg(from)}&&Date<=${dtArg(to)}`;
+  const body = (await get(`${API}/Receipts?where=${encodeURIComponent(where)}`)) as { Receipts?: XeroReceipt[] };
+  return receiptsToDocs(body.Receipts ?? []);
 }

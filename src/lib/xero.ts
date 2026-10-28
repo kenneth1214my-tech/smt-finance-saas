@@ -1,6 +1,6 @@
 import "server-only";
 import type { GstRawDoc, GstCoverageItem, GstSourceKey } from "@/lib/gst";
-import { fetchBankTransactionsForGst, fetchManualJournalsForGst, scanExpenseClaimJournals } from "@/lib/gst-sources";
+import { fetchBankTransactionsForGst, fetchManualJournalsForGst, fetchReceiptsForGst } from "@/lib/gst-sources";
 
 const AUTHORIZE_URL = "https://login.xero.com/identity/connect/authorize";
 const TOKEN_URL = "https://identity.xero.com/connect/token";
@@ -25,22 +25,26 @@ const CONNECTIONS_URL = "https://api.xero.com/connections";
 const SCOPES =
   "offline_access accounting.contacts.read accounting.invoices.read accounting.reports.profitandloss.read accounting.reports.balancesheet.read accounting.reports.aged.read accounting.reports.budgetsummary.read accounting.reports.banksummary.read";
 
-// Extra read permissions the complete GST F5 needs beyond invoices: spend / receive money, manual journals (ledger adjustments) and
-// the ledger journals that expense claims are posted to. Kept OUT of the default scope list on purpose — Xero rejects an unknown scope
-// name for the whole Connect flow (see the history above), so these are only requested from the explicit "full GST access" reconnect,
-// and a rejection there can never break the normal connection.
-const GST_FULL_SCOPES = "accounting.banktransactions.read accounting.manualjournals.read accounting.journals.read";
+// Extra read permissions the complete GST F5 needs beyond invoices: spend / receive money and manual journals (ledger adjustments).
+// Kept OUT of the default scope list on purpose — Xero rejects an unknown or restricted scope for the whole Connect flow (see the
+// history above), so these are only requested from the explicit "full GST access" reconnect, and a rejection there can never break
+// the normal connection. NOTE: accounting.journals.read was tried first and Xero refuses it ("invalid_scope"): the Journals endpoint is
+// restricted to Advanced-tier apps, which is why expense claims are read through Receipts instead.
+const GST_FULL_SCOPES = "accounting.banktransactions.read accounting.manualjournals.read";
+// Optional: Xero's own expense claims / receipts (a deprecated endpoint with its own scope). Asked for separately so that, if Xero
+// does not offer it to this app, the main full-GST-access reconnect still works.
+const GST_CLAIMS_SCOPE = "accounting.classicexpenses.read";
 
 export function isXeroConfigured(): boolean {
   return Boolean(process.env.XERO_CLIENT_ID && process.env.XERO_CLIENT_SECRET);
 }
 
-export function buildXeroAuthorizeUrl(redirectUri: string, state: string, opts: { gstFull?: boolean } = {}): string {
+export function buildXeroAuthorizeUrl(redirectUri: string, state: string, opts: { gstFull?: boolean; gstClaims?: boolean } = {}): string {
   const params = new URLSearchParams({
     response_type: "code",
     client_id: process.env.XERO_CLIENT_ID ?? "",
     redirect_uri: redirectUri,
-    scope: opts.gstFull ? `${SCOPES} ${GST_FULL_SCOPES}` : SCOPES,
+    scope: opts.gstClaims ? `${SCOPES} ${GST_FULL_SCOPES} ${GST_CLAIMS_SCOPE}` : opts.gstFull ? `${SCOPES} ${GST_FULL_SCOPES}` : SCOPES,
     state,
   });
   return `${AUTHORIZE_URL}?${params.toString()}`;
@@ -311,9 +315,6 @@ export async function fetchXeroGstDocuments(accessToken: string, tenantId: strin
   };
   await extra("bank", async () => ({ docs: await fetchBankTransactionsForGst(get, fromDate, toDate) }));
   await extra("manual_journals", async () => ({ docs: await fetchManualJournalsForGst(get, fromDate, toDate) }));
-  await extra("expense_claims", async () => {
-    const r = await scanExpenseClaimJournals(get, fromDate, toDate);
-    return { docs: r.docs, truncated: r.truncated ? "the journal scan stopped at Xero's call limit, so older or later claims may be missing" : undefined };
-  });
+  await extra("expense_claims", async () => ({ docs: await fetchReceiptsForGst(get, fromDate, toDate) }));
   return { docs, coverage };
 }

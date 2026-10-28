@@ -14,7 +14,7 @@ export const GST_SOURCE_LABEL: Record<GstSourceKey, { en: string; zh: string }> 
   credit_notes: { en: "Credit notes", zh: "贷项通知单" },
   bank: { en: "Spend / receive money (bank transactions)", zh: "收付款（银行交易）" },
   manual_journals: { en: "Manual journals (ledger adjustments)", zh: "手工日记账（账务调整）" },
-  expense_claims: { en: "Expense claims (staff purchase claims)", zh: "费用报销（员工采购报销）" },
+  expense_claims: { en: "Expense claims (Xero Expenses receipts)", zh: "费用报销（Xero Expenses 收据）" },
 };
 export function gstSourceOf(kind: GstDocKind): GstSourceKey {
   return kind === "Invoice" ? "invoices" : kind === "CreditNote" ? "credit_notes" : kind === "BankTransaction" ? "bank" : kind === "ManualJournal" ? "manual_journals" : "expense_claims";
@@ -240,7 +240,8 @@ export function buildGstBreakdown(docs: GstRawDoc[], coverage: GstCoverageItem[]
   }
   for (const c of coverage) {
     const label = GST_SOURCE_LABEL[c.source].en;
-    if (c.status === "missing_scope") warnings.push(`NOT INCLUDED — ${label}: this Xero connection has no permission to read them, so any GST on them is missing from Boxes 5–7. Reconnect Xero with full GST access to include them.`);
+    if (c.status === "missing_scope" && c.source === "expense_claims") warnings.push(`NOT INCLUDED — ${label}: this Xero connection has no permission to read Xero's own expense claims. This only matters if staff claims are entered through Xero Expenses — claims paid as spend money, or entered as bills, are already counted.`);
+    else if (c.status === "missing_scope") warnings.push(`NOT INCLUDED — ${label}: this Xero connection has no permission to read them, so any GST on them is missing from Boxes 5–7. Reconnect Xero with full GST access to include them.`);
     else if (c.status === "error") warnings.push(`NOT INCLUDED — ${label}: Xero returned an error (${c.message ?? "unknown"}), so any GST on them is missing from Boxes 5–7. Try again.`);
     else if (c.status === "truncated") warnings.push(`PARTLY INCLUDED — ${label}: ${c.message ?? "the scan stopped early to stay within Xero's call limits"}.`);
   }

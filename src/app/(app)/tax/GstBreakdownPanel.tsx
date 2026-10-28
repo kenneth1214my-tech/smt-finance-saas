@@ -87,15 +87,27 @@ export default function GstBreakdownPanel({
             );
           })}
         </ul>
-        {data.coverage.some((c) => c.status === "missing_scope") && (
-          <a
-            href={`/api/admin/erp/xero/connect?gst=full${breakdown.subsidiaryId ? `&subsidiaryId=${breakdown.subsidiaryId}` : ""}`}
-            className="mt-2 inline-block rounded-md px-3 py-1.5 text-[12px] font-bold text-white"
-            style={{ background: "var(--cat-1)" }}
-          >
-            {isZh ? "重新连接 Xero 并授权完整 GST 读取权限" : "Reconnect Xero with full GST access"}
-          </a>
-        )}
+        <div className="mt-2 flex flex-wrap gap-2">
+          {data.coverage.some((c) => c.status === "missing_scope" && c.source !== "expense_claims") && (
+            <a
+              href={`/api/admin/erp/xero/connect?gst=full${breakdown.subsidiaryId ? `&subsidiaryId=${breakdown.subsidiaryId}` : ""}`}
+              className="inline-block rounded-md px-3 py-1.5 text-[12px] font-bold text-white"
+              style={{ background: "var(--cat-1)" }}
+            >
+              {isZh ? "授权完整 GST 读取权限（银行交易 + 手工日记账）" : "Grant full GST access (bank transactions + manual journals)"}
+            </a>
+          )}
+          {data.coverage.some((c) => c.status === "missing_scope" && c.source === "expense_claims") && (
+            <a
+              href={`/api/admin/erp/xero/connect?gst=claims${breakdown.subsidiaryId ? `&subsidiaryId=${breakdown.subsidiaryId}` : ""}`}
+              className="inline-block rounded-md border px-3 py-1.5 text-[12px] font-bold"
+              style={{ borderColor: "var(--border-strong)", color: "var(--ink-900)" }}
+              title={isZh ? "仅当员工报销通过 Xero Expenses 录入时需要" : "Only needed if staff claims are entered through Xero Expenses"}
+            >
+              {isZh ? "另外授权读取 Xero 费用报销（可选）" : "Also allow Xero expense claims (optional)"}
+            </a>
+          )}
+        </div>
       </div>
 
       {data.sources.length > 0 && (

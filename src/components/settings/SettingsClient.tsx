@@ -1893,7 +1893,7 @@ function DataTab({
                     href="/api/admin/erp/xero/connect?gst=full"
                     className="rounded-lg border px-3 py-1.5 text-[12px] font-bold"
                     style={{ borderColor: "var(--border-strong)", color: "var(--ink-900)" }}
-                    title={isZh ? "无需断开：重新授权，额外读取银行交易、手工日记账和费用报销，使 GST F5 完整" : "No need to disconnect: re-authorise to also read bank transactions, manual journals and expense claims so the GST F5 is complete"}
+                    title={isZh ? "无需断开：重新授权，额外读取银行交易和手工日记账，使 GST F5 完整" : "No need to disconnect: re-authorise to also read bank transactions and manual journals so the GST F5 is complete"}
                   >
                     {isZh ? "授权完整 GST 权限" : "Grant full GST access"}
                   </a>
@@ -1911,7 +1911,7 @@ function DataTab({
                   <a href="/api/admin/erp/xero/connect" className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white" style={{ background: "var(--cat-1)" }}>
                     {isZh ? "连接 Xero" : "Connect Xero"}
                   </a>
-                  <a href="/api/admin/erp/xero/connect?gst=full" className="rounded-lg border px-3 py-1.5 text-[12px] font-bold" style={{ borderColor: "var(--border-strong)", color: "var(--ink-900)" }} title={isZh ? "额外授权读取银行交易、手工日记账和费用报销，使 GST F5 完整" : "Also grants read access to bank transactions, manual journals and expense claims so the GST F5 is complete"}>
+                  <a href="/api/admin/erp/xero/connect?gst=full" className="rounded-lg border px-3 py-1.5 text-[12px] font-bold" style={{ borderColor: "var(--border-strong)", color: "var(--ink-900)" }} title={isZh ? "额外授权读取银行交易和手工日记账，使 GST F5 完整" : "Also grants read access to bank transactions and manual journals so the GST F5 is complete"}>
                     {isZh ? "连接 Xero（含完整 GST 权限）" : "Connect Xero (full GST access)"}
                   </a>
                 </div>
@@ -1988,7 +1988,7 @@ function DataTab({
                         href={`/api/admin/erp/xero/connect?subsidiaryId=${sub.id}&gst=full`}
                         className="rounded-lg border px-3 py-1.5 text-[12px] font-bold"
                         style={{ borderColor: "var(--border-strong)", color: "var(--ink-900)" }}
-                        title={isZh ? "无需断开：重新授权，额外读取银行交易、手工日记账和费用报销，使 GST F5 完整" : "No need to disconnect: re-authorise to also read bank transactions, manual journals and expense claims so the GST F5 is complete"}
+                        title={isZh ? "无需断开：重新授权，额外读取银行交易和手工日记账，使 GST F5 完整" : "No need to disconnect: re-authorise to also read bank transactions and manual journals so the GST F5 is complete"}
                       >
                         {isZh ? "授权完整 GST 权限" : "Grant full GST access"}
                       </a>
@@ -2014,7 +2014,7 @@ function DataTab({
                         href={`/api/admin/erp/xero/connect?subsidiaryId=${sub.id}&gst=full`}
                         className="rounded-lg border px-3 py-1.5 text-[12px] font-bold"
                         style={{ borderColor: "var(--border-strong)", color: "var(--ink-900)" }}
-                        title={isZh ? "额外授权读取银行交易、手工日记账和费用报销，使 GST F5 完整" : "Also grants read access to bank transactions, manual journals and expense claims so the GST F5 is complete"}
+                        title={isZh ? "额外授权读取银行交易和手工日记账，使 GST F5 完整" : "Also grants read access to bank transactions and manual journals so the GST F5 is complete"}
                       >
                         {isZh ? "连接 Xero（含完整 GST 权限）" : "Connect Xero (full GST access)"}
                       </a>

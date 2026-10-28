@@ -86,8 +86,8 @@ export default function TaxCenterClient({
   function explainGstError(body: { error?: string; message?: string }): string {
     return body.error === "xero_not_connected"
       ? isZh
-        ? "该主体尚未连接Xero，或需要重新连接——请在「设置 → 数据导入与ERP」使用「连接 Xero（含完整 GST 权限）」，以便 GST F5 包含银行交易、手工日记账和费用报销"
-        : "Xero isn't connected for this entity, or needs reconnecting — use \"Connect Xero (full GST access)\" under Settings → Data Import & ERP so the GST F5 also covers bank transactions, manual journals and expense claims"
+        ? "该主体尚未连接Xero，或需要重新连接——请在「设置 → 数据导入与ERP」使用「连接 Xero（含完整 GST 权限）」，以便 GST F5 包含银行交易和手工日记账"
+        : "Xero isn't connected for this entity, or needs reconnecting — use \"Connect Xero (full GST access)\" under Settings → Data Import & ERP so the GST F5 also covers bank transactions and manual journals"
       : body.error === "insufficient_scope"
         ? isZh
           ? "该主体的 Xero 连接权限不足（建立于新增发票读取权限之前）— 请在「数据导入与ERP」中断开并重新连接该主体的 Xero"
