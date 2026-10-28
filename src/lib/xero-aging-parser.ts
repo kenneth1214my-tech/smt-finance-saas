@@ -10,6 +10,12 @@ export function statusFromAgingDays(days: number): RiskStatus {
   return "CRITICAL";
 }
 
+/** Days past due of the oldest unpaid invoice (0 when nothing is unpaid or it is not yet due). */
+export function agingDaysFromDueDate(oldestDueDate: Date | null, asOf: Date = new Date()): number {
+  if (!oldestDueDate || Number.isNaN(oldestDueDate.getTime())) return 0;
+  return Math.max(0, Math.floor((asOf.getTime() - oldestDueDate.getTime()) / 86_400_000));
+}
+
 // AgedReceivablesByContact / AgedPayablesByContact list one Row per outstanding invoice, with
 // Cells [Date, Number, Due Date, "", Total, Paid, Credited, Due]. A customer's overall aging is
 // taken from their OLDEST unpaid invoice's due date (the worst-case item drives collection

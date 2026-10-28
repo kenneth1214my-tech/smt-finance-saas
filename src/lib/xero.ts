@@ -171,6 +171,33 @@ export async function fetchXeroContactsPage(accessToken: string, tenantId: strin
   return body.Contacts ?? [];
 }
 
+// The oldest unpaid invoice's due date for EVERY contact, from a few paged Invoices calls (summary only, 500 a page) instead of one
+// aged-report call per contact. A busy entity has hundreds of contacts, and the per-contact route alone used more than Xero's daily
+// 5,000-call quota; this takes a handful of calls and gives the same number (aging = the oldest unpaid invoice's days past due).
+// Status AUTHORISED = approved and not yet fully paid (PAID drops out, DRAFT / SUBMITTED / VOIDED are not receivables / payables yet).
+export async function fetchOldestDueByContact(accessToken: string, tenantId: string, type: "ACCREC" | "ACCPAY"): Promise<Map<string, Date>> {
+  const where = `Type=="${type}"&&Status=="AUTHORISED"`;
+  const pageSize = 500;
+  const oldest = new Map<string, Date>();
+  for (let page = 1; page <= 200; page++) {
+    const url = `https://api.xero.com/api.xro/2.0/Invoices?where=${encodeURIComponent(where)}&summaryOnly=true&page=${page}&pageSize=${pageSize}`;
+    const body = (await xeroGet(accessToken, tenantId, url)) as { Invoices?: { Contact?: { ContactID?: string }; DueDateString?: string; DueDate?: string; AmountDue?: number }[] };
+    const docs = body.Invoices ?? [];
+    for (const d of docs) {
+      const id = d.Contact?.ContactID;
+      if (!id || !(Number(d.AmountDue ?? 0) > 0)) continue;
+      const raw = d.DueDateString ?? d.DueDate ?? "";
+      const ms = /\/Date\((-?\d+)/.exec(raw);
+      const due = ms ? new Date(Number(ms[1])) : new Date(raw.slice(0, 10));
+      if (Number.isNaN(due.getTime())) continue;
+      const cur = oldest.get(id);
+      if (!cur || due < cur) oldest.set(id, due);
+    }
+    if (docs.length < pageSize) break;
+  }
+  return oldest;
+}
+
 export async function fetchXeroAgedReceivablesByContact(accessToken: string, tenantId: string, contactId: string): Promise<XeroReport> {
   const url = `https://api.xero.com/api.xro/2.0/Reports/AgedReceivablesByContact?contactId=${contactId}`;
   const body = (await xeroGet(accessToken, tenantId, url)) as { Reports?: XeroReport[] };

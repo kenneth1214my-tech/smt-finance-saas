@@ -4,8 +4,7 @@ import { db } from "@/lib/db";
 import {
   fetchXeroProfitAndLoss,
   fetchXeroContactsPage,
-  fetchXeroAgedReceivablesByContact,
-  fetchXeroAgedPayablesByContact,
+  fetchOldestDueByContact,
   fetchXeroBudgetSummary,
   fetchXeroBankSummary,
   fetchXeroBalanceSheet,
@@ -13,7 +12,7 @@ import {
 } from "@/lib/xero";
 import { getValidXeroAccessToken, getValidXeroGroupAccessToken } from "@/lib/xero-token";
 import { parseXeroPnl } from "@/lib/xero-pnl-parser";
-import { oldestDueAgingDays, statusFromAgingDays } from "@/lib/xero-aging-parser";
+import { agingDaysFromDueDate, statusFromAgingDays } from "@/lib/xero-aging-parser";
 import { parseXeroBudgetSummary, parseXeroBankSummary } from "@/lib/xero-budget-bank-parser";
 import { syncDerivedCashFlow, depreciationOf, type PnlMonth } from "@/lib/xero-cashflow";
 import { employmentCostOf } from "@/lib/cashflow-derive";
@@ -56,7 +55,6 @@ function trailingMonths(count: number): { year: number; month: number }[] {
 // lastSyncAt/lastSyncError — existing AR/AP data is left untouched rather than wiped, and the
 // admin is pointed at the "Smart AR Aging import" bulk-file upload instead, which already handles
 // this volume.
-const MAX_LIVE_AGING_CONTACTS = 200;
 
 async function mapInBatches<T, R>(items: T[], batchSize: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = [];
@@ -172,20 +170,14 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
     const arContacts = contacts.filter((c) => c.IsCustomer && Number(c.Balances?.AccountsReceivable?.Outstanding ?? 0) > 0);
     const apContacts = contacts.filter((c) => c.IsSupplier && Number(c.Balances?.AccountsPayable?.Outstanding ?? 0) > 0);
 
-    if (arContacts.length + apContacts.length > MAX_LIVE_AGING_CONTACTS) {
-      throw new Error(
-        `skipped — ${arContacts.length + apContacts.length} contacts is too many to fetch live within one sync; use the "Smart AR Aging import" upload instead`
-      );
-    }
-
-    const arRows = await mapInBatches(arContacts, 2, async (c) => {
-      const report = await fetchXeroAgedReceivablesByContact(accessToken, tenantId, c.ContactID);
-      const agingDays = oldestDueAgingDays(report);
+    // Aging comes from two paged invoice queries (oldest unpaid due date per contact), not one aged-report call per contact.
+    const [arOldest, apOldest] = await Promise.all([fetchOldestDueByContact(accessToken, tenantId, "ACCREC"), fetchOldestDueByContact(accessToken, tenantId, "ACCPAY")]);
+    const arRows = arContacts.map((c) => {
+      const agingDays = agingDaysFromDueDate(arOldest.get(c.ContactID) ?? null);
       return { organizationId, nameZh: c.Name, nameEn: c.Name, subsidiaryId, balance: Number(c.Balances?.AccountsReceivable?.Outstanding ?? 0), agingDays, status: statusFromAgingDays(agingDays) };
     });
-    const apRows = await mapInBatches(apContacts, 2, async (c) => {
-      const report = await fetchXeroAgedPayablesByContact(accessToken, tenantId, c.ContactID);
-      const agingDays = oldestDueAgingDays(report);
+    const apRows = apContacts.map((c) => {
+      const agingDays = agingDaysFromDueDate(apOldest.get(c.ContactID) ?? null);
       return { organizationId, nameZh: c.Name, nameEn: c.Name, subsidiaryId, balance: Number(c.Balances?.AccountsPayable?.Outstanding ?? 0), agingDays, status: statusFromAgingDays(agingDays) };
     });
 
@@ -384,20 +376,14 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
     const arContacts = contacts.filter((c) => c.IsCustomer && Number(c.Balances?.AccountsReceivable?.Outstanding ?? 0) > 0);
     const apContacts = contacts.filter((c) => c.IsSupplier && Number(c.Balances?.AccountsPayable?.Outstanding ?? 0) > 0);
 
-    if (arContacts.length + apContacts.length > MAX_LIVE_AGING_CONTACTS) {
-      throw new Error(
-        `skipped — ${arContacts.length + apContacts.length} contacts is too many to fetch live within one sync; use the "Smart AR Aging import" upload instead`
-      );
-    }
-
-    const arRows = await mapInBatches(arContacts, 2, async (c) => {
-      const report = await fetchXeroAgedReceivablesByContact(accessToken, tenantId, c.ContactID);
-      const agingDays = oldestDueAgingDays(report);
+    // Aging comes from two paged invoice queries (oldest unpaid due date per contact), not one aged-report call per contact.
+    const [arOldest, apOldest] = await Promise.all([fetchOldestDueByContact(accessToken, tenantId, "ACCREC"), fetchOldestDueByContact(accessToken, tenantId, "ACCPAY")]);
+    const arRows = arContacts.map((c) => {
+      const agingDays = agingDaysFromDueDate(arOldest.get(c.ContactID) ?? null);
       return { organizationId, nameZh: c.Name, nameEn: c.Name, subsidiaryId: null, balance: Number(c.Balances?.AccountsReceivable?.Outstanding ?? 0), agingDays, status: statusFromAgingDays(agingDays) };
     });
-    const apRows = await mapInBatches(apContacts, 2, async (c) => {
-      const report = await fetchXeroAgedPayablesByContact(accessToken, tenantId, c.ContactID);
-      const agingDays = oldestDueAgingDays(report);
+    const apRows = apContacts.map((c) => {
+      const agingDays = agingDaysFromDueDate(apOldest.get(c.ContactID) ?? null);
       return { organizationId, nameZh: c.Name, nameEn: c.Name, subsidiaryId: null, balance: Number(c.Balances?.AccountsPayable?.Outstanding ?? 0), agingDays, status: statusFromAgingDays(agingDays) };
     });
 
@@ -539,8 +525,11 @@ async function runArApBatch(
   const pendingAp = apContacts.filter((c) => !isDone(apByContactId.get(c.ContactID)));
   const pendingBefore = pendingAr.length + pendingAp.length;
 
-  const arBatch = pendingAr.slice(0, batchSize);
-  const apBatch = pendingAp.slice(0, Math.max(0, batchSize - arBatch.length));
+  // Aging for every contact from two paged invoice queries, so a whole cycle costs a handful of calls and finishes in one pass —
+  // the old one-aged-report-call-per-contact route needed hundreds of calls and ran through Xero's daily quota.
+  const [arOldest, apOldest] = await Promise.all([fetchOldestDueByContact(accessToken, tenantId, "ACCREC"), fetchOldestDueByContact(accessToken, tenantId, "ACCPAY")]);
+  const arBatch = pendingAr;
+  const apBatch = pendingAp;
 
   let processed = 0;
   // Once Xero says the daily quota is used up, every further call in this batch would fail the same
@@ -555,8 +544,7 @@ async function runArApBatch(
   for (const c of arBatch) {
     if (rateLimitedMsg) break;
     try {
-      const report = await fetchXeroAgedReceivablesByContact(accessToken, tenantId, c.ContactID);
-      const agingDays = oldestDueAgingDays(report);
+      const agingDays = agingDaysFromDueDate(arOldest.get(c.ContactID) ?? null);
       const data = {
         nameZh: c.Name,
         nameEn: c.Name,
@@ -577,8 +565,7 @@ async function runArApBatch(
   for (const c of apBatch) {
     if (rateLimitedMsg) break;
     try {
-      const report = await fetchXeroAgedPayablesByContact(accessToken, tenantId, c.ContactID);
-      const agingDays = oldestDueAgingDays(report);
+      const agingDays = agingDaysFromDueDate(apOldest.get(c.ContactID) ?? null);
       const data = {
         nameZh: c.Name,
         nameEn: c.Name,

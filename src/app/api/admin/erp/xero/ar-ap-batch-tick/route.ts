@@ -19,12 +19,17 @@ export const maxDuration = 120;
 // (checked cheaply via arApLastBatchAt, no Xero calls) so someone re-opening or refreshing
 // Settings repeatedly doesn't multiply real API usage.
 const MIN_INTERVAL_MS = 3 * 60 * 1000;
+// A cycle now refreshes every contact in a handful of calls, so once one has completed the next is not needed for hours. Without this
+// gap the Settings-page trigger re-ran the whole cycle every 3 minutes, all day, against Xero's 5,000-calls-a-day quota.
+const MIN_CYCLE_GAP_MS = 6 * 60 * 60 * 1000;
 
-function dueForTick(lastBatchAt: Date | null, lastError: string | null = null): boolean {
+function dueForTick(lastBatchAt: Date | null, lastError: string | null = null, cycleInProgress = true): boolean {
   // While Xero's daily quota is exhausted every call fails, so don't even try until it resets.
   const resumeAt = rateLimitResumeAt(lastError, lastBatchAt);
   if (resumeAt && resumeAt.getTime() > Date.now()) return false;
-  return !lastBatchAt || Date.now() - lastBatchAt.getTime() >= MIN_INTERVAL_MS;
+  if (!lastBatchAt) return true;
+  const gap = cycleInProgress ? MIN_INTERVAL_MS : MIN_CYCLE_GAP_MS;
+  return Date.now() - lastBatchAt.getTime() >= gap;
 }
 
 export async function POST() {
@@ -39,7 +44,7 @@ export async function POST() {
   const results: { scope: string; ok: boolean; processed: number; pendingBefore: number; cycleComplete: boolean; skipped?: boolean }[] = [];
 
   for (const conn of connections) {
-    if (!dueForTick(conn.arApLastBatchAt, conn.arApLastBatchError)) {
+    if (!dueForTick(conn.arApLastBatchAt, conn.arApLastBatchError, conn.arApCycleStartedAt !== null)) {
       results.push({ scope: conn.subsidiaryId, ok: true, processed: 0, pendingBefore: 0, cycleComplete: false, skipped: true });
       continue;
     }
@@ -53,7 +58,7 @@ export async function POST() {
     results.push({ scope: conn.subsidiaryId, ...result });
   }
 
-  if (groupConnection?.connectedAt && dueForTick(groupConnection.arApLastBatchAt, groupConnection.arApLastBatchError)) {
+  if (groupConnection?.connectedAt && dueForTick(groupConnection.arApLastBatchAt, groupConnection.arApLastBatchError, groupConnection.arApCycleStartedAt !== null)) {
     let result: { ok: boolean; processed: number; pendingBefore: number; cycleComplete: boolean; errors: string[] };
     try {
       result = await syncArApBatchForGroup(organizationId);

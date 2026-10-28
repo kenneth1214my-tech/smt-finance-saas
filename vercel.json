@@ -4,5 +4,8 @@
       "path": "/api/cron/xero-sync",
       "schedule": "0 18 * * *"
     }
+  ],
+  "regions": [
+    "sin1"
   ]
 }
