@@ -61,7 +61,9 @@ export function gstQuarterFor(year: number, quarterNum: 1 | 2 | 3 | 4): GstQuart
   const q = quarterNum - 1;
   const quarterStart = new Date(year, q * 3, 1);
   const quarterEnd = new Date(year, q * 3 + 3, 0); // day 0 of the month after the quarter = its last day
-  const dueDate = new Date(year, q * 3 + 4, 0); // one month later again
+  // UTC midnight of the due day, so the stored date reads the same in every time zone (a local-midnight date created on a Singapore-time
+  // machine was stored as the previous day in UTC and showed up one day early).
+  const dueDate = new Date(Date.UTC(year, q * 3 + 4, 0)); // one month later again
   return { periodLabel: `${year} Q${quarterNum}`, quarterStart, quarterEnd, dueDate };
 }
 
@@ -86,6 +88,7 @@ export type TaxFilingStatusComputed = "UPCOMING" | "FILED" | "OVERDUE" | "PAID";
 // derivable from dates) — this only ever promotes an UPCOMING row to OVERDUE based on the clock,
 // never overrides a status someone has actually set.
 export function effectiveFilingStatus(status: TaxFilingStatusComputed, dueDate: Date, now: Date = new Date()): TaxFilingStatusComputed {
-  if (status === "UPCOMING" && dueDate < now) return "OVERDUE";
+  // A filing is still on time throughout its due day, so it only turns overdue once that whole (UTC) day has passed.
+  if (status === "UPCOMING" && dueDate.getTime() + 86_400_000 <= now.getTime()) return "OVERDUE";
   return status;
 }
