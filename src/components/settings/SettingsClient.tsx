@@ -1889,6 +1889,14 @@ function DataTab({
                   >
                     {syncingId === "group" ? (isZh ? "同步中…" : "Syncing…") : isZh ? "全部同步" : "Sync all"}
                   </button>
+                  <a
+                    href="/api/admin/erp/xero/connect?gst=full"
+                    className="rounded-lg border px-3 py-1.5 text-[12px] font-bold"
+                    style={{ borderColor: "var(--border-strong)", color: "var(--ink-900)" }}
+                    title={isZh ? "无需断开：重新授权，额外读取银行交易、手工日记账和费用报销，使 GST F5 完整" : "No need to disconnect: re-authorise to also read bank transactions, manual journals and expense claims so the GST F5 is complete"}
+                  >
+                    {isZh ? "授权完整 GST 权限" : "Grant full GST access"}
+                  </a>
                   <button
                     onClick={() => disconnectXero()}
                     disabled={disconnectingId === "group"}
@@ -1976,6 +1984,14 @@ function DataTab({
                       >
                         {syncingId === sub.id ? (isZh ? "同步中…" : "Syncing…") : isZh ? "全部同步" : "Sync all"}
                       </button>
+                      <a
+                        href={`/api/admin/erp/xero/connect?subsidiaryId=${sub.id}&gst=full`}
+                        className="rounded-lg border px-3 py-1.5 text-[12px] font-bold"
+                        style={{ borderColor: "var(--border-strong)", color: "var(--ink-900)" }}
+                        title={isZh ? "无需断开：重新授权，额外读取银行交易、手工日记账和费用报销，使 GST F5 完整" : "No need to disconnect: re-authorise to also read bank transactions, manual journals and expense claims so the GST F5 is complete"}
+                      >
+                        {isZh ? "授权完整 GST 权限" : "Grant full GST access"}
+                      </a>
                       <button
                         onClick={() => disconnectXero(sub.id)}
                         disabled={disconnectingId === sub.id}
