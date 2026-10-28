@@ -248,6 +248,7 @@ export default async function TaxPage() {
           deferredItems={toPlain(deferredItems)}
           netProfitByEntity={netProfitByEntity}
           acra={acra}
+          incorporationDate={org.incorporationDate ? org.incorporationDate.toISOString().slice(0, 10) : null}
         />
       </div>
     </>

@@ -1,6 +1,7 @@
 "use client";
 
 import AcraXbrlPanel, { type AcraEntityOption } from "./AcraXbrlPanel";
+import { computeFilingDueDate } from "@/lib/filing-due";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -52,6 +53,7 @@ export default function TaxCenterClient({
   deferredItems,
   netProfitByEntity,
   acra,
+  incorporationDate,
 }: {
   jurisdiction: JurisdictionCode;
   adjustments: AdjustmentRow[];
@@ -67,6 +69,8 @@ export default function TaxCenterClient({
   netProfitByEntity: Record<string, Record<number, number>>;
   /** Singapore only: ACRA XBRL tab settings (financial years offered, default year, stored UEN). */
   acra?: { years: number[]; defaultYear: number; entities: AcraEntityOption[] };
+  /** Hong Kong Annual Return due dates count from the incorporation anniversary. */
+  incorporationDate?: string | null;
 }) {
   const isZh = locale === "zh" || locale === "zh-Hant";
   const cfg = JURISDICTION_CONFIG[jurisdiction];
@@ -217,7 +221,25 @@ export default function TaxCenterClient({
     { key: "subsidiaryId", label: dict.m.taxEntity, type: "select", options: subsidiaryOrHqOptions, displayValue: subsidiaryOrHqLabel },
     { key: "type", label: isZh ? "类型" : "Type", type: "select", options: cfg.filingTypes },
     { key: "periodLabel", label: isZh ? "期间" : "Period", type: "text" },
-    { key: "dueDate", label: isZh ? "到期日" : "Due Date", type: "date" },
+    {
+      key: "dueDate",
+      label: isZh ? "到期日（按税务局规定自动计算）" : "Due Date (automatic — statutory rule)",
+      type: "date",
+      // Worked out from the type, period and the entity's year-end; the server applies the same rule, so it cannot be overridden by hand.
+      auto: (form) => {
+        const r = computeFilingDueDate({
+          jurisdiction,
+          type: form.type ?? "",
+          periodLabel: form.periodLabel ?? "",
+          fyeMonth: fyeByKey[form.subsidiaryId ? form.subsidiaryId : "HQ"] ?? 12,
+          incorporationDate: incorporationDate ?? null,
+        });
+        return r ? { value: r.date, hint: isZh ? r.ruleZh : r.ruleEn } : null;
+      },
+      autoPending: isHk
+        ? isZh ? "选择类型并填写期间（如 YA2026/27、Year ended 31 Mar 2027、Annual Return 2026）后自动计算" : "Pick the type and fill the period (e.g. YA2026/27, Year ended 31 Mar 2027, Annual Return 2026) to calculate"
+        : isZh ? "选择类型并填写期间（GST F5：2026 Q3；ECI / Form C-S：FY2026 或 YA2027）后自动计算" : "Pick the type and fill the period (GST F5: 2026 Q3; ECI / Form C-S: FY2026 or YA2027) to calculate",
+    },
     { key: "filedAt", label: isZh ? "申报日期" : "Filed At", type: "date" },
     { key: "outputTax", label: `${isZh ? "销项税额" : "Output Tax"} (${unit})`, type: "number", step: "0.01" },
     { key: "inputTax", label: `${isZh ? "进项税额" : "Input Tax"} (${unit})`, type: "number", step: "0.01" },

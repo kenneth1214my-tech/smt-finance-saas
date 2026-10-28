@@ -34,6 +34,12 @@ export interface FieldConfig {
    * primary-locale one, so a form with several near-duplicate "name in language X" fields
    * doesn't hard-block on all of them being filled in by hand. */
   fallbackFrom?: string;
+  /** Worked out from the other fields in the form instead of typed (e.g. a statutory due date from the filing type and period). While it
+   * returns a value the field is filled in automatically and locked, with the rule shown under it; when it returns null the field is
+   * an ordinary input again. */
+  auto?: (form: Record<string, string>) => { value: string; hint: string } | null;
+  /** Shown under an auto field while it cannot be worked out yet, telling the user what to fill in so it can. */
+  autoPending?: string;
   /** Forces typed input to upper case as you type (e.g. a free-text bank name entered under
    * "Other", where preset entries already come pre-formatted and shouldn't be touched). */
   uppercase?: boolean;
@@ -48,11 +54,13 @@ function FieldInput({
   value,
   onChange,
   onFillMany,
+  disabled,
 }: {
   f: FieldConfig;
   value: string;
   onChange: (v: string) => void;
   onFillMany?: (fill: Record<string, string>) => void;
+  disabled?: boolean;
 }) {
   if (f.type === "select") {
     return (
@@ -96,6 +104,9 @@ function FieldInput({
       onChange={(e) => onChange(f.uppercase ? e.target.value.toUpperCase() : e.target.value)}
       placeholder={f.fallbackFrom ? "留空则自动带入 / Leave blank to reuse another field" : undefined}
       className="crud-input"
+      disabled={disabled}
+      readOnly={disabled}
+      style={disabled ? { background: "var(--surface-2)", cursor: "not-allowed" } : undefined}
     />
   );
 }
@@ -296,6 +307,39 @@ export default function CrudTable({
     setForm((prev) => ({ ...prev, [key]: v }));
   }
 
+  // Auto fields (see FieldConfig.auto) follow the other fields while the add / edit form is open.
+  const autoFields = fields.filter((f) => f.auto);
+  const lastAuto = useRef<Record<string, string>>({});
+  useEffect(() => {
+    if (!creating && !editingId) return;
+    for (const f of autoFields) {
+      const r = f.auto!(form);
+      if (r) {
+        lastAuto.current[f.key] = r.value;
+        if (form[f.key] !== r.value) setForm((prev) => ({ ...prev, [f.key]: r.value }));
+      } else if (lastAuto.current[f.key] && form[f.key] === lastAuto.current[f.key]) {
+        // the inputs no longer give a date: drop the value that was filled in automatically instead of leaving a stale one behind
+        delete lastAuto.current[f.key];
+        setForm((prev) => ({ ...prev, [f.key]: "" }));
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form, creating, editingId]);
+
+  function renderInput(f: FieldConfig) {
+    const auto = f.auto?.(form) ?? null;
+    return (
+      <>
+        <FieldInput f={f} value={auto ? auto.value : form[f.key] ?? ""} onChange={(v) => setField(f.key, v)} onFillMany={setMany} disabled={Boolean(auto)} />
+        {f.auto && (
+          <span className="text-[10.5px] font-semibold" style={{ color: auto ? "var(--status-good)" : "var(--ink-400)" }}>
+            {auto ? `✓ ${auto.hint}` : f.autoPending ?? ""}
+          </span>
+        )}
+      </>
+    );
+  }
+
   function setMany(fill: Record<string, string>) {
     setForm((prev) => ({ ...prev, ...fill }));
   }
@@ -458,7 +502,7 @@ export default function CrudTable({
                             <span className="text-[10.8px] font-semibold" style={{ color: "var(--ink-400)" }}>
                               {f.label}
                             </span>
-                            <FieldInput f={f} value={form[f.key] ?? ""} onChange={(v) => setField(f.key, v)} onFillMany={setMany} />
+                            {renderInput(f)}
                           </label>
                         ))}
                       </div>
@@ -511,7 +555,7 @@ export default function CrudTable({
                         <span className="text-[10.8px] font-semibold" style={{ color: "var(--ink-400)" }}>
                           {f.label}
                         </span>
-                        <FieldInput f={f} value={form[f.key] ?? ""} onChange={(v) => setField(f.key, v)} onFillMany={setMany} />
+                        {renderInput(f)}
                       </label>
                     ))}
                   </div>
