@@ -87,7 +87,7 @@ export function buildTaxKpiSections(args: {
       ]
     : [
         row(t("应纳税所得额（估算）", "Chargeable income (estimate)"), (p) => p.chargeableIncome),
-        row(t("－ 部分免税额（首 1 万元 75%、其后 19 万元 50%）", "− Partial tax exemption (75% of the first 10,000, 50% of the next 190,000)"), (p) => neg(p.exemptAmount)),
+        row(t("－ 部分免税额（首 10,000 元 75%、其后 190,000 元 50%）", "− Partial tax exemption (75% of the first 10,000, 50% of the next 190,000)"), (p) => neg(p.exemptAmount)),
         row(t("＝ 免税后应税所得", "= Taxable income after exemption"), (p) => p.taxableAfterExemption, { kind: "total" }),
         { label: t("税率", "Tax rate"), values: [...provisions.map((p) => p.taxRatePct), ...(multi ? [null] : [])], kind: "muted", format: "pct" },
         row(t("＝ 回扣前税额", "= Tax before rebate"), (p) => p.grossTax, { kind: "total" }),
