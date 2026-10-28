@@ -3,15 +3,17 @@ import Sidebar from "@/components/Sidebar";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary } from "@/lib/i18n/dictionaries";
 import { getCompanyName } from "@/lib/company";
+import KeepWarm from "@/components/KeepWarm";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const user = await requireUser();
-  const locale = await getServerLocale();
+  // independent lookups run together instead of one after the other
+  const [locale, companyName] = await Promise.all([getServerLocale(), getCompanyName(user.organizationId)]);
   const dict = getDictionary(locale);
-  const companyName = await getCompanyName(user.organizationId);
 
   return (
     <div className="flex min-h-screen" style={{ background: "var(--bg)" }}>
+      <KeepWarm />
       <Sidebar dict={dict} companyName={companyName} />
       <main className="flex min-w-0 flex-1 flex-col">
         {children}
