@@ -1,5 +1,6 @@
 import "server-only";
-import type { GstRawDoc } from "@/lib/gst";
+import type { GstRawDoc, GstCoverageItem, GstSourceKey } from "@/lib/gst";
+import { fetchBankTransactionsForGst, fetchManualJournalsForGst, scanExpenseClaimJournals } from "@/lib/gst-sources";
 
 const AUTHORIZE_URL = "https://login.xero.com/identity/connect/authorize";
 const TOKEN_URL = "https://identity.xero.com/connect/token";
@@ -24,16 +25,22 @@ const CONNECTIONS_URL = "https://api.xero.com/connections";
 const SCOPES =
   "offline_access accounting.contacts.read accounting.invoices.read accounting.reports.profitandloss.read accounting.reports.balancesheet.read accounting.reports.aged.read accounting.reports.budgetsummary.read accounting.reports.banksummary.read";
 
+// Extra read permissions the complete GST F5 needs beyond invoices: spend / receive money, manual journals (ledger adjustments) and
+// the ledger journals that expense claims are posted to. Kept OUT of the default scope list on purpose — Xero rejects an unknown scope
+// name for the whole Connect flow (see the history above), so these are only requested from the explicit "full GST access" reconnect,
+// and a rejection there can never break the normal connection.
+const GST_FULL_SCOPES = "accounting.banktransactions.read accounting.manualjournals.read accounting.journals.read";
+
 export function isXeroConfigured(): boolean {
   return Boolean(process.env.XERO_CLIENT_ID && process.env.XERO_CLIENT_SECRET);
 }
 
-export function buildXeroAuthorizeUrl(redirectUri: string, state: string): string {
+export function buildXeroAuthorizeUrl(redirectUri: string, state: string, opts: { gstFull?: boolean } = {}): string {
   const params = new URLSearchParams({
     response_type: "code",
     client_id: process.env.XERO_CLIENT_ID ?? "",
     redirect_uri: redirectUri,
-    scope: SCOPES,
+    scope: opts.gstFull ? `${SCOPES} ${GST_FULL_SCOPES}` : SCOPES,
     state,
   });
   return `${AUTHORIZE_URL}?${params.toString()}`;
@@ -274,12 +281,39 @@ async function fetchGstDocsOfType(accessToken: string, tenantId: string, resourc
   return out;
 }
 
-export async function fetchXeroGstDocuments(accessToken: string, tenantId: string, fromDate: Date, toDate: Date): Promise<GstRawDoc[]> {
+// Invoices, bills and credit notes are the core (a failure there fails the whole estimate, as before). The other GST-bearing records —
+// spend / receive money, manual journals, expense claims — are fetched on top; if one of them cannot be read (the connection was
+// made before the extra permissions existed, or Xero errors) it is reported in `coverage` instead of being silently left out.
+export async function fetchXeroGstDocuments(accessToken: string, tenantId: string, fromDate: Date, toDate: Date): Promise<{ docs: GstRawDoc[]; coverage: GstCoverageItem[] }> {
   const parts = await Promise.all([
     fetchGstDocsOfType(accessToken, tenantId, "Invoices", "ACCREC", fromDate, toDate),
     fetchGstDocsOfType(accessToken, tenantId, "Invoices", "ACCPAY", fromDate, toDate),
     fetchGstDocsOfType(accessToken, tenantId, "CreditNotes", "ACCRECCREDIT", fromDate, toDate),
     fetchGstDocsOfType(accessToken, tenantId, "CreditNotes", "ACCPAYCREDIT", fromDate, toDate),
   ]);
-  return parts.flat();
+  const docs = parts.flat();
+  const coverage: GstCoverageItem[] = [
+    { source: "invoices", status: "included" },
+    { source: "credit_notes", status: "included" },
+  ];
+
+  const get = (url: string) => xeroGet(accessToken, tenantId, url);
+  const extra = async (source: GstSourceKey, run: () => Promise<{ docs: GstRawDoc[]; truncated?: string }>) => {
+    try {
+      const r = await run();
+      docs.push(...r.docs);
+      coverage.push(r.truncated ? { source, status: "truncated", message: r.truncated } : { source, status: "included" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const noScope = /insufficient_scope|\b403\b|\b401\b/.test(message);
+      coverage.push({ source, status: noScope ? "missing_scope" : "error", message: noScope ? undefined : message.slice(0, 200) });
+    }
+  };
+  await extra("bank", async () => ({ docs: await fetchBankTransactionsForGst(get, fromDate, toDate) }));
+  await extra("manual_journals", async () => ({ docs: await fetchManualJournalsForGst(get, fromDate, toDate) }));
+  await extra("expense_claims", async () => {
+    const r = await scanExpenseClaimJournals(get, fromDate, toDate);
+    return { docs: r.docs, truncated: r.truncated ? "the journal scan stopped at Xero's call limit, so older or later claims may be missing" : undefined };
+  });
+  return { docs, coverage };
 }

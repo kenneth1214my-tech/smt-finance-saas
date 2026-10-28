@@ -22,8 +22,13 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
       outputTax: box("6"),
       inputTax: box("7"),
       amount: box("8"),
-      notes:
-        "Estimated from Xero invoices/bills/credit notes (invoice-date basis) — use the Breakdown action to review every figure against Xero's GST report before filing. Boxes 9-12 and 14-15 are not derived.",
+      notes: (() => {
+        const gaps = result.breakdown.coverage.filter((c) => c.status !== "included");
+        return (
+          "Estimated from Xero invoices, bills, credit notes, spend/receive money, manual journals and expense claims (document-date basis) — use the Breakdown action to review every figure against Xero's GST report before filing. Boxes 9-12 and 14-15 are not derived." +
+          (gaps.length ? ` INCOMPLETE: ${gaps.map((g) => g.source.replace("_", " ")).join(", ")} could not be read — see the Breakdown warnings.` : "")
+        );
+      })(),
     },
   });
   return NextResponse.json({ row });

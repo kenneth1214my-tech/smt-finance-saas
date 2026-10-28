@@ -15,6 +15,8 @@ export async function GET(req: Request) {
   const user = await requireAdmin();
   const origin = new URL(req.url).origin;
   const subsidiaryId = new URL(req.url).searchParams.get("subsidiaryId");
+  // ?gst=full asks for the extra read permissions the complete GST F5 needs (see GST_FULL_SCOPES in xero.ts).
+  const gstFull = new URL(req.url).searchParams.get("gst") === "full";
 
   if (subsidiaryId) {
     const subsidiary = await db.subsidiary.findUnique({ where: { id: subsidiaryId } });
@@ -41,5 +43,5 @@ export async function GET(req: Request) {
   else cookieStore.delete(SUBSIDIARY_COOKIE);
 
   const redirectUri = `${origin}/api/admin/erp/xero/callback`;
-  return NextResponse.redirect(buildXeroAuthorizeUrl(redirectUri, state));
+  return NextResponse.redirect(buildXeroAuthorizeUrl(redirectUri, state, { gstFull }));
 }

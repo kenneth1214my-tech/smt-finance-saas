@@ -6,7 +6,7 @@ import { buildGstBreakdown, type GstBreakdown } from "@/lib/gst";
 import { parseGstPeriodLabel } from "@/lib/tax";
 
 export type GstLoadResult =
-  | { ok: true; filingId: string; entityName: string; periodLabel: string; quarterStart: string; quarterEnd: string; breakdown: GstBreakdown }
+  | { ok: true; filingId: string; subsidiaryId: string | null; entityName: string; periodLabel: string; quarterStart: string; quarterEnd: string; breakdown: GstBreakdown }
   | { ok: false; status: number; error: string; message?: string };
 
 // Single place that turns a GST_F5 TaxFiling row into a Xero-derived breakdown — shared by the
@@ -46,16 +46,22 @@ export async function loadGstBreakdown(filingId: string, organizationId: string)
   }
 
   try {
-    const docs = await fetchXeroGstDocuments(accessToken, tenantId, quarter.quarterStart, quarter.quarterEnd);
+    const { docs, coverage } = await fetchXeroGstDocuments(accessToken, tenantId, quarter.quarterStart, quarter.quarterEnd);
+    // Box 13 is the revenue in the profit and loss for the same months — the platform already holds it per entity.
+    const months: { year: number; month: number }[] = [];
+    for (let d = new Date(quarter.quarterStart.getFullYear(), quarter.quarterStart.getMonth(), 1); d <= quarter.quarterEnd; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) months.push({ year: d.getFullYear(), month: d.getMonth() + 1 });
+    const pnl = await db.monthlyFinancial.findMany({ where: { organizationId, subsidiaryId: filing.subsidiaryId ?? null, OR: months } });
+    const periodRevenue = pnl.length > 0 ? pnl.reduce((a, r) => a + Number(r.revenue), 0) : null;
     const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     return {
       ok: true,
       filingId: filing.id,
+      subsidiaryId: filing.subsidiaryId,
       entityName: filing.subsidiary?.nameEn ?? "Group HQ",
       periodLabel: filing.periodLabel,
       quarterStart: iso(quarter.quarterStart),
       quarterEnd: iso(quarter.quarterEnd),
-      breakdown: buildGstBreakdown(docs),
+      breakdown: buildGstBreakdown(docs, coverage, { periodRevenue }),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

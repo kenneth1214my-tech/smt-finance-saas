@@ -2,9 +2,10 @@
 
 import { X as XIcon } from "lucide-react";
 import { exportToCsv, exportToXlsx, type ExportColumn } from "@/lib/export";
-import { GST_CLASS_LABEL, type GstBreakdown } from "@/lib/gst";
+import { GST_CLASS_LABEL, GST_SOURCE_LABEL, type GstBreakdown, type GstDocKind } from "@/lib/gst";
 
 export interface GstBreakdownView {
+  subsidiaryId?: string | null;
   entityName: string;
   periodLabel: string;
   quarterStart: string;
@@ -43,6 +44,8 @@ export default function GstBreakdownPanel({
   ];
   const docRows = data.documents as unknown as Record<string, unknown>[];
   const fileBase = `GST_F5_${breakdown.entityName.replace(/\s+/g, "_")}_${breakdown.periodLabel.replace(/\s+/g, "_")}`;
+  const kindLabel = (k: GstDocKind, direction: string) =>
+    k === "CreditNote" ? (isZh ? "贷项通知单" : "Credit note") : k === "BankTransaction" ? (direction === "SALES" ? (isZh ? "收款" : "Receive money") : isZh ? "付款" : "Spend money") : k === "ManualJournal" ? (isZh ? "手工日记账" : "Manual journal") : k === "ExpenseClaim" ? (isZh ? "费用报销" : "Expense claim") : direction === "SALES" ? (isZh ? "销售发票" : "Invoice") : isZh ? "采购账单" : "Bill";
   const directionLabel = (d: string) => (d === "SALES" ? (isZh ? "销售" : "Sales") : isZh ? "采购" : "Purchases");
 
   return (
@@ -60,6 +63,72 @@ export default function GstBreakdownPanel({
           <XIcon size={13} /> {isZh ? "关闭" : "Close"}
         </button>
       </div>
+
+      {/* Which Xero records the figures were built from — a source that could not be read is called out, never silently skipped. */}
+      <div className="mb-3 rounded-lg border p-3" style={{ borderColor: "var(--border)" }}>
+        <div className="mb-1.5 text-[12px] font-bold" style={{ color: "var(--ink-900)" }}>
+          {isZh ? "数据来源（Xero 中所有含 GST 的记录）" : "Sources covered (every Xero record that carries GST)"}
+        </div>
+        <ul className="space-y-1 text-[12px]">
+          {data.coverage.map((c) => {
+            const ok = c.status === "included";
+            return (
+              <li key={c.source} className="flex flex-wrap items-center gap-2">
+                <span className="font-bold" style={{ color: ok ? "var(--status-good)" : c.status === "truncated" ? "var(--status-warning)" : "var(--status-critical)" }}>
+                  {ok ? "✓" : c.status === "truncated" ? "!" : "✗"}
+                </span>
+                <span style={{ color: "var(--ink-900)" }}>{isZh ? GST_SOURCE_LABEL[c.source].zh : GST_SOURCE_LABEL[c.source].en}</span>
+                {!ok && (
+                  <span style={{ color: "var(--ink-400)" }}>
+                    {c.status === "missing_scope" ? (isZh ? "— 此 Xero 连接没有读取权限" : "— this Xero connection has no permission to read it") : c.status === "truncated" ? `— ${c.message ?? ""}` : `— ${c.message ?? (isZh ? "读取失败" : "could not be read")}`}
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+        {data.coverage.some((c) => c.status === "missing_scope") && (
+          <a
+            href={`/api/admin/erp/xero/connect?gst=full${breakdown.subsidiaryId ? `&subsidiaryId=${breakdown.subsidiaryId}` : ""}`}
+            className="mt-2 inline-block rounded-md px-3 py-1.5 text-[12px] font-bold text-white"
+            style={{ background: "var(--cat-1)" }}
+          >
+            {isZh ? "重新连接 Xero 并授权完整 GST 读取权限" : "Reconnect Xero with full GST access"}
+          </a>
+        )}
+      </div>
+
+      {data.sources.length > 0 && (
+        <div className="mb-4 overflow-x-auto">
+          <div className="mb-1 text-[12px] font-bold" style={{ color: "var(--ink-900)" }}>
+            {isZh ? "进项税 / 销项税来源（Box 7 和 Box 6 由哪些记录构成）" : "Input / output tax by source (what Box 7 and Box 6 are made of)"}
+          </div>
+          <table className="w-full text-[12.3px]">
+            <thead>
+              <tr style={{ color: "var(--ink-400)" }}>
+                <th className={th}>{isZh ? "来源" : "Source"}</th>
+                <th className={`${th} text-right`}>{isZh ? "单据数" : "Documents"}</th>
+                <th className={`${th} text-right`}>{isZh ? "采购净额" : "Purchases net"}</th>
+                <th className={`${th} text-right`}>{isZh ? "进项税" : "Input tax"}</th>
+                <th className={`${th} text-right`}>{isZh ? "销售净额" : "Sales net"}</th>
+                <th className={`${th} text-right`}>{isZh ? "销项税" : "Output tax"}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.sources.map((r) => (
+                <tr key={r.source} className="border-t" style={{ borderColor: "var(--border)" }}>
+                  <td className="py-1.5 pr-3 font-semibold">{isZh ? GST_SOURCE_LABEL[r.source].zh : GST_SOURCE_LABEL[r.source].en}</td>
+                  <td className={`${td} text-right tabular-nums`}>{r.documents}</td>
+                  <td className={`${td} text-right tabular-nums`}>{fmtM(r.purchasesNet)}</td>
+                  <td className={`${td} text-right tabular-nums`}>{fmtM(r.inputTax)}</td>
+                  <td className={`${td} text-right tabular-nums`}>{fmtM(r.salesNet)}</td>
+                  <td className={`${td} text-right tabular-nums`}>{fmtM(r.outputTax)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {data.warnings.length > 0 && (
         <ul className="mb-3 list-disc space-y-1 rounded-lg px-5 py-2 text-[11.5px]" style={{ background: "color-mix(in srgb,var(--status-warning) 12%,transparent)", color: "var(--ink-600)" }}>
@@ -162,7 +231,7 @@ export default function GstBreakdownPanel({
             {data.documents.map((d, i) => (
               <tr key={`${d.number}-${i}`} className="border-t" style={{ borderColor: "var(--border)" }}>
                 <td className={td}>{d.date}</td>
-                <td className={td}>{d.kind === "CreditNote" ? (isZh ? "贷项通知单" : "Credit note") : d.direction === "SALES" ? (isZh ? "销售发票" : "Invoice") : isZh ? "采购账单" : "Bill"}</td>
+                <td className={td}>{kindLabel(d.kind, d.direction)}</td>
                 <td className={td}>{directionLabel(d.direction)}</td>
                 <td className={td}>{d.number}</td>
                 <td className="py-1.5 pr-3">{d.contact}</td>
