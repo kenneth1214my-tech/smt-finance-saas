@@ -17,9 +17,12 @@ export interface XeroPnlResult {
   // Depreciation + amortisation from every cost section (Cost of Sales included), recognised by account name. Feeds EBITDA and the
   // derived cash flow.
   depreciation: number;
+  // Interest expense (by account name) from every cost section — the part of the finance costs EBIT adds back; bank charges excluded.
+  interest: number;
 }
 
 const DEPRECIATION_RE = /depreciat|amortis|amortiz/i;
+const INTEREST_RE = /\binterest\b|finance\s+(costs?|charges?)|borrowing\s+costs?/i;
 
 function cellNumber(cells: { Value?: string }[] | undefined, index: number): number {
   const raw = cells?.[index]?.Value ?? "";
@@ -44,6 +47,7 @@ export function parseXeroPnl(report: XeroReport): XeroPnlResult {
   let foundNetProfit = false;
   const expenseLineItems: { label: string; value: number }[] = [];
   let depreciation = 0;
+  let interest = 0;
 
   function walk(rows: XeroReport["Rows"], inExpenseSection: boolean, inCostOfSales = false) {
     for (const row of rows) {
@@ -64,8 +68,10 @@ export function parseXeroPnl(report: XeroReport): XeroPnlResult {
         } else if (inExpenseSection && label) {
           expenseLineItems.push({ label, value: cellNumber(row.Cells, row.Cells.length - 1) });
           if (DEPRECIATION_RE.test(label)) depreciation += cellNumber(row.Cells, row.Cells.length - 1);
-        } else if (inCostOfSales && label && DEPRECIATION_RE.test(label)) {
-          depreciation += cellNumber(row.Cells, row.Cells.length - 1);
+          if (INTEREST_RE.test(label)) interest += cellNumber(row.Cells, row.Cells.length - 1);
+        } else if (inCostOfSales && label) {
+          if (DEPRECIATION_RE.test(label)) depreciation += cellNumber(row.Cells, row.Cells.length - 1);
+          if (INTEREST_RE.test(label)) interest += cellNumber(row.Cells, row.Cells.length - 1);
         }
       }
     }
@@ -87,5 +93,5 @@ export function parseXeroPnl(report: XeroReport): XeroPnlResult {
     netProfit = revenue - otherSections;
   }
 
-  return { revenue, costOfSales, netProfit, expenseLineItems, depreciation };
+  return { revenue, costOfSales, netProfit, expenseLineItems, depreciation, interest };
 }

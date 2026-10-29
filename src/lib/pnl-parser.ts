@@ -32,6 +32,9 @@ export interface PnlParseResult {
   // Depreciation + amortisation wherever the chart of accounts puts it (Cost of Sales, Operating Expenses or Other Expenses) — an account
   // is recognised by its NAME. Feeds EBITDA (EBIT + D&A).
   depreciation: number;
+  // Interest expense wherever it sits (by account name: "Term Loan Interest", "Lease Interest", "Finance costs"...) — the part of the
+  // finance costs EBIT adds back. Bank charges are deliberately not included.
+  interestExpense: number;
 }
 
 const SECTION_PATTERNS: { key: keyof Pick<PnlParseResult, "revenue" | "costOfSales" | "expenses" | "otherIncome" | "otherExpense">; test: RegExp }[] = [
@@ -71,6 +74,7 @@ export function parsePnlReport(rows: string[][]): PnlParseResult {
   const sectionsFound: string[] = [];
   const expenseLineItems: { label: string; value: number }[] = [];
   let depreciation = 0;
+  let interestExpense = 0;
   let currentSectionKey: keyof typeof sums | null = null;
 
   for (const row of rows) {
@@ -110,6 +114,7 @@ export function parsePnlReport(rows: string[][]): PnlParseResult {
       sums[currentSectionKey] += value;
       if (currentSectionKey === "expenses") expenseLineItems.push({ label, value });
       if ((currentSectionKey === "expenses" || currentSectionKey === "costOfSales" || currentSectionKey === "otherExpense") && /depreciat|amortis|amortiz/i.test(label)) depreciation += value;
+      if ((currentSectionKey === "expenses" || currentSectionKey === "costOfSales" || currentSectionKey === "otherExpense") && /\binterest\b|finance\s+(costs?|charges?)|borrowing\s+costs?/i.test(label)) interestExpense += value;
     }
   }
 
@@ -131,5 +136,6 @@ export function parsePnlReport(rows: string[][]): PnlParseResult {
     usedComputedNetProfit: totals.netProfit === undefined,
     expenseLineItems,
     depreciation,
+    interestExpense,
   };
 }

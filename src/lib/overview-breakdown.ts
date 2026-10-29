@@ -17,6 +17,8 @@ export interface PnlInputRow {
   netProfit: unknown;
   /** Depreciation + amortisation for the month (optional: rows stored before it was captured read as 0). */
   depreciation?: unknown;
+  /** Interest expense for the month; null / absent = not captured yet (EBIT then falls back to the finance expenses). */
+  interestExp?: unknown;
 }
 
 const num = (v: unknown) => Number(v ?? 0);
@@ -217,7 +219,12 @@ export function buildPnlSections(args: {
   });
 
   // EBIT = earnings before interest and tax: net profit (the monthly P&L figure is before income tax) plus the finance expenses.
-  const ebit = net.map((n, i) => r2(n + fin[i]));
+  // Interest only — bank charges stay in. A month whose interest has not been captured yet falls back to the finance expenses.
+  const interestRows = (r: PnlInputRow) => (r.interestExp === null || r.interestExp === undefined ? num(r.financeExp) : num(r.interestExp));
+  const interest = per(interestRows);
+  const interestFallback = rows.some((r) => (r.interestExp === null || r.interestExp === undefined) && num(r.financeExp) !== 0);
+  const otherFinance = fin.map((f, i) => r2(f - interest[i]));
+  const ebit = net.map((n, i) => r2(n + interest[i]));
   const ebitda = ebit.map((e, i) => r2(e + dna[i]));
   const ebitMargin = ratio(ebit, revenue);
   const ebitdaMargin = ratio(ebitda, revenue);
@@ -226,17 +233,19 @@ export function buildPnlSections(args: {
     id: "ebit",
     title: t("息税前利润 EBIT", "EBIT (earnings before interest & tax)"),
     result: ebit[last] ?? 0,
-    formula: t("EBIT = 净利润 + 财务费用（利息等）；月度利润表的净利润为税前，不含所得税", "EBIT = net profit + finance expenses (interest etc.); the monthly P&L net profit is before income tax"),
+    formula: t("EBIT = 净利润 + 利息费用；月度利润表的净利润为税前，不含所得税；银行手续费不加回", "EBIT = net profit + interest expense; the monthly P&L net profit is before income tax; bank charges are not added back"),
     cols,
     rows: [
       { label: t("净利润（利润表，税前）", "Net profit (P&L, before tax)"), values: net },
-      { label: t("＋ 财务费用（利息等）", "+ Finance expenses (interest etc.)"), values: fin },
+      { label: t("＋ 利息费用（贷款利息、租赁利息等）", "+ Interest expense (loan, lease and other interest)"), hint: t("按科目名称识别（含 interest / finance costs）；银行手续费不在其中", "Picked by account name (anything with interest / finance costs); bank charges are not in it"), values: interest },
       { label: t("＝ EBIT", "= EBIT"), values: ebit, kind: "total" },
       { label: t("EBIT 利润率（EBIT ÷ 营业收入）", "EBIT margin (EBIT ÷ revenue)"), values: ebitMargin, format: "pct" },
+      { label: t("不加回：银行手续费及其他财务费用", "Not added back: bank charges and other finance costs"), values: otherFinance },
       { label: t("对照：营业利润（见上）", "Memo: operating profit (above)"), values: opProfit },
       { label: t("EBIT 与营业利润之差 = 其他收入/支出", "EBIT − operating profit = other income / expenses"), values: ebit.map((e, i) => r2(e - opProfit[i])) },
     ],
     notes: [
+      ...(interestFallback ? [t("部分月份的利息尚未单独识别，暂以整个财务费用（含银行手续费）代替——执行一次「全部同步」或重新导入利润表后即按利息计算。", "Interest has not been picked out separately for some months yet, so those months use the whole finance expense (bank charges included) for now — run \"Sync all\" or re-import the profit and loss and it switches to interest only.")] : []),
       t("EBIT 包含其他收入/支出，所以可能与营业利润不同；所得税未入账时二者口径一致，如账内已记所得税，EBIT 会被低估，需要加回。", "EBIT includes other income / expenses, so it can differ from operating profit. Income tax is not deducted here; if the ledger books income tax inside net profit, EBIT is understated by that amount."),
       t("利息收入若记在其他收入里，会留在 EBIT 中（系统只能识别财务费用）。", "Interest income, if booked as other income, stays inside EBIT (only finance expenses can be identified)."),
       period,

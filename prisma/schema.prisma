@@ -300,6 +300,8 @@ model MonthlyFinancial {
   employmentCost Decimal      @default(0) @db.Decimal(14, 2)
   // Depreciation + amortisation for the month, picked out of the P&L by account name - backs EBITDA (EBIT + D&A). Zero until captured.
   depreciation   Decimal      @default(0) @db.Decimal(14, 2)
+  // Interest expense for the month (loan / lease / other interest, by account name) - the part of the finance costs that EBIT adds back; bank charges stay in. NULL = not captured yet, 0 = captured and there was none.
+  interestExp    Decimal?     @db.Decimal(14, 2)
   // Point-in-time employee count for this subsidiary as of this month (not additive across
   // months) — backs Revenue per Employee, which was previously hardcoded to 0.
   headcount      Int          @default(0)
