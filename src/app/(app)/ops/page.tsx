@@ -1,4 +1,4 @@
-import { TrendingUp, DollarSign, Percent, Wallet, FlaskConical, Users2, Gauge, Scale, Droplets, Landmark, Coins, BarChart3, PiggyBank } from "lucide-react";
+import { Calculator, Sigma, TrendingUp, DollarSign, Percent, Wallet, FlaskConical, Users2, Gauge, Scale, Droplets, Landmark, Coins, BarChart3, PiggyBank } from "lucide-react";
 import { requireUser } from "@/lib/dal";
 import { db } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
@@ -131,7 +131,21 @@ export default async function OpsPage(props: PageProps<"/ops">) {
     headcounts: opsEntities.map((e) => e.headcount),
   });
   const opsById = new Map(opsSections.map((x) => [x.id, x]));
-  const baseBreakdown = ["revenue", "cost", "gm", "expratio", "rnd", "perhead"].map((id) => opsById.get(id)!).filter(Boolean);
+  const baseBreakdown = ["revenue", "cost", "gm", "expratio", "rnd", "perhead", "ebit", "ebitda"].map((id) => opsById.get(id)!).filter(Boolean);
+
+  // ---- EBIT / EBITDA tiles: the group figure, with each entity's own figure underneath ----
+  const earningsNote = (id: string, margin: string) => {
+    const sec = opsById.get(id);
+    const totalRow = sec?.rows.find((r) => r.kind === "total");
+    if (!sec || !totalRow) return margin;
+    const per = sec.cols.length > 1 ? sec.cols.slice(0, -1).map((c, i) => `${c} ${fmtM(Number(totalRow.values[i] ?? 0))}`).join(" · ") : "";
+    return per ? `${margin} · ${per}` : margin;
+  };
+  const ebitSec = opsById.get("ebit");
+  const ebitdaSec = opsById.get("ebitda");
+  const ebitVal = Number(ebitSec?.result ?? 0);
+  const ebitdaVal = Number(ebitdaSec?.result ?? 0);
+  const pctOf = (v: number) => (totalRevenue > 0 ? `${isZh ? "利润率" : "margin"} ${fmt1((v / totalRevenue) * 100)}%` : isZh ? "无营业收入" : "no revenue");
 
   // ---- Efficiency & financial-health ratios (labour productivity, liquidity, leverage, per-share) ----
   const nowDate = new Date();
@@ -231,6 +245,14 @@ export default async function OpsPage(props: PageProps<"/ops">) {
           <KpiTile icon={Wallet} color="var(--cat-4)" label={dict.m.expenseRatio} value={fmt1(expenseRatio)} unit="%" />
           <KpiTile icon={FlaskConical} color="var(--cat-5)" label={dict.m.rndIntensity} value={fmt1(totalRevenue > 0 ? (rndExp / totalRevenue) * 100 : 0)} unit="%" />
           <KpiTile icon={Users2} color="var(--cat-3)" label={dict.m.revenuePerHead} value={fmtM(revenuePerHead)} unit={dict.common.yi} />
+        </div>
+
+        <div className="text-[12px] font-semibold" style={{ color: "var(--ink-400)" }}>
+          {t("息税前 / 息税折旧摊销前利润", "Earnings before interest & tax")}
+        </div>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+          <KpiTile icon={Calculator} color="var(--cat-2)" label="EBIT" value={fmtM(ebitVal)} unit={dict.common.yi} note={earningsNote("ebit", pctOf(ebitVal))} />
+          <KpiTile icon={Sigma} color="var(--cat-4)" label="EBITDA" value={fmtM(ebitdaVal)} unit={dict.common.yi} note={earningsNote("ebitda", pctOf(ebitdaVal))} />
         </div>
 
         <div className="text-[12px] font-semibold" style={{ color: "var(--ink-400)" }}>

@@ -15,6 +15,8 @@ export interface PnlInputRow {
   rndExp: unknown;
   financeExp: unknown;
   netProfit: unknown;
+  /** Depreciation + amortisation for the month (optional: rows stored before it was captured read as 0). */
+  depreciation?: unknown;
 }
 
 const num = (v: unknown) => Number(v ?? 0);
@@ -47,6 +49,7 @@ export function buildPnlSections(args: {
   const rnd = per((r) => num(r.rndExp));
   const fin = per((r) => num(r.financeExp));
   const net = per((r) => num(r.netProfit));
+  const dna = per((r) => num(r.depreciation));
   const gross = revenue.map((v, i) => r2(v - cost[i]));
   const expenses = revenue.map((_, i) => r2(sell[i] + admin[i] + rnd[i] + fin[i]));
   const opProfit = gross.map((g, i) => r2(g - expenses[i]));
@@ -211,6 +214,70 @@ export function buildPnlSections(args: {
       { label: t("＝ 营业利润", "= Operating profit"), values: opProfit, kind: "total" },
     ],
     notes: [t("费用按「设置 → 费用分类映射」把每个费用科目归入销售/管理/研发/财务四类。", "Expenses are grouped into selling / administrative / R&D / finance by the expense-category mapping in Settings."), period],
+  });
+
+  // EBIT = earnings before interest and tax: net profit (the monthly P&L figure is before income tax) plus the finance expenses.
+  const ebit = net.map((n, i) => r2(n + fin[i]));
+  const ebitda = ebit.map((e, i) => r2(e + dna[i]));
+  const ebitMargin = ratio(ebit, revenue);
+  const ebitdaMargin = ratio(ebitda, revenue);
+  const hasDna = dna.some((x, i) => i < entities.length && x !== 0);
+  sections.push({
+    id: "ebit",
+    title: t("息税前利润 EBIT", "EBIT (earnings before interest & tax)"),
+    result: ebit[last] ?? 0,
+    formula: t("EBIT = 净利润 + 财务费用（利息等）；月度利润表的净利润为税前，不含所得税", "EBIT = net profit + finance expenses (interest etc.); the monthly P&L net profit is before income tax"),
+    cols,
+    rows: [
+      { label: t("净利润（利润表，税前）", "Net profit (P&L, before tax)"), values: net },
+      { label: t("＋ 财务费用（利息等）", "+ Finance expenses (interest etc.)"), values: fin },
+      { label: t("＝ EBIT", "= EBIT"), values: ebit, kind: "total" },
+      { label: t("EBIT 利润率（EBIT ÷ 营业收入）", "EBIT margin (EBIT ÷ revenue)"), values: ebitMargin, format: "pct" },
+      { label: t("对照：营业利润（见上）", "Memo: operating profit (above)"), values: opProfit },
+      { label: t("EBIT 与营业利润之差 = 其他收入/支出", "EBIT − operating profit = other income / expenses"), values: ebit.map((e, i) => r2(e - opProfit[i])) },
+    ],
+    notes: [
+      t("EBIT 包含其他收入/支出，所以可能与营业利润不同；所得税未入账时二者口径一致，如账内已记所得税，EBIT 会被低估，需要加回。", "EBIT includes other income / expenses, so it can differ from operating profit. Income tax is not deducted here; if the ledger books income tax inside net profit, EBIT is understated by that amount."),
+      t("利息收入若记在其他收入里，会留在 EBIT 中（系统只能识别财务费用）。", "Interest income, if booked as other income, stays inside EBIT (only finance expenses can be identified)."),
+      period,
+    ],
+    explanation: {
+      meaning: t("不受融资方式和税务安排影响的经营盈利能力：公司在付利息和所得税之前赚了多少。", "Operating profitability before financing and tax: what the business earned before paying interest and income tax."),
+      interpretation: [
+        t("适合比较资本结构不同的主体（有借款和没借款的主体可以直接比）。", "Useful for comparing entities with different capital structures — borrowers and non-borrowers become comparable."),
+        t("EBIT 为正而净利润为负，说明亏损来自利息负担。", "EBIT positive while net profit is negative means the loss comes from interest costs."),
+        t("EBIT 利润率 = EBIT ÷ 营业收入，看每 1 元收入留下多少经营盈利。", "EBIT margin = EBIT ÷ revenue — how much operating profit each 1 of sales leaves."),
+      ],
+      current: (ebit[last] ?? 0) === 0 ? undefined : t(`所选期间 EBIT 为 ${r2(ebit[last] ?? 0).toLocaleString("en-US")}${ebitMargin[last] !== null && ebitMargin[last] !== undefined ? `，EBIT 利润率 ${(ebitMargin[last] as number).toFixed(1)}%` : ""}。`, `EBIT for the period is ${r2(ebit[last] ?? 0).toLocaleString("en-US")}${ebitMargin[last] !== null && ebitMargin[last] !== undefined ? `, an EBIT margin of ${(ebitMargin[last] as number).toFixed(1)}%` : ""}.`),
+    },
+  });
+
+  sections.push({
+    id: "ebitda",
+    title: t("息税折旧摊销前利润 EBITDA", "EBITDA (earnings before interest, tax, depreciation & amortisation)"),
+    result: ebitda[last] ?? 0,
+    formula: t("EBITDA = EBIT + 折旧 + 摊销", "EBITDA = EBIT + depreciation + amortisation"),
+    cols,
+    rows: [
+      { label: t("EBIT（见上）", "EBIT (above)"), values: ebit },
+      { label: t("＋ 折旧与摊销", "+ Depreciation & amortisation"), hint: t("按科目名称从月度利润表识别（含 depreciation / amortisation）", "Picked from the monthly P&L by account name (anything with depreciation / amortisation)"), values: dna },
+      { label: t("＝ EBITDA", "= EBITDA"), values: ebitda, kind: "total" },
+      { label: t("EBITDA 利润率（EBITDA ÷ 营业收入）", "EBITDA margin (EBITDA ÷ revenue)"), values: ebitdaMargin, format: "pct" },
+    ],
+    notes: [
+      ...(hasDna ? [] : [t("尚未识别到折旧/摊销科目，因此 EBITDA 暂等于 EBIT：若账中有折旧或摊销，请执行一次「全部同步」（Xero）或重新导入利润表后再看。", "No depreciation or amortisation accounts have been picked up yet, so EBITDA equals EBIT for now. If the ledger has any, run \"Sync all\" (Xero) or re-import the profit and loss.")]),
+      t("EBITDA 不是现金流：它没有扣除营运资金变动、资本支出和税款。", "EBITDA is not cash flow: it leaves out working-capital movements, capital expenditure and tax."),
+      period,
+    ],
+    explanation: {
+      meaning: t("把折旧和摊销这类不涉及现金的费用加回后的经营盈利，常用来衡量主营业务产生现金的能力，也方便与不同折旧政策的主体比较。", "Operating profit with the non-cash charges for depreciation and amortisation added back — a common measure of the cash-generating power of the core business, and a fairer comparison between entities with different asset bases."),
+      interpretation: [
+        t("EBITDA 高于 EBIT 的部分就是折旧摊销：固定资产越多（如自有校舍、设备），差距越大。", "The gap between EBITDA and EBIT is the depreciation and amortisation — larger for entities with more fixed assets (premises, equipment)."),
+        t("EBITDA 为正而 EBIT 为负：主营业务能产生现金，但被折旧摊销吞掉了账面利润。", "EBITDA positive with EBIT negative: the core business generates cash but depreciation and amortisation eat the accounting profit."),
+        t("EBITDA 常与借款一起看（如 债务 ÷ EBITDA），衡量偿债压力。", "EBITDA is often read next to borrowings (e.g. debt ÷ EBITDA) to judge repayment pressure."),
+      ],
+      current: (ebitda[last] ?? 0) === 0 ? undefined : t(`所选期间 EBITDA 为 ${r2(ebitda[last] ?? 0).toLocaleString("en-US")}（含折旧摊销 ${r2(dna[last] ?? 0).toLocaleString("en-US")}）。`, `EBITDA for the period is ${r2(ebitda[last] ?? 0).toLocaleString("en-US")} (including ${r2(dna[last] ?? 0).toLocaleString("en-US")} of depreciation and amortisation).`),
+    },
   });
 
   sections.push({
