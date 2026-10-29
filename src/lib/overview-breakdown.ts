@@ -266,6 +266,7 @@ export function buildPnlSections(args: {
     ],
     notes: [
       ...(hasDna ? [] : [t("尚未识别到折旧/摊销科目，因此 EBITDA 暂等于 EBIT：若账中有折旧或摊销，请执行一次「全部同步」（Xero）或重新导入利润表后再看。", "No depreciation or amortisation accounts have been picked up yet, so EBITDA equals EBIT for now. If the ledger has any, run \"Sync all\" (Xero) or re-import the profit and loss.")]),
+      t("按 SFRS(I) 16，租赁费用体现为「使用权资产折旧」加「租赁利息」，二者都已加回 EBITDA（租金不再作为经营费用），所以有大量租赁的主体 EBITDA 会明显高于 EBIT。", "Under SFRS(I) 16 a lease shows up as right-of-use depreciation plus lease interest, and both are added back here — rent is no longer an operating expense — so an entity with large leases shows an EBITDA well above its EBIT."),
       t("EBITDA 不是现金流：它没有扣除营运资金变动、资本支出和税款。", "EBITDA is not cash flow: it leaves out working-capital movements, capital expenditure and tax."),
       period,
     ],

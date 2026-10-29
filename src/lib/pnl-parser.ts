@@ -29,6 +29,9 @@ export interface PnlParseResult {
   // or Other Expense) — feeds the Selling/Admin/R&D/Finance category split via
   // expense-categories.ts, which the "expenses" total alone can't provide.
   expenseLineItems: { label: string; value: number }[];
+  // Depreciation + amortisation wherever the chart of accounts puts it (Cost of Sales, Operating Expenses or Other Expenses) — an account
+  // is recognised by its NAME. Feeds EBITDA (EBIT + D&A).
+  depreciation: number;
 }
 
 const SECTION_PATTERNS: { key: keyof Pick<PnlParseResult, "revenue" | "costOfSales" | "expenses" | "otherIncome" | "otherExpense">; test: RegExp }[] = [
@@ -67,6 +70,7 @@ export function parsePnlReport(rows: string[][]): PnlParseResult {
   const totals: Record<string, number> = {};
   const sectionsFound: string[] = [];
   const expenseLineItems: { label: string; value: number }[] = [];
+  let depreciation = 0;
   let currentSectionKey: keyof typeof sums | null = null;
 
   for (const row of rows) {
@@ -105,6 +109,7 @@ export function parsePnlReport(rows: string[][]): PnlParseResult {
     if (currentSectionKey) {
       sums[currentSectionKey] += value;
       if (currentSectionKey === "expenses") expenseLineItems.push({ label, value });
+      if ((currentSectionKey === "expenses" || currentSectionKey === "costOfSales" || currentSectionKey === "otherExpense") && /depreciat|amortis|amortiz/i.test(label)) depreciation += value;
     }
   }
 
@@ -125,5 +130,6 @@ export function parsePnlReport(rows: string[][]): PnlParseResult {
     sectionsFound,
     usedComputedNetProfit: totals.netProfit === undefined,
     expenseLineItems,
+    depreciation,
   };
 }

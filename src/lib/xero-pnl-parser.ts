@@ -14,7 +14,12 @@ export interface XeroPnlResult {
   // sales, or "Other Income") — feeds the Selling/Admin/R&D/Finance category split via
   // expense-categories.ts, the same as the Smart P&L Import's expenseLineItems.
   expenseLineItems: { label: string; value: number }[];
+  // Depreciation + amortisation from every cost section (Cost of Sales included), recognised by account name. Feeds EBITDA and the
+  // derived cash flow.
+  depreciation: number;
 }
+
+const DEPRECIATION_RE = /depreciat|amortis|amortiz/i;
 
 function cellNumber(cells: { Value?: string }[] | undefined, index: number): number {
   const raw = cells?.[index]?.Value ?? "";
@@ -38,8 +43,9 @@ export function parseXeroPnl(report: XeroReport): XeroPnlResult {
   let netProfit = 0;
   let foundNetProfit = false;
   const expenseLineItems: { label: string; value: number }[] = [];
+  let depreciation = 0;
 
-  function walk(rows: XeroReport["Rows"], inExpenseSection: boolean) {
+  function walk(rows: XeroReport["Rows"], inExpenseSection: boolean, inCostOfSales = false) {
     for (const row of rows) {
       if (row.RowType === "Section") {
         const summary = row.Rows?.find((r) => r.RowType === "SummaryRow");
@@ -49,7 +55,7 @@ export function parseXeroPnl(report: XeroReport): XeroPnlResult {
         const isOtherIncome = otherIncomeSection(row.Title);
         if (isRevenue) revenue += total;
         else if (isCostOfSales) costOfSales += total;
-        if (row.Rows) walk(row.Rows, !isRevenue && !isCostOfSales && !isOtherIncome);
+        if (row.Rows) walk(row.Rows, !isRevenue && !isCostOfSales && !isOtherIncome, isCostOfSales);
       } else if (row.RowType === "Row" && row.Cells && row.Cells.length >= 2) {
         const label = (row.Cells[0]?.Value ?? "").trim();
         if (/^net\s+(profit|income)$/i.test(label)) {
@@ -57,6 +63,9 @@ export function parseXeroPnl(report: XeroReport): XeroPnlResult {
           foundNetProfit = true;
         } else if (inExpenseSection && label) {
           expenseLineItems.push({ label, value: cellNumber(row.Cells, row.Cells.length - 1) });
+          if (DEPRECIATION_RE.test(label)) depreciation += cellNumber(row.Cells, row.Cells.length - 1);
+        } else if (inCostOfSales && label && DEPRECIATION_RE.test(label)) {
+          depreciation += cellNumber(row.Cells, row.Cells.length - 1);
         }
       }
     }
@@ -78,5 +87,5 @@ export function parseXeroPnl(report: XeroReport): XeroPnlResult {
     netProfit = revenue - otherSections;
   }
 
-  return { revenue, costOfSales, netProfit, expenseLineItems };
+  return { revenue, costOfSales, netProfit, expenseLineItems, depreciation };
 }

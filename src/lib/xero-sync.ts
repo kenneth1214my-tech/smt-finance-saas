@@ -135,8 +135,8 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
         try {
           const { from, to } = monthDateRange(year, month);
           const report = await fetchXeroProfitAndLoss(accessToken, tenantId, from, to);
-          const { revenue, costOfSales, netProfit, expenseLineItems } = parseXeroPnl(report);
-          pnlByMonth.set(`${year}-${month}`, { netProfit, depreciation: depreciationOf(expenseLineItems) });
+          const { revenue, costOfSales, netProfit, expenseLineItems, depreciation } = parseXeroPnl(report);
+          pnlByMonth.set(`${year}-${month}`, { netProfit, depreciation });
           const grossMarginPct = revenue > 0 ? ((revenue - costOfSales) / revenue) * 100 : 0;
           // Only mapped labels (plus the narrow finance-keyword auto-suggestion) contribute —
           // unmapped line items are simply not yet categorized, not silently dropped from the
@@ -144,8 +144,8 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
           const { sellExp, adminExp, rndExp, financeExp } = applyCategoryMapping(expenseLineItems, categoryMapping);
           await db.monthlyFinancial.upsert({
             where: { subsidiaryId_year_month: { subsidiaryId, year, month } },
-            create: { subsidiaryId, organizationId, year, month, revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp, employmentCost: employmentCostOf(expenseLineItems), depreciation: depreciationOf(expenseLineItems) },
-            update: { revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp, employmentCost: employmentCostOf(expenseLineItems), depreciation: depreciationOf(expenseLineItems) },
+            create: { subsidiaryId, organizationId, year, month, revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp, employmentCost: employmentCostOf(expenseLineItems), depreciation },
+            update: { revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp, employmentCost: employmentCostOf(expenseLineItems), depreciation },
           });
           result.monthsSynced++;
         } catch (err) {
@@ -340,11 +340,11 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
         try {
           const { from, to } = monthDateRange(year, month);
           const report = await fetchXeroProfitAndLoss(accessToken, tenantId, from, to);
-          const { revenue, costOfSales, netProfit, expenseLineItems } = parseXeroPnl(report);
-          pnlByMonth.set(`${year}-${month}`, { netProfit, depreciation: depreciationOf(expenseLineItems) });
+          const { revenue, costOfSales, netProfit, expenseLineItems, depreciation } = parseXeroPnl(report);
+          pnlByMonth.set(`${year}-${month}`, { netProfit, depreciation });
           const grossMarginPct = revenue > 0 ? ((revenue - costOfSales) / revenue) * 100 : 0;
           const { sellExp, adminExp, rndExp, financeExp } = applyCategoryMapping(expenseLineItems, categoryMapping);
-          const data = { revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp, employmentCost: employmentCostOf(expenseLineItems), depreciation: depreciationOf(expenseLineItems) };
+          const data = { revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp, employmentCost: employmentCostOf(expenseLineItems), depreciation };
           const existing = await db.monthlyFinancial.findFirst({ where: { organizationId, subsidiaryId: null, year, month } });
           if (existing) await db.monthlyFinancial.update({ where: { id: existing.id }, data });
           else await db.monthlyFinancial.create({ data: { ...data, organizationId, subsidiaryId: null, year, month } });

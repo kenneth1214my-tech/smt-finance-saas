@@ -2392,6 +2392,7 @@ function PnlImport({
             adminExp: String(categorized?.adminExp ?? 0),
             rndExp: String(categorized?.rndExp ?? 0),
             financeExp: String(categorized?.financeExp ?? 0),
+            depreciation: String(parsed?.depreciation ?? 0),
           },
         ],
       }),
