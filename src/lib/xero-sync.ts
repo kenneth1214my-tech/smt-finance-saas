@@ -174,11 +174,11 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
     const [arOldest, apOldest] = await Promise.all([fetchOldestDueByContact(accessToken, tenantId, "ACCREC"), fetchOldestDueByContact(accessToken, tenantId, "ACCPAY")]);
     const arRows = arContacts.map((c) => {
       const agingDays = agingDaysFromDueDate(arOldest.get(c.ContactID) ?? null);
-      return { organizationId, nameZh: c.Name, nameEn: c.Name, subsidiaryId, balance: Number(c.Balances?.AccountsReceivable?.Outstanding ?? 0), agingDays, status: statusFromAgingDays(agingDays) };
+      return { organizationId, nameZh: c.Name, nameEn: c.Name, subsidiaryId, balance: Number(c.Balances?.AccountsReceivable?.Outstanding ?? 0), agingDays, status: statusFromAgingDays(agingDays), contactId: c.ContactID, syncedAt: new Date() };
     });
     const apRows = apContacts.map((c) => {
       const agingDays = agingDaysFromDueDate(apOldest.get(c.ContactID) ?? null);
-      return { organizationId, nameZh: c.Name, nameEn: c.Name, subsidiaryId, balance: Number(c.Balances?.AccountsPayable?.Outstanding ?? 0), agingDays, status: statusFromAgingDays(agingDays) };
+      return { organizationId, nameZh: c.Name, nameEn: c.Name, subsidiaryId, balance: Number(c.Balances?.AccountsPayable?.Outstanding ?? 0), agingDays, status: statusFromAgingDays(agingDays), contactId: c.ContactID, syncedAt: new Date() };
     });
 
     await db.$transaction([
@@ -189,6 +189,7 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
     ]);
     result.customersSynced = arRows.length;
     result.payablesSynced = apRows.length;
+    await db.xeroConnection.updateMany({ where: { subsidiaryId }, data: { arApCycleStartedAt: null, arApLastBatchAt: new Date(), arApLastBatchError: null } });
     worstArStatus = arRows.reduce((worstSoFar, r) => worse(worstSoFar, r.status), "GOOD" as RiskSeverity);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -380,11 +381,11 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
     const [arOldest, apOldest] = await Promise.all([fetchOldestDueByContact(accessToken, tenantId, "ACCREC"), fetchOldestDueByContact(accessToken, tenantId, "ACCPAY")]);
     const arRows = arContacts.map((c) => {
       const agingDays = agingDaysFromDueDate(arOldest.get(c.ContactID) ?? null);
-      return { organizationId, nameZh: c.Name, nameEn: c.Name, subsidiaryId: null, balance: Number(c.Balances?.AccountsReceivable?.Outstanding ?? 0), agingDays, status: statusFromAgingDays(agingDays) };
+      return { organizationId, nameZh: c.Name, nameEn: c.Name, subsidiaryId: null, balance: Number(c.Balances?.AccountsReceivable?.Outstanding ?? 0), agingDays, status: statusFromAgingDays(agingDays), contactId: c.ContactID, syncedAt: new Date() };
     });
     const apRows = apContacts.map((c) => {
       const agingDays = agingDaysFromDueDate(apOldest.get(c.ContactID) ?? null);
-      return { organizationId, nameZh: c.Name, nameEn: c.Name, subsidiaryId: null, balance: Number(c.Balances?.AccountsPayable?.Outstanding ?? 0), agingDays, status: statusFromAgingDays(agingDays) };
+      return { organizationId, nameZh: c.Name, nameEn: c.Name, subsidiaryId: null, balance: Number(c.Balances?.AccountsPayable?.Outstanding ?? 0), agingDays, status: statusFromAgingDays(agingDays), contactId: c.ContactID, syncedAt: new Date() };
     });
 
     await db.$transaction([
@@ -395,6 +396,7 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
     ]);
     result.customersSynced = arRows.length;
     result.payablesSynced = apRows.length;
+    await db.xeroGroupConnection.updateMany({ where: { organizationId }, data: { arApCycleStartedAt: null, arApLastBatchAt: new Date(), arApLastBatchError: null } });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     // Too many contacts for one live pass is expected — the background batch sync covers them — so it is
@@ -590,8 +592,10 @@ async function runArApBatch(
     // Prune rows this cycle should have refreshed but Xero no longer lists a balance for — only
     // ones the live sync has ever owned (contactId set); a manual-import row never picked up by
     // a live contact match stays untouched rather than being silently deleted.
-    await db.aRCustomer.deleteMany({ where: { organizationId, subsidiaryId, contactId: { not: null }, OR: [{ syncedAt: null }, { syncedAt: { lt: effectiveCycleStart } }] } });
-    await db.payable.deleteMany({ where: { organizationId, subsidiaryId, contactId: { not: null }, OR: [{ syncedAt: null }, { syncedAt: { lt: effectiveCycleStart } }] } });
+    // Anything not refreshed this cycle is gone from Xero's outstanding balances — including leftover rows with no contact id (earlier
+    // imports or name-matched rows), which would otherwise sit in the AR / AP totals forever.
+    await db.aRCustomer.deleteMany({ where: { organizationId, subsidiaryId, OR: [{ syncedAt: null }, { syncedAt: { lt: effectiveCycleStart } }] } });
+    await db.payable.deleteMany({ where: { organizationId, subsidiaryId, OR: [{ syncedAt: null }, { syncedAt: { lt: effectiveCycleStart } }] } });
   }
 
   return {
