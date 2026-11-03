@@ -7,7 +7,7 @@ import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary, withBaseCurrency, fmtMoney, scaleMoney } from "@/lib/i18n/dictionaries";
 import { localizedName } from "@/lib/localize";
 import { getBaseCurrency, getFyeMonth } from "@/lib/currency";
-import { fiscalFindMany } from "@/lib/fiscal";
+import { fiscalFindMany, currentFiscal } from "@/lib/fiscal";
 import { parsePeriod, periodLabel } from "@/lib/period";
 import { getReportYears } from "@/lib/period-server";
 import PeriodSelector from "@/components/PeriodSelector";
@@ -31,7 +31,10 @@ export default async function BudgetPage(props: PageProps<"/budget">) {
   const baseCurrency = await getBaseCurrency(organizationId);
   const dict = withBaseCurrency(getDictionary(locale), locale, baseCurrency);
   const fmtM = (n: number) => fmtMoney(n, locale);
-  const reportYears = await getReportYears(organizationId, period.year, fye);
+  const dataYears = await getReportYears(organizationId, period.year, fye);
+  // A budget looks forward, so besides every year that has data the picker offers the next three years (planning a year that has not started).
+  const thisYear = currentFiscal(fye).year;
+  const reportYears = [...new Set([...dataYears, thisYear, thisYear + 1, thisYear + 2, thisYear + 3])].sort((a, b) => b - a);
   const isFull = period.fromMonth === 1 && period.toMonth === 12;
   const periodMonths = period.toMonth - period.fromMonth + 1;
   const subsidiaries = await db.subsidiary.findMany({ where: { organizationId }, orderBy: { sortOrder: "asc" } });
@@ -70,6 +73,7 @@ export default async function BudgetPage(props: PageProps<"/budget">) {
     let budgetCost: number;
     let budgetExp: number;
     let auto = false;
+    let annualised = false;
     if (annual > 0) {
       budget = (annual * periodMonths) / 12;
       budgetElapsed = (annual * elapsed) / 12;
@@ -79,8 +83,12 @@ export default async function BudgetPage(props: PageProps<"/budget">) {
       // Automatic baseline: last year's full-year actuals, spread evenly over twelve months like a real annual budget.
       auto = true;
       const py = totals(prevAll);
-      budget = (py.revenue * periodMonths) / 12;
-      budgetElapsed = (py.revenue * elapsed) / 12;
+      // Last year may be incomplete (planning next year while this one is still running): scale it up to twelve months so the baseline is not understated.
+      const prevMonths = new Set(prevAll.map((m) => m.month)).size;
+      const scale = prevMonths > 0 && prevMonths < 12 ? 12 / prevMonths : 1;
+      if (scale > 1) annualised = true;
+      budget = (py.revenue * scale * periodMonths) / 12;
+      budgetElapsed = (py.revenue * scale * elapsed) / 12;
       budgetCost = budgetElapsed * (py.cost / py.revenue);
       budgetExp = budgetElapsed * (py.expense / py.revenue);
     } else {
@@ -92,7 +100,7 @@ export default async function BudgetPage(props: PageProps<"/budget">) {
     const actual = now.revenue;
     const rate = budget > 0 ? (actual / budget) * 100 : 0;
     const variance = actual - budgetElapsed;
-    return { sub, budget, actual, rate, variance, auto, actualCost: now.cost, actualExp: now.expense, budgetCost, budgetExp };
+    return { sub, budget, actual, rate, variance, auto, annualised, actualCost: now.cost, actualExp: now.expense, budgetCost, budgetExp };
   });
 
   const totalActual = rows.reduce((a, r) => a + r.actual, 0);
@@ -108,7 +116,9 @@ export default async function BudgetPage(props: PageProps<"/budget">) {
   const costExec = hasBudget && sumOf((r) => r.budgetCost) > 0 ? (sumOf((r) => r.actualCost) / sumOf((r) => r.budgetCost)) * 100 : null;
   const expExec = hasBudget && sumOf((r) => r.budgetExp) > 0 ? (sumOf((r) => r.actualExp) / sumOf((r) => r.budgetExp)) * 100 : null;
   const noBudgetNote = isZh ? "未设置年度预算 — 在 Xero 建立预算后将自动同步" : "No annual budget set — it syncs automatically once one is created in Xero";
-  const autoNote = isZh ? "自动基准：以去年全年实际数平均分摊到各月作为预算（账中尚无年度预算）" : "Automatic baseline: last year's full-year actuals spread evenly over the months (no annual budget on file)";
+  const autoNote = isZh
+    ? `自动基准：以去年全年实际数平均分摊到各月作为预算（账中尚无年度预算）${rows.some((x) => x.annualised) ? "；去年数据不足 12 个月的主体已按全年折算" : ""}`
+    : `Automatic baseline: last year's full-year actuals spread evenly over the months (no annual budget on file)${rows.some((x) => x.annualised) ? "; last year is incomplete for some entities, so it is scaled up to twelve months" : ""}`;
   // Full-year forecast = the pace of the whole financial year so far, independent of the period picked above.
   const yearMonthCount = yearRows.length ? Math.max(...yearRows.map((m) => m.month)) : 0;
   const forecast = yearMonthCount > 0 ? (totals(yearRows).revenue / yearMonthCount) * 12 : 0;
