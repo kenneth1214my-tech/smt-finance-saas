@@ -11,16 +11,19 @@ import KpiTile from "@/components/ui/KpiTile";
 import AuditScanButton from "./AuditScanButton";
 import FindingRow from "./FindingRow";
 import ScopeFilter from "./ScopeFilter";
+import LedgerAuditPanel from "./LedgerAuditPanel";
+import { loadLedgerAudit } from "@/lib/ledger-audit-data";
 
 const SEVERITY_TONE: Record<string, "good" | "warning" | "serious" | "critical"> = { LOW: "good", MEDIUM: "warning", HIGH: "serious", CRITICAL: "critical" };
 const STATUS_TONE: Record<string, "good" | "warning" | "serious" | "critical"> = { OPEN: "critical", IN_PROGRESS: "warning", CLOSED: "good" };
-const AREA_KEY: Record<string, "auditAreaAR" | "auditAreaAP" | "auditAreaBudget" | "auditAreaDebt" | "auditAreaRisk" | "auditAreaSod"> = {
+const AREA_KEY: Record<string, "auditAreaAR" | "auditAreaAP" | "auditAreaBudget" | "auditAreaDebt" | "auditAreaRisk" | "auditAreaSod" | "auditAreaLedger"> = {
   ar: "auditAreaAR",
   ap: "auditAreaAP",
   budget: "auditAreaBudget",
   debt: "auditAreaDebt",
   risk: "auditAreaRisk",
   sod: "auditAreaSod",
+  ledger: "auditAreaLedger",
 };
 const VALID_SCOPES: AuditScope[] = ["all", "hq", "subsidiary"];
 
@@ -40,6 +43,7 @@ export default async function AuditPage(props: PageProps<"/audit">) {
   const allFindings = await db.auditFinding.findMany({ where: { organizationId }, orderBy: [{ status: "asc" }, { severity: "desc" }, { dateIdentified: "desc" }] });
   const findings = allFindings.filter((f) => matchesAuditScope(f.entityLabel, scope));
 
+  const ledgerResults = await loadLedgerAudit(organizationId, locale);
   const open = findings.filter((f) => f.status !== "CLOSED");
   const highCritical = open.filter((f) => f.severity === "HIGH" || f.severity === "CRITICAL");
   const overdue = open.filter((f) => f.targetDate && f.targetDate < new Date());
@@ -65,6 +69,8 @@ export default async function AuditPage(props: PageProps<"/audit">) {
         </div>
 
         {canApprove(user.role) && <AuditScanButton locale={locale} label={dict.m.auditRunScan} scanningLabel={dict.m.auditScanning} noNewLabel={dict.m.auditNoNewFindings} />}
+
+        <LedgerAuditPanel results={ledgerResults} locale={locale} />
 
         {areaCounts.size > 0 && (
           <Card title={dict.m.auditByAreaCard}>

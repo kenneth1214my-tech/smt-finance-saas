@@ -1,7 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { fetchXeroBalanceSheetSeries } from "@/lib/xero";
-import { parseBalanceSheetSeries, deriveMonth, type MonthSnapshot, type PnlMonth } from "@/lib/cashflow-derive";
+import { parseBalanceSheetSeries, deriveMonth, type MonthSnapshot, type PnlMonth, type LedgerAccountLine } from "@/lib/cashflow-derive";
 
 export { depreciationOf, type PnlMonth } from "@/lib/cashflow-derive";
 
@@ -30,11 +30,19 @@ export async function syncDerivedCashFlow(args: {
   const newest = ordered[ordered.length - 1];
   const needed = ordered.length + 1; // each flow needs the previous month-end too
   const balances = new Map<string, MonthSnapshot>();
+  // The same reports also carry the deferred revenue / prepayment / accrual accounts — merged across the report's column blocks by name.
+  const ledgerAccounts = new Map<string, LedgerAccountLine>();
   try {
     const reports = await fetchXeroBalanceSheetSeries(accessToken, tenantId, monthEnd(newest.year, newest.month), needed);
     for (const report of reports) {
-      const { byMonth, warnings } = parseBalanceSheetSeries(report);
+      const { byMonth, warnings, accounts } = parseBalanceSheetSeries(report);
       byMonth.forEach((v, k) => balances.set(k, v));
+      for (const a of accounts) {
+        const id = `${a.group}|${a.section}|${a.name}`;
+        const have = ledgerAccounts.get(id);
+        if (have) a.balances.forEach((v, k) => have.balances.set(k, v));
+        else ledgerAccounts.set(id, { ...a, balances: new Map(a.balances) });
+      }
       for (const w of warnings) if (!errors.includes(w)) errors.push(w);
     }
   } catch (err) {
@@ -71,6 +79,22 @@ export async function syncDerivedCashFlow(args: {
     } catch (err) {
       errors.push(`Balance sheet ${y}-${m}: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  // Account-level balances for the audit checks: replace each completed month's rows for this entity.
+  try {
+    const stamp = new Date();
+    for (const key of balances.keys()) {
+      const [y, m] = key.split("-").map(Number);
+      if (new Date(Date.UTC(y, m, 0)) > stamp) continue;
+      const rows = [...ledgerAccounts.values()]
+        .filter((a) => a.balances.has(key))
+        .map((a) => ({ organizationId, subsidiaryId, year: y, month: m, group: a.group, section: a.section, accountName: a.name, balance: r2(a.balances.get(key) as number) }));
+      await db.accountBalanceMonthly.deleteMany({ where: { organizationId, subsidiaryId, year: y, month: m } });
+      if (rows.length > 0) await db.accountBalanceMonthly.createMany({ data: rows });
+    }
+  } catch (err) {
+    errors.push(`Ledger account balances: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   let stored = 0;

@@ -16,13 +16,14 @@ import ScopeFilter from "../../audit/ScopeFilter";
 
 const SEVERITY_TONE: Record<string, "good" | "warning" | "serious" | "critical"> = { LOW: "good", MEDIUM: "warning", HIGH: "serious", CRITICAL: "critical" };
 const STATUS_TONE: Record<string, "good" | "warning" | "serious" | "critical"> = { OPEN: "critical", IN_PROGRESS: "warning", CLOSED: "good" };
-const AREA_KEY: Record<string, "auditAreaAR" | "auditAreaAP" | "auditAreaBudget" | "auditAreaDebt" | "auditAreaRisk" | "auditAreaSod"> = {
+const AREA_KEY: Record<string, "auditAreaAR" | "auditAreaAP" | "auditAreaBudget" | "auditAreaDebt" | "auditAreaRisk" | "auditAreaSod" | "auditAreaLedger"> = {
   ar: "auditAreaAR",
   ap: "auditAreaAP",
   budget: "auditAreaBudget",
   debt: "auditAreaDebt",
   risk: "auditAreaRisk",
   sod: "auditAreaSod",
+  ledger: "auditAreaLedger",
 };
 
 export default async function AuditReportPage(props: PageProps<"/report/audit-report">) {

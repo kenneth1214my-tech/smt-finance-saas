@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { effectiveRiskRating, worse, type RiskSeverity } from "@/lib/risk-rating";
 import { localizedName } from "@/lib/localize";
 import type { Locale } from "@/lib/i18n/dictionaries";
+import { loadLedgerAudit } from "@/lib/ledger-audit-data";
 
 // Scope note: this module only detects exceptions computable from data that actually exists in
 // this schema — MonthlyFinancial (aggregate monthly totals), ARCustomer/Payable (balance + aging
@@ -13,7 +14,7 @@ import type { Locale } from "@/lib/i18n/dictionaries";
 // against data that isn't real would violate this project's standing rule to never present fake
 // numbers as real. Every finding below is traceable to a specific real row.
 
-const AREA_CODE: Record<string, string> = { ar: "AR", ap: "AP", budget: "BUD", debt: "DEBT", risk: "RISK", sod: "SOD" };
+const AREA_CODE: Record<string, string> = { ar: "AR", ap: "AP", budget: "BUD", debt: "DEBT", risk: "RISK", sod: "SOD", ledger: "LED" };
 
 // entityLabel is captured as real, already-localized text at detection time (see the isZh
 // branches throughout this file), not a stable locale-independent key — a scan run in English
@@ -313,6 +314,35 @@ async function detectRiskRatingDivergence(organizationId: string, year: number, 
   return findings;
 }
 
+// Deferred revenue / prepayment / accrual accounts: every check that comes back "warn" or "fail" becomes a finding (see lib/ledger-audit.ts).
+async function detectLedgerExceptions(organizationId: string, locale: Locale): Promise<DraftFinding[]> {
+  const isZh = locale === "zh" || locale === "zh-Hant";
+  const results = await loadLedgerAudit(organizationId, locale);
+  const groupName = (g: string) => (g === "DEFERRED_REVENUE" ? (isZh ? "递延收入" : "Deferred revenue") : g === "PREPAYMENT" ? (isZh ? "预付款项" : "Prepayments") : isZh ? "应计项目" : "Accruals");
+  const out: DraftFinding[] = [];
+  for (const entity of results) {
+    for (const g of entity.groups) {
+      for (const c of g.checks) {
+        if (c.status !== "warn" && c.status !== "fail") continue;
+        out.push({
+          area: "ledger",
+          severity: c.status === "fail" ? "HIGH" : "MEDIUM",
+          entityLabel: entity.label,
+          transactionRef: c.account ?? groupName(g.group),
+          amount: c.amount,
+          criteria: c.criteria,
+          condition: c.detail,
+          evidence: `Xero balance sheet (AccountBalanceMonthly) — ${entity.label} / ${g.group}${c.account ? " / " + c.account : ""}, latest month-end ${g.latestKey ?? "n/a"}; check "${c.id}"`,
+          riskImpact: c.risk,
+          recommendation: c.recommendation,
+          dedupKey: `ledger|${entity.id ?? "hq"}|${g.group}|${c.id}|${c.account ?? ""}`,
+        });
+      }
+    }
+  }
+  return out;
+}
+
 async function detectSegregationOfDuties(organizationId: string, locale: Locale): Promise<DraftFinding[]> {
   const isZh = locale === "zh" || locale === "zh-Hant";
   const approvers = await db.user.findMany({ where: { organizationId, status: "ACTIVE", role: { in: ["ADMIN", "DIRECTOR"] } } });
@@ -337,15 +367,16 @@ async function detectSegregationOfDuties(organizationId: string, locale: Locale)
 }
 
 export async function runAuditScan(organizationId: string, year: number, locale: Locale): Promise<{ created: number; skipped: number }> {
-  const [ar, ap, budget, debt, riskDiv, sod] = await Promise.all([
+  const [ar, ap, budget, debt, riskDiv, sod, ledger] = await Promise.all([
     detectARExceptions(organizationId, locale),
     detectAPExceptions(organizationId, locale),
     detectBudgetVariance(organizationId, year, locale),
     detectDebtRatioExceptions(organizationId, locale),
     detectRiskRatingDivergence(organizationId, year, locale),
     detectSegregationOfDuties(organizationId, locale),
+    detectLedgerExceptions(organizationId, locale),
   ]);
-  const drafts = [...ar, ...ap, ...budget, ...debt, ...riskDiv, ...sod];
+  const drafts = [...ar, ...ap, ...budget, ...debt, ...riskDiv, ...sod, ...ledger];
 
   const existingOpen = await db.auditFinding.findMany({
     where: { organizationId, status: { in: ["OPEN", "IN_PROGRESS"] } },

@@ -66,10 +66,36 @@ export interface BalanceDetail {
 }
 export type MonthSnapshot = MonthBalances & BalanceTotals & BalanceDetail;
 
+// The three accounts the internal-audit ledger checks look at, picked out by NAME from the balance sheet (a chart of accounts has no flag
+// for them). Deferred revenue and accruals are liabilities; prepayments (and accrued income) are assets.
+export type LedgerGroup = "DEFERRED_REVENUE" | "PREPAYMENT" | "ACCRUAL";
+const DEFERRED_REVENUE_RE = /deferred\s*(income|revenue)|unearned|(income|revenue|fees?)\s*(received\s*)?in\s*advance|advance\s*(fees?|receipts?|payments?\s*received)|contract\s*liabilit/i;
+const PREPAYMENT_RE = /prepay|prepaid|deposit\s*paid|advances?\s*paid|paid\s*in\s*advance/i;
+const ACCRUAL_RE = /accru|unbilled\s*(revenue|income|receivable)/i;
+export function ledgerGroupOf(section: "bank" | "asset" | "liability" | "equity", label: string): LedgerGroup | null {
+  if (section === "liability") {
+    if (DEFERRED_REVENUE_RE.test(label)) return "DEFERRED_REVENUE";
+    if (ACCRUAL_RE.test(label)) return "ACCRUAL";
+    return null;
+  }
+  if (section === "asset") {
+    if (PREPAYMENT_RE.test(label)) return "PREPAYMENT";
+    if (ACCRUAL_RE.test(label)) return "ACCRUAL"; // accrued income / unbilled revenue
+    return null;
+  }
+  return null;
+}
+export interface LedgerAccountLine {
+  group: LedgerGroup;
+  name: string;
+  section: "asset" | "liability";
+  balances: Map<string, number>; // "yyyy-m" -> balance as printed on the report
+}
+
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
 // One report with N period columns -> balances per month-end column, keyed "yyyy-m".
-export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<string, MonthSnapshot>; warnings: string[] } {
+export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<string, MonthSnapshot>; warnings: string[]; accounts: LedgerAccountLine[] } {
   const rows = report.Rows ?? [];
   const warnings: string[] = [];
   const header = rows.find((r) => r.RowType === "Header");
@@ -81,6 +107,7 @@ export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<stri
   });
   const blank = (): MonthSnapshot => ({ cash: 0, clearing: 0, loan: 0, opAsset: 0, fixed: 0, finAsset: 0, opLiab: 0, finLiab: 0, equity: 0, totalAssets: 0, totalLiabilities: 0, totalEquity: 0, receivables: 0, inventory: 0, loanCurrent: 0, finLiabCurrent: 0, shareCapital: 0, dividends: 0 });
   const byMonth = new Map<string, MonthSnapshot>();
+  const accounts: LedgerAccountLine[] = [];
   keys.forEach((k) => k && byMonth.set(k, blank()));
 
   for (const section of rows) {
@@ -94,6 +121,15 @@ export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<stri
     for (const line of lines) {
       const label = (line.Cells?.[0]?.Value ?? "").trim();
       const cls = classifyLine(kind, label);
+      const ledgerGroup = ledgerGroupOf(kind, label);
+      if (ledgerGroup && (kind === "asset" || kind === "liability")) {
+        const balances = new Map<string, number>();
+        keys.forEach((k, i) => {
+          const v = parseFloat(line.Cells?.[i + 1]?.Value ?? "");
+          if (k && !Number.isNaN(v)) balances.set(k, v);
+        });
+        accounts.push({ group: ledgerGroup, name: label, section: kind, balances });
+      }
       keys.forEach((k, i) => {
         if (!k) return;
         const v = parseFloat(line.Cells?.[i + 1]?.Value ?? "");
@@ -127,7 +163,7 @@ export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<stri
     }
   };
   walkTotals(rows);
-  return { byMonth, warnings };
+  return { byMonth, warnings, accounts };
 }
 
 export function employmentCostOf(expenseLineItems: { label: string; value: number }[]): number {

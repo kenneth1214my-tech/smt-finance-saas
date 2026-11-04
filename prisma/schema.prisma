@@ -834,6 +834,25 @@ model DeferredTaxItem {
 // latest-sync snapshot on Subsidiary/Organization. Accounts are grouped by NAME (see
 // cashflow-derive.ts), not Xero's section headings; all balances are in the entity's own currency
 // with Xero's signs (assets +, liabilities +, equity +, loan accounts held in the Bank section -).
+// Month-end balance of the deferred revenue, prepayment and accrual accounts, read BY NAME from the Xero balance sheet at each sync. The
+// internal-audit ledger checks (lib/ledger-audit.ts) run on these. One row per account per entity per month; the sync replaces a month's rows.
+model AccountBalanceMonthly {
+  id             String   @id @default(cuid())
+  organizationId String
+  // null = the group / HQ company itself
+  subsidiaryId   String?
+  year           Int
+  month          Int
+  group          String // DEFERRED_REVENUE | PREPAYMENT | ACCRUAL
+  section        String // asset | liability
+  accountName    String
+  balance        Decimal  @db.Decimal(14, 2)
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, year, month])
+  @@index([subsidiaryId])
+}
+
 model BalanceSheetMonthly {
   id             String       @id @default(cuid())
   organizationId String
