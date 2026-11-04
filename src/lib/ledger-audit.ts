@@ -44,8 +44,30 @@ export interface LedgerCheck {
   recommendation: string;
 }
 
+/** One month of the group's roll-forward: every account's balance, the total, the movement, and the P&L / balance-sheet figures it is judged against. */
+export interface LedgerDetailRow {
+  key: string;
+  /** Balance of each account at month-end, in the same order as LedgerGroupResult.accounts (null = account not on the report that month). */
+  balances: (number | null)[];
+  total: number;
+  /** Change in the total since the previous month-end (null for the first month on file). */
+  movement: number | null;
+  revenue: number | null;
+  opex: number | null;
+  /** The balance-sheet total the group is part of (operating assets for prepayments, operating liabilities otherwise). */
+  bsTotal: number | null;
+  /** Total as a share of that balance-sheet total, %. */
+  shareOfBs: number | null;
+  /** Total expressed in months of trailing-12-month average revenue (deferred revenue) or operating spend (prepayments, accruals). */
+  months: number | null;
+}
+
 export interface LedgerGroupResult {
   group: LedgerGroup;
+  /** Last 12 month-ends, oldest first. */
+  detail: LedgerDetailRow[];
+  /** Which P&L line `months` is measured against. */
+  basis: "revenue" | "opex";
   accounts: { name: string; section: "asset" | "liability"; latest: number | null; series: { key: string; balance: number }[] }[];
   latestKey: string | null;
   months: number;
@@ -85,14 +107,17 @@ export function runLedgerChecks(entities: LedgerEntityInput[], isZh: boolean): L
       const add = (c: LedgerCheck) => checks.push(c);
       const groupName = group === "DEFERRED_REVENUE" ? t("递延收入", "Deferred revenue") : group === "PREPAYMENT" ? t("预付款项", "Prepayments") : t("应计项目", "Accruals");
 
+      const basis: "revenue" | "opex" = group === "DEFERRED_REVENUE" ? "revenue" : "opex";
       if (accounts.length === 0 || !latestKey) {
         add({
           id: "coverage", status: "info", account: null, amount: null,
           title: t("账户覆盖", "Account coverage"),
-          detail: t(`在 Xero 资产负债表中没有按名称找到「${groupName}」账户（或尚未同步）。执行「全部同步」后会自动读取；若账目使用了其他名称，请告知。`, `No "${groupName}" account was found by name on the Xero balance sheet (or it has not been synced yet). "Sync all" reads it automatically; if the books use a different name, tell us and it is added.`),
+          detail: entity.accounts.length > 0
+            ? t(`该主体的 Xero 资产负债表上没有「${groupName}」账户，无需检查。若账目其实使用了其他名称，请告知以便加入。`, `This entity's Xero balance sheet has no "${groupName}" account, so there is nothing to check. If the books use a different name for it, tell us and it is added.`)
+            : t(`在 Xero 资产负债表中没有按名称找到「${groupName}」账户（或尚未同步）。执行「全部同步」后会自动读取；若账目使用了其他名称，请告知。`, `No "${groupName}" account was found by name on the Xero balance sheet (or it has not been synced yet). "Sync all" reads it automatically; if the books use a different name, tell us and it is added.`),
           criteria: "", risk: "", recommendation: "",
         });
-        return { group, accounts, latestKey, months: 0, checks };
+        return { group, accounts, latestKey, months: 0, checks, detail: [], basis };
       }
 
       const normalSection: "asset" | "liability" = group === "PREPAYMENT" ? "asset" : "liability";
@@ -267,7 +292,32 @@ export function runLedgerChecks(entities: LedgerEntityInput[], isZh: boolean): L
         }
       }
 
-      return { group, accounts, latestKey, months: allKeys.length, checks };
+      // ---- month-by-month roll-forward of every account (the breakdown behind the checks)
+      const detailKeys = allKeys.slice(-12);
+      const bsTotals = normalSection === "asset" ? entity.opAssets : entity.opLiabilities;
+      const avgTo = (rec: Record<string, number>, key: string) => {
+        const idx = monthIdx(key);
+        const ks = Object.keys(rec).filter((k) => monthIdx(k) <= idx && monthIdx(k) > idx - 12);
+        return ks.length ? ks.reduce((s, k) => s + rec[k], 0) / ks.length : 0;
+      };
+      const detail: LedgerDetailRow[] = detailKeys.map((key) => {
+        const prevKey = allKeys[allKeys.indexOf(key) - 1];
+        const total = r2(sumAt(key));
+        const bs = bsTotals[key];
+        const base = avgTo(basis === "revenue" ? entity.revenue : entity.opex, key);
+        return {
+          key,
+          balances: accts.map((a) => (a.balances[key] === undefined ? null : r2(a.balances[key]))),
+          total,
+          movement: prevKey ? r2(total - sumAt(prevKey)) : null,
+          revenue: entity.revenue[key] ?? null,
+          opex: entity.opex[key] ?? null,
+          bsTotal: bs === undefined ? null : r2(bs),
+          shareOfBs: bs !== undefined && bs > 0 ? r2((total / bs) * 100) : null,
+          months: base > 0 ? r2(total / base) : null,
+        };
+      });
+      return { group, accounts, latestKey, months: allKeys.length, checks, detail, basis };
     });
     return { id: entity.id, label: entity.label, groups };
   });

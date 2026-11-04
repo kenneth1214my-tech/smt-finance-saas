@@ -1,7 +1,7 @@
 import { CheckCircle2, AlertTriangle, XCircle, Info } from "lucide-react";
 import Card from "@/components/ui/Card";
 import { fmtMoney, type Locale } from "@/lib/i18n/dictionaries";
-import type { CheckStatus, LedgerEntityResult, LedgerGroup } from "@/lib/ledger-audit";
+import type { CheckStatus, LedgerEntityResult, LedgerGroup, LedgerGroupResult } from "@/lib/ledger-audit";
 
 const ICON: Record<CheckStatus, { Icon: typeof CheckCircle2; color: string }> = {
   pass: { Icon: CheckCircle2, color: "var(--status-good)" },
@@ -14,6 +14,71 @@ const keyLabel = (k: string) => {
   const [y, m] = k.split("-");
   return `${y}-${m.padStart(2, "0")}`;
 };
+
+function BreakdownTable({ g, t, money }: { g: LedgerGroupResult; t: (zh: string, en: string) => string; money: (n: number | null) => string }) {
+  const th = "whitespace-nowrap px-2 py-1.5 text-right font-semibold";
+  const td = "whitespace-nowrap px-2 py-1 text-right tabular-nums";
+  const basisLabel = g.basis === "revenue" ? t("相当于月收入倍数", "Months of revenue") : t("相当于月支出倍数", "Months of spend");
+  const bsLabel = g.group === "PREPAYMENT" ? t("经营性资产合计", "Operating assets") : t("经营性负债合计", "Operating liabilities");
+  const rows = [...g.detail].reverse(); // newest first
+  return (
+    <div className="overflow-x-auto px-3 pb-3">
+      <table className="w-full min-w-[640px] text-[11.8px]">
+        <thead>
+          <tr style={{ color: "var(--ink-400)" }}>
+            <th className="px-2 py-1.5 text-left font-semibold">{t("月份", "Month")}</th>
+            {g.accounts.map((a) => (
+              <th key={a.name} className={th}>
+                {a.name}
+              </th>
+            ))}
+            {g.accounts.length > 1 && <th className={th}>{t("合计", "Total")}</th>}
+            <th className={th}>{t("较上月变动", "Movement")}</th>
+            <th className={th}>{t("当月收入", "Revenue")}</th>
+            <th className={th}>{t("当月支出", "Spend")}</th>
+            <th className={th}>{bsLabel}</th>
+            <th className={th}>{t("占比", "Share")}</th>
+            <th className={th}>{basisLabel}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.key} className="border-t" style={{ borderColor: "var(--border)" }}>
+              <td className="px-2 py-1 font-semibold" style={{ color: "var(--ink-900)" }}>
+                {keyLabel(r.key)}
+              </td>
+              {r.balances.map((b, i) => (
+                <td key={i} className={td} style={{ color: b !== null && b < -1 ? "var(--status-critical)" : "var(--ink-900)" }}>
+                  {money(b)}
+                </td>
+              ))}
+              {g.accounts.length > 1 && (
+                <td className={td} style={{ color: "var(--ink-900)", fontWeight: 700 }}>
+                  {money(r.total)}
+                </td>
+              )}
+              <td className={td} style={{ color: r.movement === null ? "var(--ink-400)" : r.movement < 0 ? "var(--status-good)" : "var(--ink-900)" }}>
+                {r.movement === null ? "—" : (r.movement > 0 ? "+" : "") + money(r.movement)}
+              </td>
+              <td className={td} style={{ color: "var(--ink-600)" }}>{money(r.revenue)}</td>
+              <td className={td} style={{ color: "var(--ink-600)" }}>{money(r.opex)}</td>
+              <td className={td} style={{ color: "var(--ink-600)" }}>{money(r.bsTotal)}</td>
+              <td className={td} style={{ color: "var(--ink-600)" }}>{r.shareOfBs === null ? "—" : r.shareOfBs.toFixed(1) + "%"}</td>
+              <td className={td} style={{ color: "var(--ink-600)" }}>{r.months === null ? "—" : r.months.toFixed(1)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="mt-2 text-[11px] leading-relaxed" style={{ color: "var(--ink-400)" }}>
+        {g.group === "DEFERRED_REVENUE"
+          ? t("变动 = 新增预收款 − 结转为收入的金额；两者在资产负债表上无法拆分，逐笔拆分需对照 Xero 的日记账和发票。", "Movement = new advance billings − amounts released to revenue. The balance sheet cannot split the two; the split needs the Xero journals and invoices.")
+          : g.group === "PREPAYMENT"
+            ? t("变动 = 新增预付 − 摊销为费用的金额；下降说明在摊销，持续上升说明摊销可能遗漏。", "Movement = new prepayments − amounts amortised to expense. A fall means amortisation is happening; a steady rise suggests it is being missed.")
+            : t("变动 = 新计提 − 冲回/结清的金额；正常情况下应计会在下月被实际发票冲回。", "Movement = new accruals − amounts reversed or settled. Normally an accrual reverses when the real invoice arrives next month.")}
+      </div>
+    </div>
+  );
+}
 
 // Internal audit → "Deferred revenue, prepayments & accruals": for each entity, the account balances read from the Xero balance sheet and the
 // automatic accuracy checks on them. Server-rendered; nothing here is typed in.
@@ -91,6 +156,12 @@ export default function LedgerAuditPanel({ results, locale }: { results: LedgerE
                             <b>{c.title}</b>
                             {c.account ? <span style={{ color: "var(--ink-400)" }}> · {c.account}</span> : null}
                             <span style={{ color: "var(--ink-600)" }}> — {c.detail}</span>
+                            {(c.status === "warn" || c.status === "fail") && c.recommendation ? (
+                              <span className="mt-0.5 block text-[11.5px]" style={{ color: "var(--ink-400)" }}>
+                                {t("建议：", "Action: ")}
+                                {c.recommendation}
+                              </span>
+                            ) : null}
                           </span>
                         </li>
                       );
@@ -98,6 +169,19 @@ export default function LedgerAuditPanel({ results, locale }: { results: LedgerE
                   </ul>
                 </div>
               ))}
+            </div>
+
+            <div className="mt-3 space-y-2">
+              {entity.groups
+                .filter((g) => g.detail.length > 0)
+                .map((g) => (
+                  <details key={g.group} className="rounded-xl border" style={{ borderColor: "var(--border)" }}>
+                    <summary className="cursor-pointer select-none px-3 py-2 text-[12.5px] font-bold" style={{ color: "var(--ink-900)" }}>
+                      {groupTitle(g.group)} — {t("按月明细（近 12 个月）", "monthly breakdown (last 12 months)")}
+                    </summary>
+                    <BreakdownTable g={g} t={t} money={money} />
+                  </details>
+                ))}
             </div>
           </div>
         ))}
