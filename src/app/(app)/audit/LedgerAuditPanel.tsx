@@ -2,6 +2,7 @@ import { CheckCircle2, AlertTriangle, XCircle, Info } from "lucide-react";
 import Card from "@/components/ui/Card";
 import { fmtMoney, type Locale } from "@/lib/i18n/dictionaries";
 import type { CheckStatus, LedgerEntityResult, LedgerGroup, LedgerGroupResult } from "@/lib/ledger-audit";
+import type { CorrectionDraft, CorrectionOption } from "@/lib/ledger-corrections";
 
 const ICON: Record<CheckStatus, { Icon: typeof CheckCircle2; color: string }> = {
   pass: { Icon: CheckCircle2, color: "var(--status-good)" },
@@ -14,6 +15,75 @@ const keyLabel = (k: string) => {
   const [y, m] = k.split("-");
   return `${y}-${m.padStart(2, "0")}`;
 };
+
+function JournalTable({ o, t, label }: { o: CorrectionOption; t: (zh: string, en: string) => string; label: string }) {
+  const n = (v: number) => (v ? v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "");
+  return (
+    <div className="mt-2">
+      <div className="text-[11.5px] font-bold" style={{ color: "var(--ink-900)" }}>
+        {label}
+      </div>
+      <div className="mb-1 text-[11.5px]" style={{ color: "var(--ink-600)" }}>
+        {o.cause}
+      </div>
+      <table className="w-full text-[11.8px]">
+        <thead>
+          <tr style={{ color: "var(--ink-400)" }}>
+            <th className="py-1 text-left font-semibold">{t("账户", "Account")}</th>
+            <th className="py-1 text-right font-semibold">{t("借方", "Debit")}</th>
+            <th className="py-1 text-right font-semibold">{t("贷方", "Credit")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {o.lines.map((l, i) => (
+            <tr key={i} className="border-t" style={{ borderColor: "var(--border)" }}>
+              <td className="py-1 pr-2" style={{ color: l.pick ? "var(--status-warning)" : "var(--ink-900)", fontWeight: l.pick ? 700 : 400, paddingLeft: l.credit ? 16 : 0 }}>
+                {l.account}
+              </td>
+              <td className="py-1 text-right tabular-nums">{n(l.debit)}</td>
+              <td className="py-1 text-right tabular-nums">{n(l.credit)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CorrectionsBlock({ corrections, t }: { corrections: CorrectionDraft[]; t: (zh: string, en: string) => string }) {
+  if (corrections.length === 0) return null;
+  return (
+    <div className="mb-5 rounded-xl border p-3" style={{ borderColor: "var(--status-warning)" }}>
+      <div className="text-[13.5px] font-extrabold" style={{ color: "var(--ink-900)" }}>
+        {t("更正分录草稿（系统已按异常自动算出金额）", "Draft correcting journals (amounts worked out automatically from the exceptions)")}
+      </div>
+      <div className="mb-3 mt-1 text-[12px] leading-relaxed" style={{ color: "var(--ink-400)" }}>
+        {t(
+          "系统不会自动过账到 Xero：Xero 连接为只读，且更正分录应由人确认原因后再入账（资产负债表无法区分重复冲回和错记科目）。请核对「过账前须确认」，选定标黄的费用/收入科目，再下载 Xero 日记账导入文件，填好科目代码后导入。",
+          "Nothing is posted to Xero automatically: the Xero connection is read-only, and a correcting journal should be posted by a person who has confirmed the cause (the balance sheet cannot tell a double reversal from a mis-coded bill). Check “Confirm before posting”, choose the highlighted expense / revenue account, then download the Xero journal import file, fill in the account codes and import it.",
+        )}
+      </div>
+      <div className="grid gap-3 lg:grid-cols-2">
+        {corrections.map((d) => (
+          <div key={d.id} className="rounded-lg border p-3" style={{ borderColor: "var(--border)" }}>
+            <div className="text-[12.5px] font-bold" style={{ color: "var(--ink-900)" }}>
+              {d.entityLabel} · {d.account} · {d.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div className="text-[11px]" style={{ color: "var(--ink-400)" }}>
+              {t("日期", "Date")} {d.date} · {d.narration}
+            </div>
+            <JournalTable o={d.primary} t={t} label={t("方案 A（最可能）", "Option A (most likely)")} />
+            {d.alternative && <JournalTable o={d.alternative} t={t} label={t("方案 B（备选）", "Option B (alternative)")} />}
+            <div className="mt-2 text-[11.5px] leading-relaxed" style={{ color: "var(--ink-600)" }}>
+              <b>{t("过账前须确认：", "Confirm before posting: ")}</b>
+              {d.confirm}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function BreakdownTable({ g, t, money }: { g: LedgerGroupResult; t: (zh: string, en: string) => string; money: (n: number | null) => string }) {
   const th = "whitespace-nowrap px-2 py-1.5 text-right font-semibold";
@@ -82,7 +152,7 @@ function BreakdownTable({ g, t, money }: { g: LedgerGroupResult; t: (zh: string,
 
 // Internal audit → "Deferred revenue, prepayments & accruals": for each entity, the account balances read from the Xero balance sheet and the
 // automatic accuracy checks on them. Server-rendered; nothing here is typed in.
-export default function LedgerAuditPanel({ results, locale }: { results: LedgerEntityResult[]; locale: Locale }) {
+export default function LedgerAuditPanel({ results, corrections, locale }: { results: LedgerEntityResult[]; corrections: CorrectionDraft[]; locale: Locale }) {
   const isZh = locale === "zh" || locale === "zh-Hant";
   const t = (zh: string, en: string) => (isZh ? zh : en);
   const money = (n: number | null) => (n === null ? "—" : fmtMoney(n, locale));
@@ -110,6 +180,19 @@ export default function LedgerAuditPanel({ results, locale }: { results: LedgerE
           );
         })}
       </div>
+
+      <div className="mb-4 flex flex-wrap items-center gap-2 text-[12px]">
+        <a href="/api/admin/ledger-audit?format=xlsx" className="rounded-lg border px-3 py-1.5 font-semibold" style={{ borderColor: "var(--border)", color: "var(--ink-900)" }}>
+          {t("下载 Excel（全部工作表）", "Download Excel (all sheets)")}
+        </a>
+        {(["checks", "breakdown", "corrections", "xero-journal"] as const).map((s) => (
+          <a key={s} href={`/api/admin/ledger-audit?format=csv&sheet=${s}`} className="rounded-lg border px-3 py-1.5" style={{ borderColor: "var(--border)", color: "var(--ink-600)" }}>
+            CSV · {s === "checks" ? t("检查结果", "Checks") : s === "breakdown" ? t("按月明细", "Monthly breakdown") : s === "corrections" ? t("更正分录草稿", "Draft corrections") : t("Xero 日记账导入文件", "Xero journal import")}
+          </a>
+        ))}
+      </div>
+
+      <CorrectionsBlock corrections={corrections} t={t} />
 
       <div className="space-y-6">
         {results.map((entity) => (

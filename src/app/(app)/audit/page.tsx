@@ -13,6 +13,7 @@ import FindingRow from "./FindingRow";
 import ScopeFilter from "./ScopeFilter";
 import LedgerAuditPanel from "./LedgerAuditPanel";
 import { loadLedgerAudit } from "@/lib/ledger-audit-data";
+import { buildCorrections } from "@/lib/ledger-corrections";
 
 const SEVERITY_TONE: Record<string, "good" | "warning" | "serious" | "critical"> = { LOW: "good", MEDIUM: "warning", HIGH: "serious", CRITICAL: "critical" };
 const STATUS_TONE: Record<string, "good" | "warning" | "serious" | "critical"> = { OPEN: "critical", IN_PROGRESS: "warning", CLOSED: "good" };
@@ -44,6 +45,7 @@ export default async function AuditPage(props: PageProps<"/audit">) {
   const findings = allFindings.filter((f) => matchesAuditScope(f.entityLabel, scope));
 
   const ledgerResults = await loadLedgerAudit(organizationId, locale);
+  const ledgerCorrections = buildCorrections(ledgerResults, isZh, new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10));
   const open = findings.filter((f) => f.status !== "CLOSED");
   const highCritical = open.filter((f) => f.severity === "HIGH" || f.severity === "CRITICAL");
   const overdue = open.filter((f) => f.targetDate && f.targetDate < new Date());
@@ -70,7 +72,7 @@ export default async function AuditPage(props: PageProps<"/audit">) {
 
         {canApprove(user.role) && <AuditScanButton locale={locale} label={dict.m.auditRunScan} scanningLabel={dict.m.auditScanning} noNewLabel={dict.m.auditNoNewFindings} />}
 
-        <LedgerAuditPanel results={ledgerResults} locale={locale} />
+        <LedgerAuditPanel results={ledgerResults} corrections={ledgerCorrections} locale={locale} />
 
         {areaCounts.size > 0 && (
           <Card title={dict.m.auditByAreaCard}>

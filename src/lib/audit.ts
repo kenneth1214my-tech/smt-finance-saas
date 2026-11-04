@@ -4,6 +4,7 @@ import { effectiveRiskRating, worse, type RiskSeverity } from "@/lib/risk-rating
 import { localizedName } from "@/lib/localize";
 import type { Locale } from "@/lib/i18n/dictionaries";
 import { loadLedgerAudit } from "@/lib/ledger-audit-data";
+import { buildCorrections } from "@/lib/ledger-corrections";
 
 // Scope note: this module only detects exceptions computable from data that actually exists in
 // this schema — MonthlyFinancial (aggregate monthly totals), ARCustomer/Payable (balance + aging
@@ -319,11 +320,17 @@ async function detectLedgerExceptions(organizationId: string, locale: Locale): P
   const isZh = locale === "zh" || locale === "zh-Hant";
   const results = await loadLedgerAudit(organizationId, locale);
   const groupName = (g: string) => (g === "DEFERRED_REVENUE" ? (isZh ? "递延收入" : "Deferred revenue") : g === "PREPAYMENT" ? (isZh ? "预付款项" : "Prepayments") : isZh ? "应计项目" : "Accruals");
+  const drafts = buildCorrections(results, isZh, new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10));
   const out: DraftFinding[] = [];
   for (const entity of results) {
     for (const g of entity.groups) {
       for (const c of g.checks) {
         if (c.status !== "warn" && c.status !== "fail") continue;
+        const draft = drafts.find((d) => d.id === `${entity.id ?? "hq"}|${g.group}|${c.account}|${c.id}`);
+        const journal = draft
+          ? (isZh ? " 草稿更正分录（需确认原因后过账）：" : " Draft correcting journal (post only after confirming the cause): ") +
+            draft.primary.lines.map((l) => (l.debit ? (isZh ? "借 " : "Dr ") : isZh ? "贷 " : "Cr ") + l.account + " " + (l.debit || l.credit).toFixed(2)).join(isZh ? "；" : "; ") + "."
+          : "";
         out.push({
           area: "ledger",
           severity: c.status === "fail" ? "HIGH" : "MEDIUM",
@@ -334,7 +341,7 @@ async function detectLedgerExceptions(organizationId: string, locale: Locale): P
           condition: c.detail,
           evidence: `Xero balance sheet (AccountBalanceMonthly) — ${entity.label} / ${g.group}${c.account ? " / " + c.account : ""}, latest month-end ${g.latestKey ?? "n/a"}; check "${c.id}"`,
           riskImpact: c.risk,
-          recommendation: c.recommendation,
+          recommendation: c.recommendation + journal,
           dedupKey: `ledger|${entity.id ?? "hq"}|${g.group}|${c.id}|${c.account ?? ""}`,
         });
       }
