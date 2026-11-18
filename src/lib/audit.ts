@@ -357,6 +357,43 @@ async function detectJointVentureExceptions(organizationId: string, locale: Loca
   const jvs = await loadJointVentures(organizationId);
   const closedYear = new Date().getFullYear() - 1;
   const out: DraftFinding[] = [];
+
+  // HQ's "Investment in subsidiary" account in Xero against the figure the Group statements eliminate. A joint-venture payment is often
+  // booked there first and only moved to "Investment in Joint Venture" at the year-end audit (as in FY2025), which makes the ledger
+  // balance larger than the real cost of the subsidiaries until then.
+  try {
+    const [org, subRows] = await Promise.all([
+      db.organization.findUnique({ where: { id: organizationId }, select: { investmentInSubsidiaries: true } }),
+      db.accountBalanceMonthly.findMany({ where: { organizationId, subsidiaryId: null, group: "SUBSIDIARY_INVESTMENT" }, orderBy: [{ year: "desc" }, { month: "desc" }] }),
+    ]);
+    if (org && subRows.length > 0) {
+      const { year, month } = subRows[0];
+      const xeroBalance = subRows.filter((r) => r.year === year && r.month === month).reduce((s, r) => s + Number(r.balance), 0);
+      const eliminated = Number(org.investmentInSubsidiaries);
+      const diff = Math.round((xeroBalance - eliminated) * 100) / 100;
+      if (Math.abs(diff) > 1) {
+        const jvCost = jvs.reduce((s, jv) => s + (jv.years.length ? jv.years[jv.years.length - 1].cumulativeCost : 0), 0);
+        const looksLikeJv = diff > 0 && Math.abs(diff - jvCost) < 1;
+        const label = `${year}-${String(month).padStart(2, "0")}`;
+        out.push({
+          area: "ledger", severity: "MEDIUM", entityLabel: isZh ? "集团总部" : "Group HQ", transactionRef: "INV-SUB",
+          amount: diff,
+          criteria: isZh ? "合并时抵销的「对子公司投资」应等于总部账上该科目的真实成本" : "The investment in subsidiaries eliminated on consolidation should equal the true cost held in HQ's ledger",
+          condition: isZh
+            ? `总部 Xero「对子公司投资」在 ${label} 为 ${xeroBalance.toFixed(2)}，而合并抵销数为 ${eliminated.toFixed(2)}，相差 ${diff.toFixed(2)}。${looksLikeJv ? "该差额等于合营企业的投资成本——合营企业款项可能仍记在此科目，年末审计时才重分类。" : ""}`
+            : `HQ's "Investment in subsidiary" in Xero is ${xeroBalance.toFixed(2)} at ${label} but ${eliminated.toFixed(2)} is eliminated on consolidation — a difference of ${diff.toFixed(2)}.${looksLikeJv ? " The difference equals the joint venture's cost: that payment is probably still booked in this account and is only reclassified at the year-end audit." : ""}`,
+          evidence: `AccountBalanceMonthly (HQ, Investment in subsidiary, ${label}) vs Organization.investmentInSubsidiaries`,
+          riskImpact: isZh ? "抵销过多或过少都会使集团总资产和权益失真" : "Eliminating too much or too little misstates Group assets and equity",
+          recommendation: looksLikeJv
+            ? (isZh ? "把合营企业的投资成本从「对子公司投资」重分类到「Investment in Joint Venture」(12200)，不必等到年末审计" : "Reclassify the joint venture's cost from \"Investment in subsidiary\" to \"Investment in Joint Venture\" (12200) when it is paid, rather than at the year-end audit")
+            : (isZh ? "核对总部账上该科目的构成，并更新「设置 → 总部资产负债表」中的抵销数" : "Check what makes up the account in HQ's ledger and update the elimination under Settings → HQ balance sheet"),
+          dedupKey: `ledger|inv-sub`,
+        });
+      }
+    }
+  } catch {
+    // table not there yet — skip
+  }
   for (const jv of jvs) {
     const latest = jv.years[jv.years.length - 1];
     if (!latest || latest.year < closedYear) {

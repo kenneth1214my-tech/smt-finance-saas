@@ -70,7 +70,9 @@ export type MonthSnapshot = MonthBalances & BalanceTotals & BalanceDetail;
 // for them). Deferred revenue and accruals are liabilities; prepayments (and accrued income) are assets.
 // JV_INVESTMENT is not one of the three audit groups: it is the investment-in-joint-venture account, kept so the joint-venture schedule
 // (lib/joint-venture-data.ts) can read HQ's ledger carrying amount from Xero instead of having it typed in.
-export type LedgerGroup = "DEFERRED_REVENUE" | "PREPAYMENT" | "ACCRUAL" | "JV_INVESTMENT";
+export type LedgerGroup = "DEFERRED_REVENUE" | "PREPAYMENT" | "ACCRUAL" | "JV_INVESTMENT" | "SUBSIDIARY_INVESTMENT";
+// Kept so the amount eliminated on consolidation can be checked against what HQ's ledger actually holds (see audit.ts).
+const SUBSIDIARY_INVESTMENT_RE = /(investments?|interests?|shares?)\s*(in|-|:)?\s*(a\s*)?subsidiar/i;
 const JV_INVESTMENT_RE = /(investments?|interests?|equity)\s*(in|-|:)?\s*(a\s*)?(joint\s*venture|associate)|joint\s*venture\s*(investments?|interests?)/i;
 const DEFERRED_REVENUE_RE = /deferred\s*(income|revenue)|unearned|(income|revenue|fees?)\s*(received\s*)?in\s*advance|advance\s*(fees?|receipts?|payments?\s*received)|contract\s*liabilit/i;
 const PREPAYMENT_RE = /prepay|prepaid|deposit\s*paid|advances?\s*paid|paid\s*in\s*advance/i;
@@ -85,6 +87,7 @@ export function ledgerGroupOf(section: "bank" | "asset" | "liability" | "equity"
     if (PREPAYMENT_RE.test(label)) return "PREPAYMENT";
     if (ACCRUAL_RE.test(label)) return "ACCRUAL"; // accrued income / unbilled revenue
     if (JV_INVESTMENT_RE.test(label)) return "JV_INVESTMENT";
+    if (SUBSIDIARY_INVESTMENT_RE.test(label)) return "SUBSIDIARY_INVESTMENT";
     return null;
   }
   return null;
