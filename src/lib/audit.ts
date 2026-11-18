@@ -354,9 +354,25 @@ async function detectLedgerExceptions(organizationId: string, locale: Locale): P
 // Joint ventures (equity method): a schedule that is missing for the latest closed year, or a carrying amount that has gone negative.
 async function detectJointVentureExceptions(organizationId: string, locale: Locale): Promise<DraftFinding[]> {
   const isZh = locale === "zh" || locale === "zh-Hant";
-  const jvs = await loadJointVentures(organizationId);
-  const closedYear = new Date().getFullYear() - 1;
   const out: DraftFinding[] = [];
+  let jvs: Awaited<ReturnType<typeof loadJointVentures>> = [];
+  try {
+    jvs = await loadJointVentures(organizationId);
+  } catch {
+    // A failed load would leave the joint venture out of the Group statements without any other sign, so it is itself a finding.
+    out.push({
+      area: "ledger", severity: "HIGH", entityLabel: null, transactionRef: "JV",
+      amount: null,
+      criteria: isZh ? "合营企业的数据必须能够读取，集团报表才完整" : "The joint-venture figures must load for the Group statements to be complete",
+      condition: isZh ? "合营企业数据读取失败，集团报表目前不含合营企业（权益法）。" : "Loading the joint-venture figures failed; the Group statements currently leave the joint venture out (equity method).",
+      evidence: "JointVenture / JointVenturePeriod",
+      riskImpact: isZh ? "集团利润和总资产不完整" : "Group profit and total assets are incomplete",
+      recommendation: isZh ? "刷新后重试；若持续，请检查数据库和服务器日志" : "Refresh and retry; if it persists, check the database and the server logs",
+      dedupKey: "ledger|jv|load-failed",
+    });
+    return out;
+  }
+  const closedYear = new Date().getFullYear() - 1;
 
   // HQ's "Investment in subsidiary" account in Xero against the figure the Group statements eliminate. A joint-venture payment is often
   // booked there first and only moved to "Investment in Joint Venture" at the year-end audit (as in FY2025), which makes the ledger
@@ -395,6 +411,29 @@ async function detectJointVentureExceptions(organizationId: string, locale: Loca
     // table not there yet — skip
   }
   for (const jv of jvs) {
+    // Problems in the yearly figures (a missing year, a charge entered wrongly, …) that would give a wrong Group statement.
+    for (const issue of jv.issues) {
+      const yr = issue.year === null ? "" : ` ${issue.year}`;
+      const amt = issue.amount === null ? "" : issue.amount.toFixed(2);
+      const text: Record<string, [string, string]> = {
+        "year-gap": [`缺少 ${issue.year} 年的数据，期间的应占利润/(亏损)未被确认`, `No figures for ${issue.year}; that year's share of result is not recognised`],
+        "negative-input": [`${yr} 年的投入资本、股息或减值为负数 (${amt})`, `Capital, dividends or impairment is negative for${yr} (${amt})`],
+        "hq-charge-exceeds-schedule": [`${yr} 年总部账上的费用比本表多 ${amt}`, `HQ's ledger carries ${amt} more charge than the schedule for${yr}`],
+        "ledger-written-down-no-charge": [`${yr} 年总部账上投资低于成本 ${amt}，但未录入总部已计入的费用，集团利润会被重复扣减`, `HQ's ledger holds the investment ${amt} below cost for${yr} but no HQ charge was entered, so Group profit would be reduced twice`],
+        "ownership-out-of-range": [`持股比例超出范围 (${amt})`, `Ownership is out of range (${amt})`],
+      };
+      const [zh, en] = text[issue.code] ?? [issue.code, issue.code];
+      out.push({
+        area: "ledger", severity: issue.code === "ledger-written-down-no-charge" ? "HIGH" : "MEDIUM", entityLabel: jv.name, transactionRef: "JV",
+        amount: issue.amount,
+        criteria: isZh ? "合营企业年度数据应完整、一致，权益法计算才可靠" : "The joint venture's yearly figures must be complete and consistent for the equity-method schedule to be reliable",
+        condition: `${jv.name}: ${isZh ? zh : en}.`,
+        evidence: `JointVenturePeriod — ${jv.name}${issue.year === null ? "" : " / " + issue.year}`,
+        riskImpact: isZh ? "集团利润、投资账面值或未确认亏损可能不准确" : "Group profit, the carrying amount or the unrecognised losses may be misstated",
+        recommendation: isZh ? "在「报表 → 合营企业」更正年度数据" : "Correct the yearly figures on Reports → Joint ventures",
+        dedupKey: `ledger|jv|${jv.id}|issue|${issue.code}|${issue.year ?? ""}`,
+      });
+    }
     const latest = jv.years[jv.years.length - 1];
     if (!latest || latest.year < closedYear) {
       out.push({

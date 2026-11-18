@@ -346,6 +346,13 @@ export default function TaxCenterClient({
               hint: isZh ? "取自财政年度内固定资产变动与投资现金流；缺少存档资产负债表时为 0" : "From the fixed-asset movement and investing cash flow over the financial year; 0 when the archived balance sheets are missing",
               values: [sch?.autoDepreciation ?? 0],
             },
+            ...(sch && sch.autoJvAddBack > 0
+              ? [{
+                  label: isZh ? "＋ 合营企业应占亏损加回（总部已计入费用，不可扣减）" : "+ Share of joint venture loss booked in HQ's expenses (not deductible, added back automatically)",
+                  hint: isZh ? "取自「报表 → 合营企业」中总部已在自身损益中计入的费用" : "From Reports → Joint ventures: the charge HQ already booked in its own profit or loss",
+                  values: [sch.autoJvAddBack],
+                }]
+              : []),
             ...(sch?.byCategory ?? []).map((c) => ({ label: catLabel(c.key), values: [signedAdjustment(c.key, c.amount)] })),
             { label: isZh ? "＝ 亏损抵销前应评税利润" : "= Assessable profits before losses", values: [sch?.assessableBeforeLosses ?? accounting], kind: "total" as const },
             { label: isZh ? "－ 动用承前亏损" : "− Losses brought forward utilised", hint: isZh ? `承前亏损合计 ${fmtM(sch?.lossesOpening ?? 0)}` : `Losses available: ${fmtM(sch?.lossesOpening ?? 0)}`, values: [-(sch?.lossesUtilised ?? 0)] },

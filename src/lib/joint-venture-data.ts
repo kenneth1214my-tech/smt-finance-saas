@@ -1,6 +1,13 @@
 import "server-only";
 import { db } from "@/lib/db";
-import { computeJvRollForward, type JvYearResult } from "@/lib/joint-venture";
+import { computeJvRollForward, validateJvInputs, type JvIssue, type JvYearResult } from "@/lib/joint-venture";
+
+// Prisma's "table / column does not exist": the database has not been migrated yet. That is the only failure treated as "no joint ventures".
+// Anything else is a real error and is raised, so a broken load can never quietly leave a joint venture out of the Group statements.
+const isNotMigrated = (err: unknown) => {
+  const code = err && typeof err === "object" && "code" in err ? String((err as { code: unknown }).code) : "";
+  return code === "P2021" || code === "P2022";
+};
 
 export interface JointVentureView {
   id: string;
@@ -13,6 +20,8 @@ export interface JointVentureView {
   years: JvYearResult[];
   /** Where each year's HQ ledger carrying amount came from. */
   ledgerSource: Record<number, "input" | "xero" | "xero-nil" | "cost">;
+  /** Problems in the yearly figures that would give a wrong Group statement (see validateJvInputs). */
+  issues: JvIssue[];
 }
 
 const num = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
@@ -65,11 +74,14 @@ export async function loadJointVentures(organizationId: string): Promise<JointVe
       acquiredOn: jv.acquiredOn ? jv.acquiredOn.toISOString().slice(0, 10) : null,
       investmentAccountName: jv.investmentAccountName,
       years: computeJvRollForward(num(jv.ownershipPct), inputs),
+        issues: validateJvInputs(num(jv.ownershipPct), inputs, computeJvRollForward(num(jv.ownershipPct), inputs)),
       ledgerSource,
       };
     });
-  } catch {
-    return [];
+  } catch (err) {
+    if (isNotMigrated(err)) return [];
+    console.error("joint venture load failed", err);
+    throw err;
   }
 }
 
@@ -87,9 +99,11 @@ export interface JvPosition {
   unrecognisedLosses: number;
   /** The year's charge already sitting in HQ's own expenses, shown as a reversing line so the Group P&L adds up. */
   alreadyInExpenses: number;
+  /** True when the joint-venture figures could not be loaded: the Group statements then leave the joint venture out, and say so. */
+  loadFailed: boolean;
 }
 
-const EMPTY: JvPosition = { hasJointVenture: false, groupResult: 0, profitAdjustment: 0, investmentCarrying: 0, balanceAdjustment: 0, unrecognisedLosses: 0, alreadyInExpenses: 0 };
+const EMPTY: JvPosition = { hasJointVenture: false, groupResult: 0, profitAdjustment: 0, investmentCarrying: 0, balanceAdjustment: 0, unrecognisedLosses: 0, alreadyInExpenses: 0, loadFailed: false };
 
 /**
  * The Group's joint-venture position for a financial year. A year with no schedule row carries the last earlier row's balances forward and
@@ -115,6 +129,31 @@ export function positionForYear(jvs: JointVentureView[], year: number): JvPositi
   return { ...out, groupResult: r2(out.groupResult), profitAdjustment: r2(out.profitAdjustment), investmentCarrying: r2(out.investmentCarrying), balanceAdjustment: r2(out.balanceAdjustment), unrecognisedLosses: r2(out.unrecognisedLosses), alreadyInExpenses: r2(out.alreadyInExpenses) };
 }
 
+export interface JvTaxItem {
+  name: string;
+  year: number;
+  /** Share of the joint venture's loss HQ's own ledger charges to its P&L: not deductible. */
+  charge: number;
+  /** Dividends received: normally exempt (one-tier / foreign-sourced dividend rules), to be confirmed. */
+  dividends: number;
+}
+
+/** The joint-venture amounts the tax computation has to deal with, per year. */
+export function jvTaxItems(jvs: JointVentureView[]): JvTaxItem[] {
+  const out: JvTaxItem[] = [];
+  for (const jv of jvs) {
+    for (const y of jv.years) {
+      if (y.hqLedgerExpense > 0.005 || y.dividendsReceived > 0.005) out.push({ name: jv.name, year: y.year, charge: y.hqLedgerExpense, dividends: y.dividendsReceived });
+    }
+  }
+  return out;
+}
+
 export async function loadJvPosition(organizationId: string, year: number): Promise<JvPosition> {
-  return positionForYear(await loadJointVentures(organizationId), year);
+  try {
+    return positionForYear(await loadJointVentures(organizationId), year);
+  } catch {
+    // Already logged by the loader. The consolidated pages show a notice instead of failing.
+    return { ...EMPTY, loadFailed: true };
+  }
 }

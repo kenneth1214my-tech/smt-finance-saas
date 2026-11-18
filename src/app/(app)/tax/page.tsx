@@ -11,6 +11,7 @@ import { fyMonths, fyOf, fyOpen } from "@/lib/financial-year";
 import Topbar from "@/components/Topbar";
 import KpiTile from "@/components/ui/KpiTile";
 import TaxCenterClient from "./TaxCenterClient";
+import { loadJointVentures, jvTaxItems, type JvTaxItem } from "@/lib/joint-venture-data";
 import KpiBreakdown from "@/components/ui/KpiBreakdown";
 import { localizedName } from "@/lib/localize";
 import { buildTaxKpiSections, type TaxProvisionView } from "@/lib/tax-kpi-breakdown";
@@ -62,6 +63,13 @@ export default async function TaxPage() {
   // so → profits tax return (per year of assessment), Employer's Return (BIR56A) and the Annual Return (NAR1).
   const org = orgRow;
   const cfg = getJurisdictionConfig(org.jurisdiction);
+  // Joint-venture amounts the tax computation has to deal with. A load failure must not take the tax page down: the callout is simply absent.
+  let jvTax: JvTaxItem[] = [];
+  try {
+    jvTax = jvTaxItems(await loadJointVentures(organizationId));
+  } catch {
+    jvTax = [];
+  }
   if (cfg.hasGst) {
     const gstQuarter = currentGstQuarter();
     const entities: { subsidiaryId: string | null }[] = [{ subsidiaryId: null }, ...subsidiaries.map((s) => ({ subsidiaryId: s.id }))];
@@ -128,6 +136,7 @@ export default async function TaxPage() {
         year: p.year,
         accountingProfit: Number(p.chargeableIncome),
         autoDepreciation: derivedDepreciation(entityKey, p.year, fyeByKey[entityKey] ?? 12),
+        autoJvAddBack: entityKey === "HQ" ? jvTax.filter((j) => j.year === p.year).reduce((s, j) => s + j.charge, 0) : 0,
         adjustments: adjustmentRows.filter((a) => a.provisionId === p.id).map((a) => ({ category: a.category, amount: Number(a.amount) })),
         lossesBroughtForward: Number(p.lossesBroughtForward),
         standardRatePct: Number(p.taxRatePct),
@@ -233,6 +242,36 @@ export default async function TaxPage() {
           heading={isZhLocale ? "指标明细与计算过程" : "KPI breakdown & calculation"}
           hint={isZhLocale ? "点击展开，查看每个税务指标的计算公式、逐项明细与说明，便于复核。" : "Click a KPI to see its formula, line items and an explanation so every figure can be re-checked."}
         />
+
+        {jvTax.length > 0 && (
+          <div className="rounded-xl border p-3 text-[12.5px] leading-relaxed" style={{ borderColor: "var(--border-strong)", background: "var(--surface-2)", color: "var(--ink-600)" }}>
+            <div className="mb-1 font-bold" style={{ color: "var(--ink-900)" }}>
+              {isZhLocale ? "合营企业 — 税务处理" : "Joint venture — tax treatment"}
+            </div>
+            <ul className="list-disc space-y-1 pl-5">
+              {jvTax.map((j, i) => (
+                <li key={i}>
+                  {j.name} · {j.year}
+                  {j.charge > 0 && (
+                    <>
+                      {": "}
+                      {isZhLocale
+                        ? `总部账上已把应占合营企业亏损 ${fmtM(j.charge)} 计入费用——该亏损不可扣减，`
+                        : `HQ's ledger has charged ${fmtM(j.charge)} of the joint venture's loss to expenses — it is not deductible, `}
+                      {cfg.code === "HK" ? (isZhLocale ? "已在利得税计算表中自动加回。" : "and it is added back automatically in the profits tax schedule.") : isZhLocale ? "确定应课税收入（chargeable income）时须加回。" : "so add it back when arriving at chargeable income."}
+                    </>
+                  )}
+                  {j.dividends > 0 && (
+                    <>
+                      {" "}
+                      {isZhLocale ? `收到的股息 ${fmtM(j.dividends)}：一般属免税收入，请与税务顾问确认适用条件并扣除。` : `Dividends received ${fmtM(j.dividends)}: normally exempt income — confirm the conditions with your tax adviser and deduct.`}
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <TaxCenterClient
           jurisdiction={cfg.code}

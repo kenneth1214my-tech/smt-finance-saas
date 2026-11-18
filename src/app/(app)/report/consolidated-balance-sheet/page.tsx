@@ -6,6 +6,7 @@ import { getDictionary, withBaseCurrency, fmtMoney } from "@/lib/i18n/dictionari
 import { getBaseCurrency } from "@/lib/currency";
 import { computeConsolidatedBalanceSheet } from "@/lib/consolidated-report";
 import Topbar from "@/components/Topbar";
+import JvLoadWarning from "@/components/JvLoadWarning";
 import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
 import ConsolidatedBalanceSheetActions from "./ConsolidatedBalanceSheetActions";
@@ -32,6 +33,7 @@ export default async function ConsolidatedBalanceSheetPage(props: PageProps<"/re
     <>
       <Topbar dict={dict} locale={locale} title={title} desc={`${report.companyName} · ${year}`} user={user} />
       <div className="mx-auto w-full max-w-[1480px] flex-1 space-y-4 px-[26px] py-5">
+        {report.jvLoadFailed && <JvLoadWarning isZh={isZh} />}
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border p-4" style={{ borderColor: "var(--border-strong)", background: "var(--surface)" }}>
           <div>
             <div className="text-[15px] font-bold" style={{ color: "var(--ink-900)" }}>

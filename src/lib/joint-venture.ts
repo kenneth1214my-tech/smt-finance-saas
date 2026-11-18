@@ -120,3 +120,45 @@ export function computeJvRollForward(ownershipPct: number, periods: JvPeriodInpu
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Input checks: problems in the yearly figures that would silently produce a wrong Group statement.
+// ---------------------------------------------------------------------------------------------
+
+export type JvIssueCode =
+  | "year-gap" // a financial year is missing between two schedule rows: the missing year's result is not recognised
+  | "negative-input" // capital or dividends entered as a negative number
+  | "hq-charge-exceeds-schedule" // HQ's ledger carries a bigger charge for the investment than the schedule recognises
+  | "ledger-written-down-no-charge" // HQ's ledger is below cost but no HQ charge was entered: the Group profit would double count
+  | "ownership-out-of-range";
+
+export interface JvIssue {
+  code: JvIssueCode;
+  year: number | null;
+  /** The figure the message is about, where there is one. */
+  amount: number | null;
+}
+
+export function validateJvInputs(ownershipPct: number, periods: JvPeriodInput[], results: JvYearResult[]): JvIssue[] {
+  const issues: JvIssue[] = [];
+  if (!(ownershipPct > 0 && ownershipPct <= 100)) issues.push({ code: "ownership-out-of-range", year: null, amount: ownershipPct });
+  const sorted = [...periods].sort((a, b) => a.year - b.year);
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].year - sorted[i - 1].year > 1) issues.push({ code: "year-gap", year: sorted[i - 1].year + 1, amount: null });
+  }
+  for (const p of sorted) {
+    if (p.capitalAdded < 0 || p.dividendsReceived < 0 || p.impairment < 0) issues.push({ code: "negative-input", year: p.year, amount: Math.min(p.capitalAdded, p.dividendsReceived, p.impairment) });
+  }
+  let chargesEntered = 0; // HQ charges entered on this and every earlier year
+  for (const r of [...results].sort((x, y) => x.year - y.year)) {
+    chargesEntered += r.hqLedgerExpense;
+    const written = r.recognised < 0 ? -r.recognised : 0;
+    if (r.hqLedgerExpense > written + r.impairment + 0.5) issues.push({ code: "hq-charge-exceeds-schedule", year: r.year, amount: r2(r.hqLedgerExpense - written - r.impairment) });
+    // HQ's own ledger holds the investment below cost, yet no charge for it was entered: the schedule would adjust the Group profit by the
+    // full loss on top of a charge HQ already booked.
+    if (r.hqLedgerCarrying < r.cumulativeCost - 0.5 && chargesEntered <= 0.5 && r.cumulativeCost > 0) {
+      issues.push({ code: "ledger-written-down-no-charge", year: r.year, amount: r2(r.cumulativeCost - r.hqLedgerCarrying) });
+    }
+  }
+  return issues;
+}

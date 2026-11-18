@@ -46,6 +46,7 @@ export interface HkScheduleInput {
   year: number; // financial year
   accountingProfit: number;
   autoDepreciation: number | null; // derived from the fixed-asset movement; null when not derivable
+  autoJvAddBack?: number; // the share of a joint venture's loss HQ booked in its expenses — not deductible, added back automatically
   adjustments: { category: string; amount: number }[];
   lossesBroughtForward: number; // manual opening losses (e.g. before this system), added to what carries forward from earlier rows
   standardRatePct: number;
@@ -58,6 +59,7 @@ export interface HkScheduleRow {
   id: string;
   accountingProfit: number;
   autoDepreciation: number;
+  autoJvAddBack: number;
   addBacks: number; // all add-backs incl. depreciation
   deductions: number; // all deductions (positive number)
   adjustmentsNet: number; // addBacks − deductions
@@ -82,7 +84,8 @@ export function computeHkSchedule(inputs: HkScheduleInput[]): Map<string, HkSche
     let pool = 0; // losses carried forward from earlier years
     for (const r of rows) {
       const dep = r.autoDepreciation ?? 0;
-      let addBacks = dep;
+      const jvAdd = Math.max(0, r.autoJvAddBack ?? 0);
+      let addBacks = dep + jvAdd;
       let deductions = 0;
       const catTotals = new Map<string, number>();
       for (const a of r.adjustments) {
@@ -107,6 +110,7 @@ export function computeHkSchedule(inputs: HkScheduleInput[]): Map<string, HkSche
         id: r.id,
         accountingProfit: r2(r.accountingProfit),
         autoDepreciation: r2(dep),
+        autoJvAddBack: r2(jvAdd),
         addBacks: r2(addBacks),
         deductions: r2(deductions),
         adjustmentsNet: r2(addBacks - deductions),
