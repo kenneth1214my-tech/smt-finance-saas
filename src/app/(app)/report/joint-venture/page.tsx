@@ -36,7 +36,9 @@ export default async function JointVenturePage() {
         ? { tone: "info", text: t("合营企业净负债。除非集团有法律或推定义务代其付款，否则不确认负债。", "The joint venture has net liabilities. No liability is recognised unless the Group has a legal or constructive obligation to fund it.") }
         : f === "carrying-negative"
           ? { tone: "warn", text: t("股息或折算差额使账面值降到零以下，请核对数据。", "Dividends or translation took the carrying amount below zero — check the figures.") }
-          : { tone: "info", text: t("总部账上的投资账面值与成本不同；集团报表已按权益法调整至上方金额。", "HQ's ledger carries the investment at something other than cost; the Group statements are adjusted to the equity-method amount above.") };
+          : f === "ledger-matches"
+            ? { tone: "info", text: t("总部账（Xero）已按权益法入账（审计调整分录），与上表一致，集团报表无需再调整。", "HQ's ledger (Xero) already carries the equity-method result (the audit adjustment journals) and agrees to the schedule above, so no further Group adjustment is made.") }
+            : { tone: "info", text: t("总部账上的数字与权益法不一致；集团报表已按上表的调整数调整。", "HQ's ledger does not agree to the equity-method figures; the Group statements are adjusted by the amounts in the schedule above.") };
 
   const lines = (): [string, (r: JvYearResult) => number | null, boolean?][] => [
     [t("年初账面值", "Opening carrying amount"), (r) => r.opening],

@@ -53,9 +53,11 @@ export type JvFlag =
   | "carrying-negative" // dividends / translation took the carrying amount below zero
   | "losses-unrecognised" // part of the share of losses was not recognised (cap reached)
   | "net-liabilities" // the joint venture's net assets are negative
-  | "ledger-differs-from-cost"; // HQ's ledger carrying amount is not cost
+  | "ledger-adjusted" // HQ's ledger does not carry the equity-method amount, so the Group statements are adjusted
+  | "ledger-matches"; // HQ's own ledger already carries the equity-method result (e.g. audit adjustment journals) — no Group adjustment
 
 const r2 = (n: number) => Math.round(n * 100) / 100 + 0;
+const recognisedOrCost = (recognised: number, capitalAdded: number) => recognised !== 0 || capitalAdded !== 0;
 
 export function computeJvRollForward(ownershipPct: number, periods: JvPeriodInput[]): JvYearResult[] {
   const sorted = [...periods].sort((a, b) => a.year - b.year);
@@ -95,7 +97,10 @@ export function computeJvRollForward(ownershipPct: number, periods: JvPeriodInpu
     if (closing < 0) flags.push("carrying-negative");
     if (unrecognisedCf > bf + 0.005) flags.push("losses-unrecognised");
     if (p.jvNetAssets !== null && p.jvNetAssets < 0) flags.push("net-liabilities");
-    if (Math.abs(hqLedgerCarrying - cumulativeCost) > 0.5) flags.push("ledger-differs-from-cost");
+    const balanceAdjustment = r2(closing - hqLedgerCarrying);
+    const profitAdjustment = r2(groupResult + p.hqLedgerExpense - p.dividendsReceived);
+    if (Math.abs(balanceAdjustment) > 0.5 || Math.abs(profitAdjustment) > 0.5) flags.push("ledger-adjusted");
+    else if (recognisedOrCost(recognised, p.capitalAdded)) flags.push("ledger-matches");
 
     const result: JvYearResult = {
       year: p.year, opening, capitalAdded: p.capitalAdded, dividendsReceived: p.dividendsReceived, translation: p.translation,
@@ -103,8 +108,8 @@ export function computeJvRollForward(ownershipPct: number, periods: JvPeriodInpu
       unrecognisedBroughtForward: bf, unrecognisedCarriedForward: unrecognisedCf,
       shareOfNetAssets: p.jvNetAssets === null ? null : r2((ownershipPct / 100) * p.jvNetAssets),
       cumulativeCost, hqLedgerCarrying, groupResult,
-      balanceAdjustment: r2(closing - hqLedgerCarrying),
-      profitAdjustment: r2(groupResult + p.hqLedgerExpense - p.dividendsReceived),
+      balanceAdjustment,
+      profitAdjustment,
       flags,
     };
     out.push(result);
