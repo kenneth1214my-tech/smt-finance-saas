@@ -360,3 +360,28 @@ export const deferredTaxItemSchema = z.object({
   deferredTaxAmount: z.coerce.number(),
   notes: z.string().trim().max(2000).nullable().optional(),
 });
+
+// Joint ventures (equity method). Blank optional numbers / dates are stored as null.
+export const jointVentureSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  country: z.string().trim().min(1).max(100),
+  ownershipPct: z.coerce.number().gt(0).max(100),
+  currency: z.string().trim().length(3).transform((s) => s.toUpperCase()).default("SGD"),
+  acquiredOn: z.preprocess(blankToNull, z.coerce.date().nullable().optional()),
+  investmentAccountName: z.preprocess(blankToNull, z.string().trim().max(200).nullable().optional()),
+  notes: z.preprocess(blankToNull, z.string().trim().max(2000).nullable().optional()),
+});
+
+export const jointVenturePeriodSchema = z.object({
+  jointVentureId: z.string().trim().min(1),
+  year: z.coerce.number().int().min(2000).max(2100),
+  capitalAdded: z.coerce.number().default(0),
+  jvNetResult: z.coerce.number().default(0),
+  jvNetAssets: z.preprocess(blankToNull, z.coerce.number().nullable().optional()),
+  dividendsReceived: z.coerce.number().min(0).default(0),
+  translation: z.coerce.number().default(0),
+  impairment: z.coerce.number().min(0).default(0),
+  hqLedgerCarrying: z.preprocess(blankToNull, z.coerce.number().nullable().optional()),
+  hqLedgerExpense: z.coerce.number().default(0),
+  notes: z.preprocess(blankToNull, z.string().trim().max(2000).nullable().optional()),
+});

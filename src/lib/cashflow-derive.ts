@@ -68,7 +68,10 @@ export type MonthSnapshot = MonthBalances & BalanceTotals & BalanceDetail;
 
 // The three accounts the internal-audit ledger checks look at, picked out by NAME from the balance sheet (a chart of accounts has no flag
 // for them). Deferred revenue and accruals are liabilities; prepayments (and accrued income) are assets.
-export type LedgerGroup = "DEFERRED_REVENUE" | "PREPAYMENT" | "ACCRUAL";
+// JV_INVESTMENT is not one of the three audit groups: it is the investment-in-joint-venture account, kept so the joint-venture schedule
+// (lib/joint-venture-data.ts) can read HQ's ledger carrying amount from Xero instead of having it typed in.
+export type LedgerGroup = "DEFERRED_REVENUE" | "PREPAYMENT" | "ACCRUAL" | "JV_INVESTMENT";
+const JV_INVESTMENT_RE = /(investments?|interests?|equity)\s*(in|-|:)?\s*(a\s*)?(joint\s*venture|associate)|joint\s*venture\s*(investments?|interests?)/i;
 const DEFERRED_REVENUE_RE = /deferred\s*(income|revenue)|unearned|(income|revenue|fees?)\s*(received\s*)?in\s*advance|advance\s*(fees?|receipts?|payments?\s*received)|contract\s*liabilit/i;
 const PREPAYMENT_RE = /prepay|prepaid|deposit\s*paid|advances?\s*paid|paid\s*in\s*advance/i;
 const ACCRUAL_RE = /accru|unbilled\s*(revenue|income|receivable)/i;
@@ -81,6 +84,7 @@ export function ledgerGroupOf(section: "bank" | "asset" | "liability" | "equity"
   if (section === "asset") {
     if (PREPAYMENT_RE.test(label)) return "PREPAYMENT";
     if (ACCRUAL_RE.test(label)) return "ACCRUAL"; // accrued income / unbilled revenue
+    if (JV_INVESTMENT_RE.test(label)) return "JV_INVESTMENT";
     return null;
   }
   return null;

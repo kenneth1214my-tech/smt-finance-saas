@@ -65,6 +65,7 @@ export default async function ConsolidatedReportPage(props: PageProps<"/report/c
                   [isZh ? "研发费用" : "R&D Expense", -report.rndExp, false],
                   [isZh ? "财务费用" : "Finance Expense", -report.financeExp, false],
                   [isZh ? "营业利润" : "Operating Profit", report.operatingProfit, true],
+                  ...(report.hasJointVenture ? [[isZh ? "应占合营企业(亏损)/利润" : "Share of (loss)/profit from joint venture", report.shareOfJointVenture, false]] : []),
                   [isZh ? "净利润" : "Net Profit", report.netProfit, true],
                 ].map(([label, value, bold], i) => (
                   <tr key={i} className="border-t" style={{ borderColor: "var(--border)" }}>

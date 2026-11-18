@@ -41,6 +41,14 @@ export default async function ConsolidatedBalanceSheetPage(props: PageProps<"/re
               {isZh ? `会计年度 ${year}` : `Fiscal Year ${year}`}{fyeMonth !== 12 ? ` (${fyRangeLabel(year, fyeMonth, isZh)})` : ""} · {isZh ? "生成于" : "Generated"} {report.generatedAt.toISOString().slice(0, 16).replace("T", " ")}
               {" · "}
               {report.fromSnapshot ? (isZh ? "按财政年度结账日存档的资产负债表编制" : "Prepared from the balance sheets archived at the financial year-end") : isZh ? "以当前最新余额生成，非历史快照" : "Generated from the current on-file balance, not a historical snapshot"}
+              {report.hasJointVenture && (
+                <>
+                  {" · "}
+                  {isZh
+                    ? `合营企业按权益法列示（账面值 ${fmtM(report.investmentInJointVenture)}；较总部账面调整 ${fmtM(report.jvBalanceAdjustment)}）`
+                    : `Joint venture on the equity method (carrying amount ${fmtM(report.investmentInJointVenture)}; ${fmtM(report.jvBalanceAdjustment)} adjustment to HQ's ledger amount)`}
+                </>
+              )}
               {(report.investmentInSubsidiariesEliminated !== 0 || report.intercompanyEliminated !== 0) && (
                 <>
                   {" · "}
@@ -67,6 +75,7 @@ export default async function ConsolidatedBalanceSheetPage(props: PageProps<"/re
               <tbody>
                 {[
                   [isZh ? "资产总额" : "Total Assets", report.totalAssets, true],
+                  ...(report.hasJointVenture ? [[isZh ? "　其中：对合营企业的投资（权益法）" : "　of which: investment in joint venture (equity method)", report.investmentInJointVenture, false]] : []),
                   [isZh ? "负债总额" : "Total Liabilities", report.totalLiabilities, false],
                   [isZh ? "所有者权益" : "Total Equity", report.totalEquity, true],
                 ].map(([label, value, bold], i) => (

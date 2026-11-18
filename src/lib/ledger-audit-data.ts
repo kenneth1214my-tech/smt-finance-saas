@@ -29,6 +29,7 @@ export async function loadLedgerAudit(organizationId: string, locale: Locale): P
       const mine = <T extends { subsidiaryId: string | null }>(rows: T[]) => rows.filter((r) => r.subsidiaryId === e.id);
       const byAccount = new Map<string, LedgerAccountSeries>();
       for (const a of mine(accounts)) {
+        if (a.group === "JV_INVESTMENT") continue; // belongs to the joint-venture schedule, not the three audit groups
         const id = `${a.group}|${a.section}|${a.accountName}`;
         const s = byAccount.get(id) ?? { group: a.group as LedgerGroup, name: a.accountName, section: a.section as "asset" | "liability", balances: {} };
         s.balances[key(a.year, a.month)] = Number(a.balance);

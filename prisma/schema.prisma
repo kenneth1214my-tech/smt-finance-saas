@@ -892,3 +892,57 @@ model BalanceSheetMonthly {
   @@unique([subsidiaryId, year, month])
   @@index([organizationId])
 }
+
+// A joint venture the group holds an interest in (joint control, NOT a subsidiary — it is never consolidated line by line). Accounted for
+// under the equity method in the Group statements (lib/joint-venture.ts). Amounts on the period rows are in the reporting currency (SGD).
+model JointVenture {
+  id                    String   @id @default(cuid())
+  organizationId        String
+  name                  String
+  country               String
+  // Group's share of ownership and votes, %
+  ownershipPct          Decimal  @db.Decimal(5, 2)
+  // The joint venture's own functional currency (translated to the reporting currency at average / closing rate)
+  currency              String   @default("SGD")
+  acquiredOn            DateTime?
+  // The account HQ's Xero ledger carries the investment in (by name), for reconciling the ledger to the equity-method schedule
+  investmentAccountName String?
+  notes                 String?  @db.Text
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  periods JointVenturePeriod[]
+
+  @@index([organizationId])
+}
+
+// One financial year of a joint venture's equity-method schedule: the inputs only — carrying amount, recognised share of result and the
+// memo of unrecognised losses are worked out from these (see lib/joint-venture.ts), never stored.
+model JointVenturePeriod {
+  id               String       @id @default(cuid())
+  organizationId   String
+  jointVentureId   String
+  jointVenture     JointVenture @relation(fields: [jointVentureId], references: [id], onDelete: Cascade)
+  // Group financial year (the FY ending in this year)
+  year             Int
+  // Cash / capital the Group put into the joint venture this year (at cost)
+  capitalAdded     Decimal      @default(0) @db.Decimal(14, 2)
+  // The joint venture's net profit / (loss) for the year at 100%, in the reporting currency, after bringing its policies in line with the Group's
+  jvNetResult      Decimal      @default(0) @db.Decimal(14, 2)
+  // The joint venture's net assets / (liabilities) at year-end at 100% (disclosure and the loss-cap check)
+  jvNetAssets      Decimal?     @db.Decimal(14, 2)
+  dividendsReceived Decimal     @default(0) @db.Decimal(14, 2)
+  // Movement from translating a foreign joint venture (goes to the foreign currency translation reserve, not profit)
+  translation      Decimal      @default(0) @db.Decimal(14, 2)
+  impairment       Decimal      @default(0) @db.Decimal(14, 2)
+  // What HQ's own ledger (Xero) carries the investment at on the year-end date. Blank = cost (cumulative capital added).
+  hqLedgerCarrying Decimal?     @db.Decimal(14, 2)
+  // A charge for this investment HQ has already booked in its own profit and loss (e.g. a write-off), so the Group adjustment does not double count it
+  hqLedgerExpense  Decimal      @default(0) @db.Decimal(14, 2)
+  notes            String?      @db.Text
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@unique([jointVentureId, year])
+  @@index([organizationId])
+}

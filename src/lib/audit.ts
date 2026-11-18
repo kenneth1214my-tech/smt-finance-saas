@@ -5,6 +5,7 @@ import { localizedName } from "@/lib/localize";
 import type { Locale } from "@/lib/i18n/dictionaries";
 import { loadLedgerAudit } from "@/lib/ledger-audit-data";
 import { buildCorrections } from "@/lib/ledger-corrections";
+import { loadJointVentures } from "@/lib/joint-venture-data";
 
 // Scope note: this module only detects exceptions computable from data that actually exists in
 // this schema — MonthlyFinancial (aggregate monthly totals), ARCustomer/Payable (balance + aging
@@ -350,6 +351,44 @@ async function detectLedgerExceptions(organizationId: string, locale: Locale): P
   return out;
 }
 
+// Joint ventures (equity method): a schedule that is missing for the latest closed year, or a carrying amount that has gone negative.
+async function detectJointVentureExceptions(organizationId: string, locale: Locale): Promise<DraftFinding[]> {
+  const isZh = locale === "zh" || locale === "zh-Hant";
+  const jvs = await loadJointVentures(organizationId);
+  const closedYear = new Date().getFullYear() - 1;
+  const out: DraftFinding[] = [];
+  for (const jv of jvs) {
+    const latest = jv.years[jv.years.length - 1];
+    if (!latest || latest.year < closedYear) {
+      out.push({
+        area: "ledger", severity: "MEDIUM", entityLabel: jv.name, transactionRef: "JV",
+        amount: latest ? latest.closing : null,
+        criteria: isZh ? "合营企业须按权益法逐年更新，集团报表才包含其应占利润/(亏损)" : "A joint venture's equity-method schedule must be updated every year for the Group statements to carry its share of result",
+        condition: latest
+          ? (isZh ? `${jv.name} 的年度数据只到 ${latest.year} 年，${closedYear} 年尚未录入。` : `The yearly figures for ${jv.name} stop at ${latest.year}; ${closedYear} has not been entered.`)
+          : (isZh ? `${jv.name} 没有任何年度数据，集团报表未包含它。` : `${jv.name} has no yearly figures, so the Group statements do not include it.`),
+        evidence: `JointVenturePeriod — ${jv.name}`,
+        riskImpact: isZh ? "应占亏损/利润、投资账面值和未确认亏损都不准确，集团报表失真" : "The share of result, the carrying amount and the unrecognised losses are out of date, so the Group statements are misstated",
+        recommendation: isZh ? "在「报表 → 合营企业」录入该年度的合营企业净利润、净资产、股息和投入资本" : "On Reports → Joint ventures, enter the year's JV net result, net assets, dividends and capital put in",
+        dedupKey: `ledger|jv|${jv.id}|stale`,
+      });
+    }
+    if (latest && latest.flags.includes("carrying-negative")) {
+      out.push({
+        area: "ledger", severity: "HIGH", entityLabel: jv.name, transactionRef: "JV",
+        amount: latest.closing,
+        criteria: isZh ? "权益法下投资账面值不得低于零" : "Under the equity method the carrying amount cannot fall below nil",
+        condition: isZh ? `${jv.name} ${latest.year} 年末账面值为 ${latest.closing.toFixed(2)}，股息或折算差额超过了账面值。` : `${jv.name} closes ${latest.year} at ${latest.closing.toFixed(2)} — dividends or translation exceed the carrying amount.`,
+        evidence: `JointVenturePeriod — ${jv.name} / ${latest.year}`,
+        riskImpact: isZh ? "超过账面值的股息应确认为利得，否则投资和权益被少计" : "Dividends beyond the carrying amount are a gain; leaving them in the investment misstates assets and equity",
+        recommendation: isZh ? "核对股息和折算差额的输入；超出部分按准则确认为损益" : "Check the dividend and translation inputs; recognise the excess in profit or loss as the standard requires",
+        dedupKey: `ledger|jv|${jv.id}|negative|${latest.year}`,
+      });
+    }
+  }
+  return out;
+}
+
 async function detectSegregationOfDuties(organizationId: string, locale: Locale): Promise<DraftFinding[]> {
   const isZh = locale === "zh" || locale === "zh-Hant";
   const approvers = await db.user.findMany({ where: { organizationId, status: "ACTIVE", role: { in: ["ADMIN", "DIRECTOR"] } } });
@@ -374,7 +413,7 @@ async function detectSegregationOfDuties(organizationId: string, locale: Locale)
 }
 
 export async function runAuditScan(organizationId: string, year: number, locale: Locale): Promise<{ created: number; skipped: number }> {
-  const [ar, ap, budget, debt, riskDiv, sod, ledger] = await Promise.all([
+  const [ar, ap, budget, debt, riskDiv, sod, ledger, jointVenture] = await Promise.all([
     detectARExceptions(organizationId, locale),
     detectAPExceptions(organizationId, locale),
     detectBudgetVariance(organizationId, year, locale),
@@ -382,8 +421,9 @@ export async function runAuditScan(organizationId: string, year: number, locale:
     detectRiskRatingDivergence(organizationId, year, locale),
     detectSegregationOfDuties(organizationId, locale),
     detectLedgerExceptions(organizationId, locale),
+    detectJointVentureExceptions(organizationId, locale),
   ]);
-  const drafts = [...ar, ...ap, ...budget, ...debt, ...riskDiv, ...sod, ...ledger];
+  const drafts = [...ar, ...ap, ...budget, ...debt, ...riskDiv, ...sod, ...ledger, ...jointVenture];
 
   const existingOpen = await db.auditFinding.findMany({
     where: { organizationId, status: { in: ["OPEN", "IN_PROGRESS"] } },

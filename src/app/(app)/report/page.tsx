@@ -71,6 +71,10 @@ export default async function ReportPage() {
 
         {canApprove(user.role) && <GenerateReportButton locale={locale} />}
 
+        <Link href="/report/joint-venture" className="block rounded-2xl border p-4 text-[13px] font-semibold" style={{ borderColor: "var(--border-strong)", background: "var(--surface)", color: "var(--ink-900)" }}>
+          {isZh ? "合营企业（权益法）— 投资账面值、应占利润/(亏损)与未确认亏损 ›" : "Joint ventures (equity method) — carrying amount, share of result and unrecognised losses ›"}
+        </Link>
+
         <div className="grid gap-4 lg:grid-cols-2">
           <Card title={dict.m.reportListCard}>
             <div className="overflow-x-auto">

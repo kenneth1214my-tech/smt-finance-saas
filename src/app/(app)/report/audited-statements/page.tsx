@@ -201,6 +201,7 @@ export default async function AuditedStatementsPage(props: PageProps<"/report/au
                   [dict.m.rndExp, -cur.rndExp, -prior.rndExp, false],
                   [dict.m.financeExp, -cur.financeExp, -prior.financeExp, false],
                   [isZh ? "营业利润" : "Operating Profit", cur.operatingProfit, prior.operatingProfit, true],
+                  ...(cur.hasJointVenture || prior.hasJointVenture ? [[isZh ? "应占合营企业(亏损)/利润" : "Share of (loss)/profit from joint venture", cur.shareOfJointVenture, prior.shareOfJointVenture, false]] : []),
                   [isZh ? "净利润/(亏损)" : "Net Profit/(Loss)", cur.netProfit, prior.netProfit, true],
                 ].map(([label, value, prevValue, bold], i) => (
                   <tr key={i} className="border-t" style={{ borderColor: "var(--border)" }}>
