@@ -141,7 +141,7 @@ export default async function JointVenturePage() {
                 <div className="mt-2 text-[11.5px]" style={{ color: "var(--ink-400)" }}>
                   {t("总部账上账面值来源：", "HQ ledger carrying amount source: ")}
                   {jv.years
-                    .map((y) => `${y.year} ${jv.ledgerSource[y.year] === "xero" ? t("Xero 自动读取", "read from Xero") : jv.ledgerSource[y.year] === "input" ? t("手工录入", "typed in") : t("按成本（尚未从 Xero 同步到）", "cost (not yet synced from Xero)")}`)
+                    .map((y) => `${y.year} ${jv.ledgerSource[y.year] === "xero" ? t("Xero 自动读取", "read from Xero") : jv.ledgerSource[y.year] === "xero-nil" ? t("Xero 中该科目无余额（视为零）", "no balance on the account in Xero (taken as nil)") : jv.ledgerSource[y.year] === "input" ? t("手工录入", "typed in") : t("按成本（尚未从 Xero 同步到）", "cost (not yet synced from Xero)")}`)
                     .join(" · ")}
                 </div>
               )}
