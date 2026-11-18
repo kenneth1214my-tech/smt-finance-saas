@@ -4,7 +4,7 @@ import { requireUser } from "@/lib/dal";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { loadLedgerAudit } from "@/lib/ledger-audit-data";
 import { buildCorrections } from "@/lib/ledger-corrections";
-import { buildLedgerSheets, rowsToCsv, LEDGER_SHEETS, type LedgerSheetName } from "@/lib/ledger-export";
+import { buildLedgerSheets, ledgerHeaders, rowsToCsv, LEDGER_SHEETS, type LedgerSheetName } from "@/lib/ledger-export";
 
 // Download of the deferred revenue / prepayment / accrual audit: one Excel workbook with every sheet, or one sheet as CSV.
 //   GET /api/admin/ledger-audit?format=xlsx
@@ -26,9 +26,8 @@ export async function GET(req: Request) {
 
   if (format === "csv") {
     const rows = sheets[sheet as LedgerSheetName];
-    // The Xero import file needs its header row even when there is nothing to correct.
-    const headers = sheet === "xero-journal" ? ["*Narration", "*Date", "Description", "*AccountCode", "*TaxRate", "*Amount", "TrackingName1", "TrackingOption1", "TrackingName2", "TrackingOption2"] : undefined;
-    return new NextResponse(rowsToCsv(rows, headers), {
+    // Every sheet keeps its header row even when it has no rows — an empty file looks like a failed download.
+    return new NextResponse(rowsToCsv(rows, ledgerHeaders(isZh)[sheet as LedgerSheetName]), {
       headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${base}-${sheet}.csv"` },
     });
   }

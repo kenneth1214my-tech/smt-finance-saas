@@ -88,6 +88,17 @@ export function buildLedgerSheets(results: LedgerEntityResult[], corrections: Co
   return { checks, breakdown, corrections: corr, "xero-journal": xero };
 }
 
+/** Column headers of every sheet, so a sheet with no rows still downloads as a file with its header row (an empty file reads as broken). */
+export function ledgerHeaders(isZh: boolean): Record<LedgerSheetName, string[]> {
+  const t = (zh: string, en: string) => (isZh ? zh : en);
+  return {
+    checks: [t("主体", "Entity"), t("类别", "Type"), t("账户", "Account"), t("检查", "Check"), t("结果", "Result"), t("金额", "Amount"), t("说明", "Detail"), t("标准", "Criteria"), t("风险", "Risk"), t("建议", "Recommendation")],
+    breakdown: [t("主体", "Entity"), t("类别", "Type"), t("月份", "Month"), t("账户", "Account"), t("余额", "Balance"), t("较上月变动", "Movement"), t("当月收入", "Revenue"), t("当月支出", "Spend"), t("资产负债表合计", "Balance-sheet total"), t("占比%", "Share %"), t("月数倍数", "Months of revenue / spend")],
+    corrections: [t("主体", "Entity"), t("类别", "Type"), t("问题账户", "Account in question"), t("当前余额", "Balance now"), t("方案", "Option"), t("可能原因", "Likely cause"), t("日期", "Date"), t("摘要", "Narration"), t("过账账户", "Journal account"), t("借方", "Debit"), t("贷方", "Credit"), t("过账前须确认", "Confirm before posting")],
+    "xero-journal": ["*Narration", "*Date", "Description", "*AccountCode", "*TaxRate", "*Amount", "TrackingName1", "TrackingOption1", "TrackingName2", "TrackingOption2"],
+  };
+}
+
 export function rowsToCsv(rows: SheetRow[], headers?: string[]): string {
   const cols = headers ?? (rows.length ? Object.keys(rows[0]) : []);
   const esc = (v: string | number | undefined) => {

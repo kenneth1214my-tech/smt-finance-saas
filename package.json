@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "postinstall": "prisma generate",
-    "test": "node --test tests/joint-venture.test.ts"
+    "test": "node --test tests/joint-venture.test.ts tests/ledger-audit.test.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
