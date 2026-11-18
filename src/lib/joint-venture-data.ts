@@ -85,9 +85,11 @@ export interface JvPosition {
   balanceAdjustment: number;
   /** Share of joint-venture losses not recognised (carrying amount reached nil), carried forward. */
   unrecognisedLosses: number;
+  /** The year's charge already sitting in HQ's own expenses, shown as a reversing line so the Group P&L adds up. */
+  alreadyInExpenses: number;
 }
 
-const EMPTY: JvPosition = { hasJointVenture: false, groupResult: 0, profitAdjustment: 0, investmentCarrying: 0, balanceAdjustment: 0, unrecognisedLosses: 0 };
+const EMPTY: JvPosition = { hasJointVenture: false, groupResult: 0, profitAdjustment: 0, investmentCarrying: 0, balanceAdjustment: 0, unrecognisedLosses: 0, alreadyInExpenses: 0 };
 
 /**
  * The Group's joint-venture position for a financial year. A year with no schedule row carries the last earlier row's balances forward and
@@ -106,10 +108,11 @@ export function positionForYear(jvs: JointVentureView[], year: number): JvPositi
     if (last.year === year) {
       out.groupResult += last.groupResult;
       out.profitAdjustment += last.profitAdjustment;
+      out.alreadyInExpenses += last.hqLedgerExpense;
     }
   }
   const r2 = (n: number) => Math.round(n * 100) / 100 + 0;
-  return { ...out, groupResult: r2(out.groupResult), profitAdjustment: r2(out.profitAdjustment), investmentCarrying: r2(out.investmentCarrying), balanceAdjustment: r2(out.balanceAdjustment), unrecognisedLosses: r2(out.unrecognisedLosses) };
+  return { ...out, groupResult: r2(out.groupResult), profitAdjustment: r2(out.profitAdjustment), investmentCarrying: r2(out.investmentCarrying), balanceAdjustment: r2(out.balanceAdjustment), unrecognisedLosses: r2(out.unrecognisedLosses), alreadyInExpenses: r2(out.alreadyInExpenses) };
 }
 
 export async function loadJvPosition(organizationId: string, year: number): Promise<JvPosition> {

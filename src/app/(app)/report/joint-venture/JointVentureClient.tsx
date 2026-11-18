@@ -6,7 +6,7 @@ type Row = Record<string, unknown>;
 
 // The two small tables behind the joint-venture schedule: the venture itself, and one row of figures per financial year. Everything else
 // on the page (carrying amount, recognised share, unrecognised losses, the Group adjustments) is worked out from these.
-export default function JointVentureClient({ jointVentures, periods, isZh }: { jointVentures: Row[]; periods: Row[]; isZh: boolean }) {
+export default function JointVentureClient({ jointVentures, periods, isZh, baseCurrency }: { jointVentures: Row[]; periods: Row[]; isZh: boolean; baseCurrency: string }) {
   const t = (zh: string, en: string) => (isZh ? zh : en);
   const nameOf = (id: unknown) => String(jointVentures.find((j) => j.id === id)?.name ?? "—");
 
@@ -14,7 +14,7 @@ export default function JointVentureClient({ jointVentures, periods, isZh }: { j
     { key: "name", label: t("合营企业名称", "Joint venture name"), type: "text" },
     { key: "country", label: t("注册国家/地区", "Country"), type: "text" },
     { key: "ownershipPct", label: t("持股比例 %", "Ownership %"), type: "number", step: "0.01" },
-    { key: "currency", label: t("记账货币", "Functional currency"), type: "text" },
+    { key: "currency", label: t("记账货币（三位代码，如 VND）", "Functional currency (3-letter code, e.g. VND)"), type: "text", required: true },
     { key: "acquiredOn", label: t("取得日期", "Acquired on"), type: "date" },
     { key: "investmentAccountName", label: t("总部 Xero 中的投资科目名称", "Investment account name in HQ's Xero"), type: "text" },
     { key: "notes", label: t("备注", "Notes"), type: "textarea" },
@@ -24,8 +24,8 @@ export default function JointVentureClient({ jointVentures, periods, isZh }: { j
     { key: "jointVentureId", label: t("合营企业", "Joint venture"), type: "select", options: jointVentures.map((j) => ({ value: String(j.id), label: String(j.name) })), displayValue: (r) => nameOf(r.jointVentureId) },
     { key: "year", label: t("财政年度", "Financial year"), type: "number" },
     { key: "capitalAdded", label: t("本年投入资本（成本）", "Capital put in this year (cost)"), type: "number", step: "0.01" },
-    { key: "jvNetResult", label: t("合营企业全年净利润/(亏损)（100%，折算为新币）", "JV net profit / (loss) for the year (100%, in SGD)"), type: "number", step: "0.01" },
-    { key: "jvNetAssets", label: t("合营企业年末净资产/(负债)（100%）", "JV net assets / (liabilities) at year-end (100%)"), type: "number", step: "0.01" },
+    { key: "jvNetResult", label: t(`合营企业全年净利润/(亏损)（100%，折算为${baseCurrency}）`, `JV net profit / (loss) for the year (100%, in ${baseCurrency})`), type: "number", step: "0.01" },
+    { key: "jvNetAssets", label: t(`合营企业年末净资产/(负债)（100%，${baseCurrency}）`, `JV net assets / (liabilities) at year-end (100%, ${baseCurrency})`), type: "number", step: "0.01" },
     { key: "dividendsReceived", label: t("本年收到的股息", "Dividends received"), type: "number", step: "0.01" },
     { key: "translation", label: t("外币折算差额", "Translation movement"), type: "number", step: "0.01" },
     { key: "impairment", label: t("减值", "Impairment"), type: "number", step: "0.01" },

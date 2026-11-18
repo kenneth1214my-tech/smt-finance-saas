@@ -366,7 +366,7 @@ export const jointVentureSchema = z.object({
   name: z.string().trim().min(1).max(200),
   country: z.string().trim().min(1).max(100),
   ownershipPct: z.coerce.number().gt(0).max(100),
-  currency: z.string().trim().length(3).transform((s) => s.toUpperCase()).default("SGD"),
+  currency: z.string().trim().length(3).transform((s) => s.toUpperCase()),
   acquiredOn: z.preprocess(blankToNull, z.coerce.date().nullable().optional()),
   investmentAccountName: z.preprocess(blankToNull, z.string().trim().max(200).nullable().optional()),
   notes: z.preprocess(blankToNull, z.string().trim().max(2000).nullable().optional()),

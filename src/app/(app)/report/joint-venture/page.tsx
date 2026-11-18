@@ -3,6 +3,7 @@ import { requireUser, canApprove } from "@/lib/dal";
 import { db } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary } from "@/lib/i18n/dictionaries";
+import { getBaseCurrency } from "@/lib/currency";
 import { loadJointVentures, type JointVentureView } from "@/lib/joint-venture-data";
 import type { JvFlag, JvYearResult } from "@/lib/joint-venture";
 import Topbar from "@/components/Topbar";
@@ -20,6 +21,11 @@ export default async function JointVenturePage() {
   const t = (zh: string, en: string) => (isZh ? zh : en);
 
   const jvs = await loadJointVentures(user.organizationId);
+  const baseCurrency = await getBaseCurrency(user.organizationId);
+  const org = await db.organization.findUnique({ where: { id: user.organizationId }, select: { jurisdiction: true } });
+  const isHk = org?.jurisdiction === "HK";
+  // The standards that govern joint arrangements and the equity method in this jurisdiction.
+  const standards = isHk ? "HKFRS 11 / HKAS 28" : "SFRS(I) 11 / SFRS(I) 1-28";
   let jvRows: Record<string, unknown>[] = [];
   let periodRows: Record<string, unknown>[] = [];
   try {
@@ -102,8 +108,8 @@ export default async function JointVenturePage() {
           <div className="space-y-2 text-[12.5px] leading-relaxed" style={{ color: "var(--ink-600)" }}>
             <p>
               {t(
-                "合营企业不是子公司，不逐项合并。集团报表按权益法列示：投资以成本入账，随集团应占合营企业利润/(亏损)增减，收到的股息冲减账面值；应占利润/(亏损)作为一行列在营业利润之下（不计入 EBIT / EBITDA）。",
-                "A joint venture is not a subsidiary and is never consolidated line by line. The Group statements use the equity method: the investment starts at cost, moves with the Group's share of the joint venture's profit or loss, and falls with dividends received. The share of result is one line below operating profit (outside EBIT and EBITDA).",
+                `合营企业不是子公司，不逐项合并。依据 ${standards}，集团报表按权益法列示：投资以成本入账，随集团应占合营企业利润/(亏损)增减，收到的股息冲减账面值；应占利润/(亏损)作为一行列在营业利润之下（不计入 EBIT / EBITDA）。`,
+                `A joint venture is not a subsidiary and is never consolidated line by line. Under ${standards} the Group statements use the equity method: the investment starts at cost, moves with the Group's share of the joint venture's profit or loss, and falls with dividends received. The share of result is one line below operating profit (outside EBIT and EBITDA).`,
               )}
             </p>
             <p>
@@ -114,8 +120,8 @@ export default async function JointVenturePage() {
             </p>
             <p>
               {t(
-                "数据来源：合营企业自己的账目（折算为新币、并按集团会计政策调整）。合营企业接入 Xero 之前，每年只需录入一次下方的年度数据；其余全部自动计算，不需要手工做分录。",
-                "Source of the figures: the joint venture's own accounts (translated to SGD and brought into line with Group policies). Until it is on Xero, enter the yearly figures below once a year; everything else is calculated, with no manual journals.",
+                `数据来源：合营企业自己的账目（折算为${baseCurrency}、并按集团会计政策调整）。合营企业接入 Xero 之前，每年只需录入一次下方的年度数据；其余全部自动计算，不需要手工做分录。`,
+                `Source of the figures: the joint venture's own accounts (translated to ${baseCurrency} and brought into line with Group policies). Until it is on Xero, enter the yearly figures below once a year; everything else is calculated, with no manual journals.`,
               )}
             </p>
           </div>
@@ -178,7 +184,7 @@ export default async function JointVenturePage() {
 
         {canApprove(user.role) && (
           <Card title={t("录入", "Set-up and yearly figures")}>
-            <JointVentureClient jointVentures={jvRows} periods={periodRows} isZh={isZh} />
+            <JointVentureClient jointVentures={jvRows} periods={periodRows} isZh={isZh} baseCurrency={baseCurrency} />
           </Card>
         )}
       </div>

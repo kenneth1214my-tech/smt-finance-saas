@@ -46,6 +46,8 @@ export interface JvYearResult {
   balanceAdjustment: number;
   /** What to add to the Group profit: groupResult, plus any charge HQ already booked, less dividends HQ booked as income. */
   profitAdjustment: number;
+  /** The charge for this investment HQ's own ledger already carries in its expenses (input echoed back). */
+  hqLedgerExpense: number;
   flags: JvFlag[];
 }
 
@@ -110,6 +112,7 @@ export function computeJvRollForward(ownershipPct: number, periods: JvPeriodInpu
       cumulativeCost, hqLedgerCarrying, groupResult,
       balanceAdjustment,
       profitAdjustment,
+      hqLedgerExpense: p.hqLedgerExpense,
       flags,
     };
     out.push(result);

@@ -31,6 +31,8 @@ export interface ConsolidatedIncomeStatement {
   shareOfJointVenture: number;
   /** True when a joint venture is on file, so the line is shown even at nil. */
   hasJointVenture: boolean;
+  /** Charge for the joint venture already inside the entities' own expenses above, reversed on its own line so the statement adds up. */
+  jvAlreadyInExpenses: number;
   /** Net profit includes this adjustment to the sum of the entities' own results (see lib/joint-venture.ts). */
   jvProfitAdjustment: number;
   netProfit: number;
@@ -99,6 +101,7 @@ export async function computeConsolidatedIncomeStatement(organizationId: string,
     shareOfJointVenture: jv.groupResult,
     hasJointVenture: jv.hasJointVenture,
     jvProfitAdjustment: jv.profitAdjustment,
+    jvAlreadyInExpenses: jv.alreadyInExpenses,
     netProfit,
     netMarginPct,
     byEntity,
