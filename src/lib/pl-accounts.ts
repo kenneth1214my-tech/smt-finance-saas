@@ -89,7 +89,7 @@ export function plAccountFn(entities: { id: string | null }[], allLines: PlLineR
         return {
           name,
           values: multi ? [...per, total] : per,
-          note: section === "UNMAPPED" ? t("尚未归类（未计入销售/管理/研发/财务）", "Not categorised yet (left out of selling / admin / R&D / finance)") : undefined,
+          note: section === "UNMAPPED" ? t("尚未归类（未计入销售/管理/研发/财务）", "Not categorised yet (left out of selling / admin / R&D / finance)") : section === "INCOME" ? t("收入类科目（不是费用）", "Income account (not an expense)") : undefined,
         };
       })
       .sort((a, b) => Math.abs(b.values[b.values.length - 1] ?? 0) - Math.abs(a.values[a.values.length - 1] ?? 0));

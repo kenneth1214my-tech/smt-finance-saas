@@ -132,3 +132,14 @@ test("the expense category is still read from the first part of the stored secti
   const stored: PlLineRow[] = [{ subsidiaryId: null, group: "PL_expense", section: "ADMIN|-|Less Operating Expenses", accountName: "Salaries", balance: 40 }];
   assert.deepEqual(plAccountFn([{ id: null }], stored, false, false)("admin")!.map((a) => a.name), ["Salaries"]);
 });
+
+test("an income line is labelled as income, not as an uncategorised expense", () => {
+  const stored: PlLineRow[] = [
+    { subsidiaryId: null, group: "PL_expense", section: "INCOME|+|Plus Other Income", accountName: "Miscellaneous Income", balance: 5 },
+    { subsidiaryId: null, group: "PL_expense", section: "UNMAPPED|-|Less Operating Expenses", accountName: "Depreciation", balance: 3 },
+  ];
+  const fn = plAccountFn([{ id: null }], stored, false, false);
+  const dna = fn("dna")!;
+  assert.ok(/not categorised/i.test(dna[0].note ?? ""));
+  assert.equal(fn("net")!.reduce((s, a) => s + (a.values[0] ?? 0), 0), 5 - 3);
+});

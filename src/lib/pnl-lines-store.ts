@@ -23,7 +23,7 @@ export async function storePnlLines(args: {
       organizationId, subsidiaryId, year, month,
       group: `PL_${l.kind}`,
       // "CATEGORY|sign|Xero heading": the expense category (blank for non-expenses), whether the line adds to (+) or takes from (-) net profit, and the heading
-      section: `${l.kind === "expense" ? (categoryMapping[l.label] ?? suggestCategory(l.label) ?? "UNMAPPED") : ""}|${l.sign > 0 ? "+" : "-"}|${l.title}`,
+      section: `${l.kind === "expense" ? (l.sign > 0 ? "INCOME" : (categoryMapping[l.label] ?? suggestCategory(l.label) ?? "UNMAPPED")) : ""}|${l.sign > 0 ? "+" : "-"}|${l.title}`,
       accountName: l.label,
       balance: Math.round(l.value * 100) / 100,
     }));
