@@ -87,3 +87,48 @@ test("net profit lists every line with its sign and re-adds to the profit", () =
 test("a kind with no stored lines returns nothing, so no drill-down is shown", () => {
   assert.equal(plAccountFn([{ id: null }], [], false, false)("revenue"), undefined);
 });
+
+// ---- direction of each line in net profit, worked out from the report's own totals
+const report2 = { Rows: [
+  { RowType: "Section", Title: "Income", Rows: [row("Course fee", 100000), summary(100000)] },
+  { RowType: "Section", Title: "Less Cost of Sales", Rows: [row("Lecturer fees", 30000), summary(30000)] },
+  { RowType: "Row", Cells: [c("Gross Profit"), c(70000)] },
+  { RowType: "Section", Title: "Less Operating Expenses", Rows: [row("Salaries", 40000), row("Office Rental (87000)", 6088), summary(46088)] },
+  { RowType: "Section", Title: "Non-operating Income", Rows: [row("Miscellaneous Income", 10000), summary(10000)] },
+  { RowType: "Section", Title: "Taxation", Rows: [row("Taxation", -2000), summary(-2000)] },
+  { RowType: "Row", Cells: [c("Net Profit"), c(35912)] },
+] } as never;
+
+test("a section whose heading is not 'Other Income' still counts the right way, solved from the net profit", () => {
+  const r = parseXeroPnl(report2);
+  const sign = (label: string) => r.lines.find((l) => l.label === label)!.sign;
+  assert.equal(sign("Course fee"), 1);
+  assert.equal(sign("Lecturer fees"), -1);
+  assert.equal(sign("Salaries"), -1);
+  assert.equal(sign("Miscellaneous Income"), 1); // income-type section under another heading
+  assert.equal(sign("Taxation"), -1); // a negative taxation line (a credit) therefore adds 2,000 to profit
+});
+
+test("the signed lines add up to the report's net profit, and the subtotal rows are not accounts", () => {
+  const r = parseXeroPnl(report2);
+  assert.ok(!r.lines.some((l) => /gross profit/i.test(l.label)));
+  const net = r.lines.reduce((s, l) => s + l.sign * l.value, 0);
+  assert.equal(net, r.netProfit);
+});
+
+test("a stored sign decides the net profit list; rows stored before it was kept fall back to the heading and name", () => {
+  const stored: PlLineRow[] = [
+    { subsidiaryId: null, group: "PL_revenue", section: "|+|Income", accountName: "Course fee", balance: 100 },
+    { subsidiaryId: null, group: "PL_expense", section: "UNMAPPED|+|Non-operating Income", accountName: "Office Rental (87000)", balance: 10 },
+    { subsidiaryId: null, group: "PL_expense", section: "ADMIN|-|Less Operating Expenses", accountName: "Salaries", balance: 40 },
+    { subsidiaryId: null, group: "PL_expense", section: "UNMAPPED", accountName: "Miscellaneous Income", balance: 5 }, // old format: name decides
+    { subsidiaryId: null, group: "PL_expense", section: "UNMAPPED", accountName: "Gross Profit", balance: 999 }, // old stored subtotal: ignored
+  ];
+  const net = plAccountFn([{ id: null }], stored, false, false)("net")!;
+  assert.equal(net.reduce((s, a) => s + (a.values[0] ?? 0), 0), 100 + 10 - 40 + 5);
+});
+
+test("the expense category is still read from the first part of the stored section", () => {
+  const stored: PlLineRow[] = [{ subsidiaryId: null, group: "PL_expense", section: "ADMIN|-|Less Operating Expenses", accountName: "Salaries", balance: 40 }];
+  assert.deepEqual(plAccountFn([{ id: null }], stored, false, false)("admin")!.map((a) => a.name), ["Salaries"]);
+});

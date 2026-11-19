@@ -29,17 +29,35 @@ const INTEREST_RE = /\binterest\b|finance\s+(costs?|charges?)|borrowing\s+costs?
 const EMPLOYMENT_RE = /salar|wage|payroll|\bcpf\b|\bsdl\b|skills development|bonus|remunerat|director'?s?\s*fee|\bstaff\b|employee|worker levy|\bfwl\b|overtime|\bepf\b|\bsocso\b|\bperkeso\b|\bbpjs\b|\bmpf\b|provident fund/i;
 
 const r2 = (n: number) => Math.round(n * 100) / 100 + 0;
+const SUBTOTAL_RE = /^(gross\s+(profit|loss)|operating\s+(profit|loss)|net\s+(profit|loss|income)|profit\s+before\s+tax|total\b.*|.*\bsubtotal\b.*)$/i;
+// A stored section is "CATEGORY|sign|heading" (newer rows) or just the category (rows stored before the sign was kept).
+const categoryOf = (section: string) => section.split("|")[0];
+const signOfSection = (section: string): 1 | -1 | null => {
+  const p = section.split("|");
+  return p.length >= 3 ? (p[1] === "+" ? 1 : p[1] === "-" ? -1 : null) : null;
+};
+const titleOf = (section: string) => (section.split("|").length >= 3 ? section.split("|").slice(2).join("|") : "");
+/** Does this line ADD to profit? Revenue and other income do; costs and expenses do not. Xero's own heading decides, the account name only when there is none. */
+const addsToProfit = (l: PlLineRow): boolean => {
+  const stored = signOfSection(l.section);
+  if (stored !== null) return stored > 0; // worked out from Xero's own totals when the line was stored
+  if (l.group === "PL_revenue" || l.group === "PL_other") return true;
+  if (l.group === "PL_cost") return false;
+  const text = titleOf(l.section) || l.accountName;
+  return /income|revenue|sales|gain|grant|credit scheme|wage credit|job credit/i.test(text) && !/expense|cost|loss/i.test(text);
+};
 
-export function plAccountFn(entities: { id: string | null }[], lines: PlLineRow[], multi: boolean, isZh: boolean): PlAccountFn {
+export function plAccountFn(entities: { id: string | null }[], allLines: PlLineRow[], multi: boolean, isZh: boolean): PlAccountFn {
   const t = (zh: string, en: string) => (isZh ? zh : en);
+  const lines = allLines.filter((l) => !SUBTOTAL_RE.test(l.accountName));
   const pick: Record<PlKind, (l: PlLineRow) => boolean> = {
     net: () => true, // every line, signed (see below)
     revenue: (l) => l.group === "PL_revenue",
     cost: (l) => l.group === "PL_cost",
-    sell: (l) => l.group === "PL_expense" && l.section === "SELLING",
-    admin: (l) => l.group === "PL_expense" && l.section === "ADMIN",
-    rnd: (l) => l.group === "PL_expense" && l.section === "RND",
-    fin: (l) => l.group === "PL_expense" && l.section === "FINANCE",
+    sell: (l) => l.group === "PL_expense" && categoryOf(l.section) === "SELLING",
+    admin: (l) => l.group === "PL_expense" && categoryOf(l.section) === "ADMIN",
+    rnd: (l) => l.group === "PL_expense" && categoryOf(l.section) === "RND",
+    fin: (l) => l.group === "PL_expense" && categoryOf(l.section) === "FINANCE",
     interest: (l) => (l.group === "PL_expense" || l.group === "PL_cost") && INTEREST_RE.test(l.accountName),
     dna: (l) => (l.group === "PL_expense" || l.group === "PL_cost") && DEPRECIATION_RE.test(l.accountName),
     employment: (l) => l.group === "PL_expense" && EMPLOYMENT_RE.test(l.accountName),
@@ -50,12 +68,12 @@ export function plAccountFn(entities: { id: string | null }[], lines: PlLineRow[
     if (chosen.length === 0) return undefined;
     if (kind === "net") {
       // Net profit = revenue + other income − cost of sales − expenses: every line, with the sign it has in the profit.
-      const sign = (g: string) => (g === "PL_revenue" || g === "PL_other" ? 1 : -1);
+      const sign = (l: PlLineRow) => (addsToProfit(l) ? 1 : -1);
       const byKey = new Map<string, PlLineRow[]>();
       for (const l of chosen) byKey.set(l.group + "|" + l.accountName, [...(byKey.get(l.group + "|" + l.accountName) ?? []), l]);
       return [...byKey.entries()]
         .map(([key, rows]) => {
-          const per = entities.map((e) => r2(rows.filter((r) => r.subsidiaryId === e.id).reduce((s, r) => s + r.balance, 0) * sign(rows[0].group)));
+          const per = entities.map((e) => r2(rows.filter((r) => r.subsidiaryId === e.id).reduce((s, r) => s + r.balance, 0) * sign(rows[0])));
           const total = r2(per.reduce((s, v) => s + v, 0));
           return { name: rows[0].accountName, values: multi ? [...per, total] : per, note: groupLabel(rows[0].group) };
         })
@@ -67,7 +85,7 @@ export function plAccountFn(entities: { id: string | null }[], lines: PlLineRow[
       .map(([name, rows]) => {
         const per = entities.map((e) => r2(rows.filter((r) => r.subsidiaryId === e.id).reduce((s, r) => s + r.balance, 0)));
         const total = r2(per.reduce((s, v) => s + v, 0));
-        const section = rows[0].group === "PL_expense" ? rows[0].section : "";
+        const section = rows[0].group === "PL_expense" ? categoryOf(rows[0].section) : "";
         return {
           name,
           values: multi ? [...per, total] : per,

@@ -11,7 +11,14 @@ export interface PnlLine {
   kind: "revenue" | "cost" | "expense" | "other";
   label: string;
   value: number;
+  /** The Xero section heading the line sits under ("Less Operating Expenses", "Plus Other Income", …). */
+  title: string;
+  /** +1 if the line adds to net profit (income), −1 if it takes away (cost, expense). Worked out from the report's own section totals. */
+  sign: 1 | -1;
 }
+
+/** Subtotal rows Xero prints between sections — not accounts, so never kept as lines. */
+export const SUBTOTAL_RE = /^(gross\s+(profit|loss)|operating\s+(profit|loss)|net\s+(profit|loss|income)|profit\s+before\s+tax|total\b.*|.*\bsubtotal\b.*)$/i;
 
 export interface XeroPnlResult {
   revenue: number;
@@ -59,7 +66,11 @@ export function parseXeroPnl(report: XeroReport): XeroPnlResult {
   let interest = 0;
   const lines: PnlLine[] = [];
 
-  function walk(rows: XeroReport["Rows"], inExpenseSection: boolean, inCostOfSales = false, kind: PnlLine["kind"] | null = null) {
+  // One entry per top-level section: the section's own total, used to work out which way each section counts in net profit.
+  const tops: { title: string; kind: PnlLine["kind"]; total: number; sign: 1 | -1 }[] = [];
+  const lineTop: number[] = []; // for every entry of `lines`, the top-level section it belongs to
+
+  function walk(rows: XeroReport["Rows"], inExpenseSection: boolean, inCostOfSales = false, kind: PnlLine["kind"] | null = null, title = "", topIdx = -1) {
     for (const row of rows) {
       if (row.RowType === "Section") {
         const summary = row.Rows?.find((r) => r.RowType === "SummaryRow");
@@ -69,10 +80,15 @@ export function parseXeroPnl(report: XeroReport): XeroPnlResult {
         const isOtherIncome = otherIncomeSection(row.Title);
         if (isRevenue) revenue += total;
         else if (isCostOfSales) costOfSales += total;
-        if (row.Rows) walk(row.Rows, !isRevenue && !isCostOfSales && !isOtherIncome, isCostOfSales, isRevenue ? "revenue" : isCostOfSales ? "cost" : isOtherIncome ? "other" : "expense");
+        const ownKind: PnlLine["kind"] = isRevenue ? "revenue" : isCostOfSales ? "cost" : isOtherIncome ? "other" : "expense";
+        const idx = topIdx >= 0 ? topIdx : tops.push({ title: (row.Title ?? "").trim(), kind: ownKind, total, sign: ownKind === "cost" ? -1 : ownKind === "expense" ? -1 : 1 }) - 1;
+        if (row.Rows) walk(row.Rows, !isRevenue && !isCostOfSales && !isOtherIncome, isCostOfSales, ownKind, (row.Title ?? "").trim(), idx);
       } else if (row.RowType === "Row" && row.Cells && row.Cells.length >= 2) {
         const label = (row.Cells[0]?.Value ?? "").trim();
-        if (kind && label && !/^net\s+(profit|income)$/i.test(label)) lines.push({ kind, label, value: cellNumber(row.Cells, row.Cells.length - 1) });
+        if (kind && label && !SUBTOTAL_RE.test(label)) {
+          lines.push({ kind, label, value: cellNumber(row.Cells, row.Cells.length - 1), title, sign: -1 });
+          lineTop.push(topIdx);
+        }
         if (/^net\s+(profit|income)$/i.test(label)) {
           netProfit = cellNumber(row.Cells, row.Cells.length - 1);
           foundNetProfit = true;
@@ -103,6 +119,34 @@ export function parseXeroPnl(report: XeroReport): XeroPnlResult {
     }
     netProfit = revenue - otherSections;
   }
+
+  // Which way does each section count in net profit? Revenue and "Other Income" add, cost of sales subtracts; every other section (operating
+  // expenses, but also income-type sections with another title, or taxation) is worked out from the report itself: the combination of signs that
+  // makes the section totals add up to the report's own Net Profit row. If several combinations fit, the one that agrees most with the headings wins.
+  if (foundNetProfit) {
+    const free = tops.map((t, i) => ({ t, i })).filter((x) => x.t.kind === "expense");
+    if (free.length > 0 && free.length <= 12) {
+      const base = revenue - costOfSales + tops.filter((x) => x.kind === "other").reduce((a, x) => a + x.total, 0);
+      const guess = free.map((x) => (/income|revenue|sales|gain|grant/i.test(x.t.title) && !/expense|cost|loss/i.test(x.t.title) ? 1 : -1));
+      let best: { mask: number; score: number } | null = null;
+      for (let mask = 0; mask < 1 << free.length; mask++) {
+        let v = base;
+        free.forEach((x, k) => {
+          v += ((mask >> k) & 1 ? 1 : -1) * x.t.total;
+        });
+        if (Math.abs(v - netProfit) > 0.02) continue;
+        const score = free.reduce((a, _, k) => a + (((mask >> k) & 1 ? 1 : -1) === guess[k] ? 1 : 0), 0);
+        if (!best || score > best.score) best = { mask, score };
+      }
+      free.forEach((x, k) => {
+        x.t.sign = best ? ((best.mask >> k) & 1 ? 1 : -1) : (guess[k] as 1 | -1);
+      });
+    }
+  }
+  lines.forEach((l, n) => {
+    const top = lineTop[n] >= 0 ? tops[lineTop[n]] : null;
+    l.sign = top ? top.sign : l.kind === "revenue" || l.kind === "other" ? 1 : -1;
+  });
 
   return { revenue, costOfSales, netProfit, expenseLineItems, depreciation, interest, lines };
 }
