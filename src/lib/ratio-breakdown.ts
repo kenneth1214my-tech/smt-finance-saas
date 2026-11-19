@@ -18,6 +18,8 @@ export interface RatioBs {
   totalEquity: number;
   detailed: boolean; // false → the current/quick split was not captured yet (needs a sync)
   asOf: string; // yyyy-mm of the stored month-end used
+  /** The Xero account lines behind each grouped figure at that month-end, by bucket ("cash", "opAsset", "opLiab", …). Absent until the next sync. */
+  accounts?: Record<string, { name: string; value: number }[]>;
 }
 export interface RatioEntity {
   id: string | null;
@@ -99,6 +101,18 @@ export function buildRatioSections(args: {
   const labourGroup = labourUsed.length > 0 && totalCost > 0 ? totalRev / totalCost : null;
   const labourVals = multi ? [...labourPerEntity, labourGroup] : labourPerEntity;
   const labour = labourGroup;
+
+  // The Xero accounts behind a grouped figure, per entity plus the group sum — null when no entity has them stored yet.
+  const accountsOf = (bucket: string): { name: string; values: (number | null)[] }[] | undefined => {
+    const names = new Set<string>();
+    for (const e of withBs) for (const a of e.bs!.accounts?.[bucket] ?? []) names.add(a.name);
+    if (names.size === 0) return undefined;
+    return [...names].sort().map((name) => {
+      const per = entities.map((e) => (e.bs ? (e.bs.accounts?.[bucket]?.find((a) => a.name === name)?.value ?? 0) : null));
+      const group = r2(per.reduce<number>((s, v) => s + (v ?? 0), 0));
+      return { name, values: multi ? [...per, group] : per };
+    });
+  };
 
   // ---------- Current / quick ----------
   const cash = bsPick((b) => b.cash);
@@ -200,10 +214,10 @@ export function buildRatioSections(args: {
     formula: t("流动资产 ÷ 流动负债", "Current assets ÷ current liabilities"),
     cols,
     rows: [
-      { label: t("现金（银行）", "Cash (bank)"), values: cash },
-      { label: t("＋ 应收账款及其他经营性流动资产", "+ Receivables & other operating current assets"), hint: t("应收账款、预付款、押金、存货", "Trade receivables, prepayments, deposits, stock"), values: opAssets },
+      { label: t("现金（银行）", "Cash (bank)"), values: cash, accounts: accountsOf("cash") },
+      { label: t("＋ 应收账款及其他经营性流动资产", "+ Receivables & other operating current assets"), hint: t("应收账款、预付款、押金、存货", "Trade receivables, prepayments, deposits, stock"), values: opAssets, accounts: accountsOf("opAsset") },
       { label: t("＝ 流动资产", "= Current assets"), values: currentAssets, kind: "total" },
-      { label: t("经营性负债（应付、预提、GST 等）", "Operating liabilities (payables, accruals, GST…)"), values: opLiab },
+      { label: t("经营性负债（应付、预提、GST 等）", "Operating liabilities (payables, accruals, GST…)"), values: opLiab, accounts: accountsOf("opLiab") },
       { label: t("＋ 一年内到期的银行借款", "+ Bank loans due within a year"), values: loansCur },
       { label: t("＋ 一年内到期的租赁及其他金融负债", "+ Leases & other financial liabilities due within a year"), values: finCur },
       { label: t("＝ 流动负债", "= Current liabilities"), values: currentLiab, kind: "total" },

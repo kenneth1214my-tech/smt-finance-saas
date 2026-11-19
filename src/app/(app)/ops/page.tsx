@@ -163,6 +163,28 @@ export default async function OpsPage(props: PageProps<"/ops">) {
     const c = calendarOf(fy, idx, fye);
     return `${c.year}-${pad2(c.month)}`;
   };
+  // The Xero account lines behind each grouped balance-sheet figure, for the month-end each entity's balance sheet is taken from.
+  type AccountLine = { name: string; value: number };
+  const accountsByEntity = new Map<string | null, Record<string, AccountLine[]>>();
+  try {
+    const picked = opsEntities
+      .map((e) => ({ id: e.id, row: balanceRows.filter((r) => r.subsidiaryId === e.id).sort((a, b) => b.month - a.month)[0] }))
+      .filter((p) => p.row);
+    if (picked.length > 0) {
+      const lineRows = await db.accountBalanceMonthly.findMany({
+        where: { organizationId, group: { startsWith: "BS_" }, OR: picked.map((p) => ({ subsidiaryId: p.id, year: p.row.year, month: p.row.month })) },
+      });
+      for (const p of picked) {
+        const mine = lineRows.filter((r) => r.subsidiaryId === p.id && r.year === p.row.year && r.month === p.row.month);
+        if (mine.length === 0) continue;
+        const byBucket: Record<string, AccountLine[]> = {};
+        for (const r of mine) (byBucket[r.group.slice(3)] ??= []).push({ name: r.accountName, value: Number(r.balance) });
+        accountsByEntity.set(p.id, byBucket);
+      }
+    }
+  } catch {
+    // account lines not stored yet (or the table is missing): the breakdown simply has no drill-down
+  }
   const ratioEntities = opsEntities.map((e) => {
     const rows = kpiCur.filter((m) => m.subsidiaryId === e.id);
     const withRevenue = rows.filter((m) => Number(m.revenue) !== 0);
@@ -188,6 +210,7 @@ export default async function OpsPage(props: PageProps<"/ops">) {
             totalEquity: Number(bsRow.totalEquity),
             detailed: bsRow.detailed,
             asOf: calLab(period.year, bsRow.month),
+            accounts: accountsByEntity.get(e.id),
           }
         : null,
     };

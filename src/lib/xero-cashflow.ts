@@ -1,7 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { fetchXeroBalanceSheetSeries } from "@/lib/xero";
-import { parseBalanceSheetSeries, deriveMonth, type MonthSnapshot, type PnlMonth, type LedgerAccountLine } from "@/lib/cashflow-derive";
+import { parseBalanceSheetSeries, deriveMonth, type MonthSnapshot, type PnlMonth, type LedgerAccountLine, type BsLine } from "@/lib/cashflow-derive";
 
 export { depreciationOf, type PnlMonth } from "@/lib/cashflow-derive";
 
@@ -32,10 +32,18 @@ export async function syncDerivedCashFlow(args: {
   const balances = new Map<string, MonthSnapshot>();
   // The same reports also carry the deferred revenue / prepayment / accrual accounts — merged across the report's column blocks by name.
   const ledgerAccounts = new Map<string, LedgerAccountLine>();
+  // Every account line, merged the same way, so each grouped balance-sheet figure can be traced to its Xero accounts.
+  const bsLines = new Map<string, BsLine>();
   try {
     const reports = await fetchXeroBalanceSheetSeries(accessToken, tenantId, monthEnd(newest.year, newest.month), needed);
     for (const report of reports) {
-      const { byMonth, warnings, accounts } = parseBalanceSheetSeries(report);
+      const { byMonth, warnings, accounts, lines } = parseBalanceSheetSeries(report);
+      for (const l of lines) {
+        const id = `${l.bucket}|${l.section}|${l.name}`;
+        const have = bsLines.get(id);
+        if (have) l.balances.forEach((v, k) => have.balances.set(k, v));
+        else bsLines.set(id, { ...l, balances: new Map(l.balances) });
+      }
       byMonth.forEach((v, k) => balances.set(k, v));
       for (const a of accounts) {
         const id = `${a.group}|${a.section}|${a.name}`;
@@ -87,9 +95,14 @@ export async function syncDerivedCashFlow(args: {
     for (const key of balances.keys()) {
       const [y, m] = key.split("-").map(Number);
       if (new Date(Date.UTC(y, m, 0)) > stamp) continue;
-      const rows = [...ledgerAccounts.values()]
+      const ledgerRows = [...ledgerAccounts.values()]
         .filter((a) => a.balances.has(key))
-        .map((a) => ({ organizationId, subsidiaryId, year: y, month: m, group: a.group, section: a.section, accountName: a.name, balance: r2(a.balances.get(key) as number) }));
+        .map((a) => ({ organizationId, subsidiaryId, year: y, month: m, group: a.group as string, section: a.section as string, accountName: a.name, balance: r2(a.balances.get(key) as number) }));
+      // group "BS_<bucket>": the account lines behind each grouped figure (cash, opAsset, opLiab, …)
+      const lineRows = [...bsLines.values()]
+        .filter((l) => l.balances.has(key))
+        .map((l) => ({ organizationId, subsidiaryId, year: y, month: m, group: `BS_${l.bucket}`, section: l.section as string, accountName: l.name, balance: r2(l.balances.get(key) as number) }));
+      const rows = [...ledgerRows, ...lineRows];
       await db.accountBalanceMonthly.deleteMany({ where: { organizationId, subsidiaryId, year: y, month: m } });
       if (rows.length > 0) await db.accountBalanceMonthly.createMany({ data: rows });
     }

@@ -10,7 +10,7 @@ import type { XeroReport } from "@/lib/xero";
 // Classification is by ACCOUNT NAME, not Xero's section heading: real charts of accounts put
 // furniture and ROU accumulated depreciation under "Current Assets" and loans under "Bank".
 
-type Kind = "cash" | "clearing" | "loan" | "opAsset" | "fixed" | "finAsset" | "opLiab" | "finLiab" | "equity";
+export type Kind = "cash" | "clearing" | "loan" | "opAsset" | "fixed" | "finAsset" | "opLiab" | "finLiab" | "equity";
 
 const FIXED_RE = /accum|depreciat|\bat cost\b|\bcost\b|renovation|furniture|fitting|equipment|building|property|plant|machinery|vehicle|computer|software|intangible|goodwill|right[\s-]*of[\s-]*use|\brou\b|investment|leasehold|improvement|fixed asset/i;
 const FIN_LIAB_RE = /lease liabilit|\bloans?\b|borrowing|hire[\s-]*purchase|debenture|\bbonds?\b|notes? payable|mortgage|overdraft/i;
@@ -92,6 +92,14 @@ export function ledgerGroupOf(section: "bank" | "asset" | "liability" | "equity"
   }
   return null;
 }
+// Every account line of the balance sheet, with the bucket the grouped figures put it in — so any grouped number can be traced to the Xero
+// accounts behind it. The buckets add up to the stored figures exactly: each bucket is the plain sum of its lines.
+export interface BsLine {
+  bucket: Kind;
+  section: "bank" | "asset" | "liability" | "equity";
+  name: string;
+  balances: Map<string, number>; // "yyyy-m" -> balance as printed on the report
+}
 export interface LedgerAccountLine {
   group: LedgerGroup;
   name: string;
@@ -102,7 +110,7 @@ export interface LedgerAccountLine {
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
 // One report with N period columns -> balances per month-end column, keyed "yyyy-m".
-export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<string, MonthSnapshot>; warnings: string[]; accounts: LedgerAccountLine[] } {
+export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<string, MonthSnapshot>; warnings: string[]; accounts: LedgerAccountLine[]; lines: BsLine[] } {
   const rows = report.Rows ?? [];
   const warnings: string[] = [];
   const header = rows.find((r) => r.RowType === "Header");
@@ -115,19 +123,28 @@ export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<stri
   const blank = (): MonthSnapshot => ({ cash: 0, clearing: 0, loan: 0, opAsset: 0, fixed: 0, finAsset: 0, opLiab: 0, finLiab: 0, equity: 0, totalAssets: 0, totalLiabilities: 0, totalEquity: 0, receivables: 0, inventory: 0, loanCurrent: 0, finLiabCurrent: 0, shareCapital: 0, dividends: 0 });
   const byMonth = new Map<string, MonthSnapshot>();
   const accounts: LedgerAccountLine[] = [];
+  const lines: BsLine[] = [];
   keys.forEach((k) => k && byMonth.set(k, blank()));
 
   for (const section of rows) {
     if (section.RowType !== "Section" || !section.Title) continue;
     const kind = sectionKind(section.Title);
-    const lines = (section.Rows ?? []).filter((r) => r.RowType === "Row");
+    const sectionLines = (section.Rows ?? []).filter((r) => r.RowType === "Row");
     if (!kind) {
-      if (lines.length > 0) warnings.push(`Balance sheet section "${section.Title}" was not recognised and is excluded from the derived cash flow`);
+      if (sectionLines.length > 0) warnings.push(`Balance sheet section "${section.Title}" was not recognised and is excluded from the derived cash flow`);
       continue;
     }
-    for (const line of lines) {
+    for (const line of sectionLines) {
       const label = (line.Cells?.[0]?.Value ?? "").trim();
       const cls = classifyLine(kind, label);
+      if (label) {
+        const lb = new Map<string, number>();
+        keys.forEach((k, i) => {
+          const v = parseFloat(line.Cells?.[i + 1]?.Value ?? "");
+          if (k && !Number.isNaN(v)) lb.set(k, v);
+        });
+        if (lb.size > 0) lines.push({ bucket: cls, section: kind, name: label, balances: lb });
+      }
       const ledgerGroup = ledgerGroupOf(kind, label);
       if (ledgerGroup && (kind === "asset" || kind === "liability")) {
         const balances = new Map<string, number>();
@@ -170,7 +187,7 @@ export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<stri
     }
   };
   walkTotals(rows);
-  return { byMonth, warnings, accounts };
+  return { byMonth, warnings, accounts, lines };
 }
 
 export function employmentCostOf(expenseLineItems: { label: string; value: number }[]): number {

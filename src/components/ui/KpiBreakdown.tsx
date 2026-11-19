@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { fmtMoney, type Locale } from "@/lib/i18n/dictionaries";
 import type { BreakdownSection } from "@/lib/treasury-breakdown";
 
@@ -68,7 +69,8 @@ export default function KpiBreakdown({ sections, locale, unit, heading, hint }: 
                       const strong = r.kind === "total";
                       const muted = r.kind === "muted" || r.kind === "check";
                       return (
-                        <tr key={i} className="border-t" style={{ borderColor: "var(--border)" }}>
+                        <Fragment key={i}>
+                        <tr className="border-t" style={{ borderColor: "var(--border)" }}>
                           <td className={`py-1.5 pr-3 ${strong ? "font-bold" : ""}`} style={{ color: muted ? "var(--ink-400)" : "var(--ink-900)" }}>
                             {r.label}
                             {r.hint && <div className="text-[10.8px] font-normal" style={{ color: "var(--ink-400)" }}>{r.hint}</div>}
@@ -79,6 +81,55 @@ export default function KpiBreakdown({ sections, locale, unit, heading, hint }: 
                             </td>
                           ))}
                         </tr>
+                        {r.accounts && r.accounts.length > 0 && (
+                          <tr>
+                            <td colSpan={s.cols.length + 1} className="pb-2 pl-3">
+                              <details className="rounded-lg border" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
+                                <summary className="cursor-pointer select-none px-2.5 py-1.5 text-[11.5px] font-semibold" style={{ color: "var(--ink-600)" }}>
+                                  {locale === "zh" || locale === "zh-Hant" ? `查看构成该数字的 Xero 科目（${r.accounts.length}）` : `Show the Xero accounts behind this figure (${r.accounts.length})`}
+                                </summary>
+                                <table className="w-full text-[11.8px]">
+                                  <tbody>
+                                    {r.accounts.map((a) => (
+                                      <tr key={a.name} className="border-t" style={{ borderColor: "var(--border)" }}>
+                                        <td className="py-1 pl-2.5 pr-3" style={{ color: "var(--ink-600)" }}>{a.name}</td>
+                                        {a.values.map((v, j) => (
+                                          <td key={j} className="tabular-nums py-1 pr-1 text-right" style={{ color: v !== null && v < 0 ? "var(--status-critical)" : "var(--ink-900)" }}>
+                                            {v === null || Math.abs(v) < 0.005 ? "–" : fmt(v)}
+                                          </td>
+                                        ))}
+                                      </tr>
+                                    ))}
+                                    {(() => {
+                                      const sums = s.cols.map((_, j) => Math.round(r.accounts!.reduce((x, a) => x + (a.values[j] ?? 0), 0) * 100) / 100);
+                                      const diffs = sums.map((x, j) => (r.values[j] === null ? 0 : Math.round(((r.values[j] as number) - x) * 100) / 100));
+                                      const off = diffs.some((d) => Math.abs(d) > 0.5);
+                                      return (
+                                        <>
+                                          <tr className="border-t font-bold" style={{ borderColor: "var(--border)" }}>
+                                            <td className="py-1 pl-2.5">{locale === "zh" || locale === "zh-Hant" ? "科目合计" : "Total of the accounts"}</td>
+                                            {sums.map((x, j) => (
+                                              <td key={j} className="tabular-nums py-1 pr-1 text-right">{fmt(x)}</td>
+                                            ))}
+                                          </tr>
+                                          {off && (
+                                            <tr style={{ color: "var(--status-warning)" }}>
+                                              <td className="py-1 pl-2.5">{locale === "zh" || locale === "zh-Hant" ? "与上方数字的差额（该月科目明细尚不完整，请再次「全部同步」）" : "Difference to the figure above (account detail for that month is incomplete — Sync all again)"}</td>
+                                              {diffs.map((d, j) => (
+                                                <td key={j} className="tabular-nums py-1 pr-1 text-right">{Math.abs(d) > 0.5 ? fmt(d) : "–"}</td>
+                                              ))}
+                                            </tr>
+                                          )}
+                                        </>
+                                      );
+                                    })()}
+                                  </tbody>
+                                </table>
+                              </details>
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
                       );
                     })}
                   </tbody>
