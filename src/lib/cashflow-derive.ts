@@ -36,14 +36,32 @@ function sectionKind(title: string): "bank" | "asset" | "liability" | "equity" |
   return null;
 }
 
-function classifyLine(section: "bank" | "asset" | "liability" | "equity", label: string): Kind {
+// Xero files every account under a heading by its account type: "Current Assets", "Fixed Assets", "Non-current Assets", "Current Liabilities",
+// "Non-current Liabilities". That heading is the accountant's own current / non-current decision, so it is used first; the account NAME only
+// decides what kind of line it is within that term (and is the fallback when a heading says nothing).
+export type Term = "current" | "noncurrent" | "fixed" | null;
+export function termOfSection(title: string): Term {
+  if (/fixed/i.test(title)) return "fixed";
+  if (/non[\s-]*current|long[\s-]*term/i.test(title)) return "noncurrent";
+  if (/current/i.test(title)) return "current";
+  return null;
+}
+
+export function classifyLine(section: "bank" | "asset" | "liability" | "equity", label: string, term: Term = null): Kind {
   if (section === "equity") return "equity";
   if (section === "bank") {
     const k = classifyBankAccount(label);
     return k === "cash" ? "cash" : k === "debt" ? "loan" : "clearing";
   }
-  if (INTERCO_RE.test(label)) return section === "asset" ? "finAsset" : "finLiab";
-  if (section === "asset") return FIXED_RE.test(label) ? "fixed" : "opAsset";
+  if (INTERCO_RE.test(label)) return section === "asset" ? "finAsset" : "finLiab"; // group policy: inter-company / director balances are non-current
+  if (section === "asset") {
+    // Listed by Xero under Fixed / Non-current assets: never a current asset, whatever its name says (a long-term deposit is not working capital).
+    if (term === "fixed") return "fixed";
+    if (term === "noncurrent") return FIXED_RE.test(label) ? "fixed" : "finAsset";
+    return FIXED_RE.test(label) ? "fixed" : "opAsset";
+  }
+  // Listed by Xero under Non-current liabilities: never a current liability (a deferred tax liability or long-term provision is not due within a year).
+  if (term === "noncurrent" || term === "fixed") return "finLiab";
   return FIN_LIAB_RE.test(label) ? "finLiab" : "opLiab";
 }
 
@@ -97,6 +115,8 @@ export function ledgerGroupOf(section: "bank" | "asset" | "liability" | "equity"
 export interface BsLine {
   bucket: Kind;
   section: "bank" | "asset" | "liability" | "equity";
+  /** The heading Xero lists the account under ("Current Assets", "Non-current Liabilities", …). */
+  title: string;
   name: string;
   balances: Map<string, number>; // "yyyy-m" -> balance as printed on the report
 }
@@ -136,14 +156,15 @@ export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<stri
     }
     for (const line of sectionLines) {
       const label = (line.Cells?.[0]?.Value ?? "").trim();
-      const cls = classifyLine(kind, label);
+      const term = termOfSection(section.Title ?? "");
+      const cls = classifyLine(kind, label, term);
       if (label) {
         const lb = new Map<string, number>();
         keys.forEach((k, i) => {
           const v = parseFloat(line.Cells?.[i + 1]?.Value ?? "");
           if (k && !Number.isNaN(v)) lb.set(k, v);
         });
-        if (lb.size > 0) lines.push({ bucket: cls, section: kind, name: label, balances: lb });
+        if (lb.size > 0) lines.push({ bucket: cls, section: kind, title: section.Title ?? "", name: label, balances: lb });
       }
       const ledgerGroup = ledgerGroupOf(kind, label);
       if (ledgerGroup && (kind === "asset" || kind === "liability")) {
@@ -163,7 +184,9 @@ export function parseBalanceSheetSeries(report: XeroReport): { byMonth: Map<stri
         if (cls === "opAsset" && RECEIVABLE_RE.test(label)) snap.receivables += v;
         if (cls === "opAsset" && INVENTORY_RE.test(label)) snap.inventory += v;
         if (cls === "loan" && isCurrentLabel(label)) snap.loanCurrent += v;
-        if (cls === "finLiab" && isCurrentLabel(label)) snap.finLiabCurrent += v;
+        // A lease or other financial liability is current when its name says so, or when Xero lists it under Current Liabilities
+        // (inter-company / director balances keep the group policy: non-current unless the name says current).
+        if (cls === "finLiab" && (isCurrentLabel(label) || (term === "current" && !INTERCO_RE.test(label)))) snap.finLiabCurrent += v;
         if (cls === "equity" && SHARE_CAPITAL_RE.test(label)) snap.shareCapital += v;
         if (cls === "equity" && DIVIDEND_RE.test(label)) snap.dividends += v;
       });

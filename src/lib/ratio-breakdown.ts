@@ -19,7 +19,7 @@ export interface RatioBs {
   detailed: boolean; // false → the current/quick split was not captured yet (needs a sync)
   asOf: string; // yyyy-mm of the stored month-end used
   /** The Xero account lines behind each grouped figure at that month-end, by bucket ("cash", "opAsset", "opLiab", …). Absent until the next sync. */
-  accounts?: Record<string, { name: string; value: number }[]>;
+  accounts?: Record<string, { name: string; value: number; section?: string }[]>;
 }
 export interface RatioEntity {
   id: string | null;
@@ -110,9 +110,28 @@ export function buildRatioSections(args: {
     return [...names].sort().map((name) => {
       const per = entities.map((e) => (e.bs ? (e.bs.accounts?.[bucket]?.find((a) => a.name === name)?.value ?? 0) : null));
       const group = r2(per.reduce<number>((s, v) => s + (v ?? 0), 0));
-      return { name, values: multi ? [...per, group] : per };
+      const section = withBs.map((e) => e.bs!.accounts?.[bucket]?.find((a) => a.name === name)?.section).find((x) => x);
+      return { name, values: multi ? [...per, group] : per, note: section ? t(`Xero 分类：${section}`, `Xero heading: ${section}`) : undefined };
     });
   };
+  // Accounts Xero lists under a CURRENT heading that the group policy nevertheless counts as non-current (inter-company / director balances and
+  // the like) — they sit outside the current ratio, and the reader should know which and how much.
+  const countedNonCurrent: { name: string; side: "asset" | "liability"; amount: number }[] = [];
+  for (const e of withBs) {
+    for (const bucket of ["finAsset", "fixed", "finLiab"]) {
+      for (const a of e.bs!.accounts?.[bucket] ?? []) {
+        if (a.section && /current/i.test(a.section) && !/non[\s-]*current/i.test(a.section) && Math.abs(a.value) > 0.5) {
+          countedNonCurrent.push({ name: `${e.label}: ${a.name}`, side: bucket === "finLiab" ? "liability" : "asset", amount: a.value });
+        }
+      }
+    }
+  }
+  const classificationNote = countedNonCurrent.length === 0
+    ? null
+    : t(
+        `Xero 将以下科目列在「流动」项下，但按集团口径（集团内部/董事往来、固定资产类科目）不计入流动资产/流动负债：${countedNonCurrent.map((c) => `${c.name} ${r2(c.amount)}`).join("；")}。`,
+        `Xero lists these under a Current heading, but the group policy (inter-company / director balances, fixed-asset-type accounts) keeps them out of current assets / current liabilities: ${countedNonCurrent.map((c) => `${c.name} ${r2(c.amount)}`).join("; ")}.`,
+      );
 
   // ---------- Current / quick ----------
   const cash = bsPick((b) => b.cash);
@@ -227,6 +246,8 @@ export function buildRatioSections(args: {
       bsNote,
       t("流动资产 = 现金 + 经营性流动资产；固定资产、使用权资产、集团内部/金融类资产不计入。流动负债 = 经营性负债 + 一年内到期的借款与租赁；集团内部/董事往来款除非科目名称注明「流动」，否则视为非流动。", "Current assets = cash + operating current assets; fixed assets, right-of-use assets and inter-company / financial assets are excluded. Current liabilities = operating liabilities + loans and leases due within a year; inter-company / director balances count as non-current unless the account name says current."),
       t("集团数为各主体相加，未抵消集团内部往来。", "The group figure is the simple sum of the entities; inter-company balances are not eliminated."),
+      t("流动与非流动以 Xero 资产负债表上的分类标题（流动资产 / 固定资产 / 非流动资产 / 流动负债 / 非流动负债）为准，科目名称只用于判断类别；标题缺失时才按名称判断。", "Current vs non-current follows the heading Xero files each account under (Current Assets / Fixed Assets / Non-current Assets / Current Liabilities / Non-current Liabilities); the account name only says what kind of line it is, and is the fallback when there is no heading."),
+      ...(classificationNote ? [classificationNote] : []),
       ...(allDetailed || withBs.length === 0 ? [] : [needSync]),
     ],
     explanation: {

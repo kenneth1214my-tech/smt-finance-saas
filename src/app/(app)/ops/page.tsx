@@ -164,7 +164,7 @@ export default async function OpsPage(props: PageProps<"/ops">) {
     return `${c.year}-${pad2(c.month)}`;
   };
   // The Xero account lines behind each grouped balance-sheet figure, for the month-end each entity's balance sheet is taken from.
-  type AccountLine = { name: string; value: number };
+  type AccountLine = { name: string; value: number; section: string };
   const accountsByEntity = new Map<string | null, Record<string, AccountLine[]>>();
   try {
     const picked = opsEntities
@@ -178,7 +178,7 @@ export default async function OpsPage(props: PageProps<"/ops">) {
         const mine = lineRows.filter((r) => r.subsidiaryId === p.id && r.year === p.row.year && r.month === p.row.month);
         if (mine.length === 0) continue;
         const byBucket: Record<string, AccountLine[]> = {};
-        for (const r of mine) (byBucket[r.group.slice(3)] ??= []).push({ name: r.accountName, value: Number(r.balance) });
+        for (const r of mine) (byBucket[r.group.slice(3)] ??= []).push({ name: r.accountName, value: Number(r.balance), section: r.section });
         accountsByEntity.set(p.id, byBucket);
       }
     }

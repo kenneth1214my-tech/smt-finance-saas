@@ -17,7 +17,7 @@ export interface BreakdownRow {
   kind?: "item" | "total" | "muted" | "check";
   format?: "pct" | "count" | "x" | "pershare"; // percentage / whole number / multiple ("1.45x") / per-share amount instead of an amount
   /** The Xero accounts behind this figure, one value per column (same order as the section's cols). Shown as an expandable list. */
-  accounts?: { name: string; values: (number | null)[] }[];
+  accounts?: { name: string; values: (number | null)[]; note?: string }[];
 }
 export interface BreakdownSection {
   id: string;

@@ -39,7 +39,7 @@ export async function syncDerivedCashFlow(args: {
     for (const report of reports) {
       const { byMonth, warnings, accounts, lines } = parseBalanceSheetSeries(report);
       for (const l of lines) {
-        const id = `${l.bucket}|${l.section}|${l.name}`;
+        const id = `${l.bucket}|${l.title}|${l.name}`;
         const have = bsLines.get(id);
         if (have) l.balances.forEach((v, k) => have.balances.set(k, v));
         else bsLines.set(id, { ...l, balances: new Map(l.balances) });
@@ -101,7 +101,7 @@ export async function syncDerivedCashFlow(args: {
       // group "BS_<bucket>": the account lines behind each grouped figure (cash, opAsset, opLiab, …)
       const lineRows = [...bsLines.values()]
         .filter((l) => l.balances.has(key))
-        .map((l) => ({ organizationId, subsidiaryId, year: y, month: m, group: `BS_${l.bucket}`, section: l.section as string, accountName: l.name, balance: r2(l.balances.get(key) as number) }));
+        .map((l) => ({ organizationId, subsidiaryId, year: y, month: m, group: `BS_${l.bucket}`, section: l.title || (l.section as string), accountName: l.name, balance: r2(l.balances.get(key) as number) }));
       const rows = [...ledgerRows, ...lineRows];
       await db.accountBalanceMonthly.deleteMany({ where: { organizationId, subsidiaryId, year: y, month: m } });
       if (rows.length > 0) await db.accountBalanceMonthly.createMany({ data: rows });

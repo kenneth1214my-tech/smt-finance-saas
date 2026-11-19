@@ -92,7 +92,10 @@ export default function KpiBreakdown({ sections, locale, unit, heading, hint }: 
                                   <tbody>
                                     {r.accounts.map((a) => (
                                       <tr key={a.name} className="border-t" style={{ borderColor: "var(--border)" }}>
-                                        <td className="py-1 pl-2.5 pr-3" style={{ color: "var(--ink-600)" }}>{a.name}</td>
+                                        <td className="py-1 pl-2.5 pr-3" style={{ color: "var(--ink-600)" }}>
+                                          {a.name}
+                                          {a.note && <div className="text-[10.5px]" style={{ color: "var(--ink-400)" }}>{a.note}</div>}
+                                        </td>
                                         {a.values.map((v, j) => (
                                           <td key={j} className="tabular-nums py-1 pr-1 text-right" style={{ color: v !== null && v < 0 ? "var(--status-critical)" : "var(--ink-900)" }}>
                                             {v === null || Math.abs(v) < 0.005 ? "–" : fmt(v)}
