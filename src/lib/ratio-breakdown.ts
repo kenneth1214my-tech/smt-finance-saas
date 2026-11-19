@@ -1,4 +1,5 @@
 import type { BreakdownSection } from "@/lib/treasury-breakdown";
+import { RECEIVABLE_RE } from "@/lib/cashflow-derive";
 import type { PlAccountFn } from "@/lib/pl-accounts";
 
 // Pure workings + plain-language explanations for the Business Analysis ratios: labour cost productivity,
@@ -106,11 +107,11 @@ export function buildRatioSections(args: {
   const labour = labourGroup;
 
   // The Xero accounts behind a grouped figure, per entity plus the group sum — null when no entity has them stored yet.
-  const accountsOf = (buckets: string | string[], sign = 1): { name: string; values: (number | null)[]; note?: string }[] | undefined => {
+  const accountsOf = (buckets: string | string[], sign = 1, only?: (name: string) => boolean): { name: string; values: (number | null)[]; note?: string }[] | undefined => {
     const bs = Array.isArray(buckets) ? buckets : [buckets];
     const valueOf = (e: (typeof entities)[number], name: string) => bs.reduce((s, b) => s + (e.bs?.accounts?.[b]?.find((a) => a.name === name)?.value ?? 0), 0) * sign;
     const names = new Set<string>();
-    for (const e of withBs) for (const b of bs) for (const a of e.bs!.accounts?.[b] ?? []) names.add(a.name);
+    for (const e of withBs) for (const b of bs) for (const a of e.bs!.accounts?.[b] ?? []) if (!only || only(a.name)) names.add(a.name);
     if (names.size === 0) return undefined;
     return [...names].sort().map((name) => {
       const per = entities.map((e) => (e.bs ? r2(valueOf(e, name)) : null));
@@ -282,7 +283,7 @@ export function buildRatioSections(args: {
     cols,
     rows: [
       { label: t("现金（银行）", "Cash (bank)"), values: cash },
-      { label: t("＋ 应收账款", "+ Trade receivables"), values: receivables, accounts: accountsOf("opAsset") },
+      { label: t("＋ 应收账款", "+ Trade receivables"), values: receivables, accounts: accountsOf("opAsset", 1, (n) => RECEIVABLE_RE.test(n)) },
       { label: t("＝ 速动资产", "= Quick assets"), values: quickAssets, kind: "total" },
       { label: t("÷ 流动负债", "÷ Current liabilities"), values: currentLiab },
       { label: t("速动比率", "Quick ratio"), values: allDetailed ? quickRatio : quickRatio.map(() => null), kind: "total", format: "x" },

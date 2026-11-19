@@ -19,7 +19,7 @@ const DEPRECIATION_RE = /depreciat|amortis|amortiz/i;
 // Employment cost = payroll-type P&L accounts, picked by NAME (a chart of accounts has no "staff cost" flag).
 // Deliberately narrow so non-staff costs (agent commissions, "allowance for doubtful debts") are never swept in.
 const EMPLOYMENT_RE = /salar|wage|payroll|\bcpf\b|\bsdl\b|skills development|bonus|remunerat|director'?s?\s*fee|\bstaff\b|employee|worker levy|\bfwl\b|overtime|\bepf\b|\bsocso\b|\bperkeso\b|\bbpjs\b|\bmpf\b|provident fund/i;
-const RECEIVABLE_RE = /receivable|debtor/i;
+export const RECEIVABLE_RE = /receivable|debtor/i;
 // Equity accounts: the share capital account, and any dividend / distribution account (a company that books
 // dividends straight to retained earnings leaves no separate account to read).
 const SHARE_CAPITAL_RE = /share\s*capital|paid[\s-]*up|ordinary shares?|issued capital/i;
