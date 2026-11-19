@@ -1,4 +1,5 @@
 import type { BreakdownSection } from "@/lib/treasury-breakdown";
+import type { PlAccountFn } from "@/lib/pl-accounts";
 
 // Pure workings + plain-language explanations for the Business Analysis ratios: labour cost productivity,
 // current ratio, quick ratio, debt-to-equity, EPS, P/E and dividend yield. No I/O — the page loads the
@@ -65,8 +66,10 @@ export function buildRatioSections(args: {
   dividendsTtm?: number | null;
   /** Share capital on the balance sheet — used only to suggest a share count. */
   shareCapital?: number | null;
+  /** The Xero P&L accounts behind revenue and employment cost (absent until the next sync has stored them). */
+  plAccounts?: PlAccountFn;
 }): { sections: BreakdownSection[]; values: RatioValues } {
-  const { entities, investmentEliminated, periodNetProfit, ttmNetProfit, ttmMonths, ttmLabel, shares, price, dividendPerShare, baseCurrency, isZh, basisNote, labourMissingNote, dividendsTtm = null, shareCapital = null } = args;
+  const { entities, investmentEliminated, periodNetProfit, ttmNetProfit, ttmMonths, ttmLabel, shares, price, dividendPerShare, baseCurrency, isZh, basisNote, labourMissingNote, dividendsTtm = null, shareCapital = null, plAccounts } = args;
   const t = (zh: string, en: string) => (isZh ? zh : en);
   const multi = entities.length > 1;
   const cols = multi ? [...entities.map((e) => e.label), t("集团", "Group")] : entities.map((e) => e.label);
@@ -103,14 +106,16 @@ export function buildRatioSections(args: {
   const labour = labourGroup;
 
   // The Xero accounts behind a grouped figure, per entity plus the group sum — null when no entity has them stored yet.
-  const accountsOf = (bucket: string): { name: string; values: (number | null)[] }[] | undefined => {
+  const accountsOf = (buckets: string | string[], sign = 1): { name: string; values: (number | null)[]; note?: string }[] | undefined => {
+    const bs = Array.isArray(buckets) ? buckets : [buckets];
+    const valueOf = (e: (typeof entities)[number], name: string) => bs.reduce((s, b) => s + (e.bs?.accounts?.[b]?.find((a) => a.name === name)?.value ?? 0), 0) * sign;
     const names = new Set<string>();
-    for (const e of withBs) for (const a of e.bs!.accounts?.[bucket] ?? []) names.add(a.name);
+    for (const e of withBs) for (const b of bs) for (const a of e.bs!.accounts?.[b] ?? []) names.add(a.name);
     if (names.size === 0) return undefined;
     return [...names].sort().map((name) => {
-      const per = entities.map((e) => (e.bs ? (e.bs.accounts?.[bucket]?.find((a) => a.name === name)?.value ?? 0) : null));
+      const per = entities.map((e) => (e.bs ? r2(valueOf(e, name)) : null));
       const group = r2(per.reduce<number>((s, v) => s + (v ?? 0), 0));
-      const section = withBs.map((e) => e.bs!.accounts?.[bucket]?.find((a) => a.name === name)?.section).find((x) => x);
+      const section = withBs.flatMap((e) => bs.map((b) => e.bs!.accounts?.[b]?.find((a) => a.name === name)?.section)).find((x) => x);
       return { name, values: multi ? [...per, group] : per, note: section ? t(`Xero 分类：${section}`, `Xero heading: ${section}`) : undefined };
     });
   };
@@ -196,8 +201,8 @@ export function buildRatioSections(args: {
     formula: t("营业收入 ÷ 用工成本（工资、公积金 CPF、奖金、董事酬金等）", "Revenue ÷ employment cost (salaries, CPF, bonuses, director remuneration, etc.)"),
     cols,
     rows: [
-      { label: t("营业收入", "Revenue"), values: revenue },
-      { label: t("÷ 用工成本", "÷ Employment cost"), hint: t("按科目名称从月度利润表中识别（工资、CPF、奖金、董事酬金、员工福利等）", "Picked from the monthly P&L by account name (salaries, CPF, bonuses, director remuneration, staff benefits…)"), values: empCost },
+      { label: t("营业收入", "Revenue"), values: revenue, accounts: plAccounts?.("revenue") },
+      { label: t("÷ 用工成本", "÷ Employment cost"), accounts: plAccounts?.("employment"), hint: t("按科目名称从月度利润表中识别（工资、CPF、奖金、董事酬金、员工福利等）", "Picked from the monthly P&L by account name (salaries, CPF, bonuses, director remuneration, staff benefits…)"), values: empCost },
       { label: t("劳动成本生产率", "Labour cost productivity"), values: labourVals, kind: "total", format: "x" },
     ],
     notes: [
@@ -277,7 +282,7 @@ export function buildRatioSections(args: {
     cols,
     rows: [
       { label: t("现金（银行）", "Cash (bank)"), values: cash },
-      { label: t("＋ 应收账款", "+ Trade receivables"), values: receivables },
+      { label: t("＋ 应收账款", "+ Trade receivables"), values: receivables, accounts: accountsOf("opAsset") },
       { label: t("＝ 速动资产", "= Quick assets"), values: quickAssets, kind: "total" },
       { label: t("÷ 流动负债", "÷ Current liabilities"), values: currentLiab },
       { label: t("速动比率", "Quick ratio"), values: allDetailed ? quickRatio : quickRatio.map(() => null), kind: "total", format: "x" },
@@ -308,10 +313,10 @@ export function buildRatioSections(args: {
     formula: t("负债总额 ÷ 所有者权益总额", "Total liabilities ÷ total equity"),
     cols,
     rows: [
-      { label: t("资产负债表所列负债", "Liabilities per the balance sheet"), values: reportedLiab },
-      { label: t("＋ 以负数银行账户记录的借款", "+ Loans carried as negative bank accounts"), hint: t("Xero 把贷款放在「银行」栏，不在负债合计内", "Xero lists these under Bank, so they are not in its liabilities total"), values: loanAccounts },
+      { label: t("资产负债表所列负债", "Liabilities per the balance sheet"), values: reportedLiab, accounts: accountsOf(["opLiab", "finLiab"]) },
+      { label: t("＋ 以负数银行账户记录的借款", "+ Loans carried as negative bank accounts"), hint: t("Xero 把贷款放在「银行」栏，不在负债合计内", "Xero lists these under Bank, so they are not in its liabilities total"), values: loanAccounts, accounts: accountsOf("loan", -1) },
       { label: t("＝ 负债总额", "= Total liabilities"), values: liabilities, kind: "total" },
-      { label: t("所有者权益总额", "Total equity"), hint: multi ? t(`集团数 = 各主体之和 − 总部对子公司投资（${r2(investmentEliminated)}）`, `Group = sum of entities − HQ's investment in subsidiaries (${r2(investmentEliminated)})`) : undefined, values: equity },
+      { label: t("所有者权益总额", "Total equity"), hint: multi ? t(`集团数 = 各主体之和 − 总部对子公司投资（${r2(investmentEliminated)}）`, `Group = sum of entities − HQ's investment in subsidiaries (${r2(investmentEliminated)})`) : undefined, values: equity, accounts: accountsOf("equity") },
       { label: t("负债 ÷ 权益", "Debt ÷ equity"), values: deRatio, kind: "total", format: "x" },
       { label: t("其中：借款、租赁及融资类往来", "Of which: loans, leases & financing balances"), values: debt, kind: "muted" },
       { label: t("借款、租赁及融资类往来 ÷ 权益", "Loans, leases & financing ÷ equity"), values: debtRatio, kind: "muted", format: "x" },

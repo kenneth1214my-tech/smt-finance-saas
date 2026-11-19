@@ -16,6 +16,7 @@ import { agingDaysFromDueDate, statusFromAgingDays } from "@/lib/xero-aging-pars
 import { parseXeroBudgetSummary, parseXeroBankSummary } from "@/lib/xero-budget-bank-parser";
 import { syncDerivedCashFlow, depreciationOf, type PnlMonth } from "@/lib/xero-cashflow";
 import { employmentCostOf } from "@/lib/cashflow-derive";
+import { storePnlLines } from "@/lib/pnl-lines-store";
 import { parseXeroBalanceSheet } from "@/lib/xero-balance-sheet-parser";
 import { getBaseCurrency } from "@/lib/currency";
 import { computeSyncedRiskRating, worse, type RiskSeverity } from "@/lib/risk-rating";
@@ -135,7 +136,7 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
         try {
           const { from, to } = monthDateRange(year, month);
           const report = await fetchXeroProfitAndLoss(accessToken, tenantId, from, to);
-          const { revenue, costOfSales, netProfit, expenseLineItems, depreciation, interest } = parseXeroPnl(report);
+          const { revenue, costOfSales, netProfit, expenseLineItems, depreciation, interest, lines: pnlLines } = parseXeroPnl(report);
           pnlByMonth.set(`${year}-${month}`, { netProfit, depreciation });
           const grossMarginPct = revenue > 0 ? ((revenue - costOfSales) / revenue) * 100 : 0;
           // Only mapped labels (plus the narrow finance-keyword auto-suggestion) contribute —
@@ -147,6 +148,11 @@ export async function syncSubsidiaryFromXero(subsidiaryId: string, organizationI
             create: { subsidiaryId, organizationId, year, month, revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp, employmentCost: employmentCostOf(expenseLineItems), depreciation, interestExp: interest },
             update: { revenue, netProfit, grossMarginPct, opCost: costOfSales, sellExp, adminExp, rndExp, financeExp, employmentCost: employmentCostOf(expenseLineItems), depreciation, interestExp: interest },
           });
+          try {
+            await storePnlLines({ organizationId, subsidiaryId, year, month, lines: pnlLines, categoryMapping });
+          } catch (err) {
+            errors.push(`P&L account lines ${year}-${month}: ${err instanceof Error ? err.message : String(err)}`);
+          }
           result.monthsSynced++;
         } catch (err) {
           result.monthsFailed++;
@@ -341,7 +347,7 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
         try {
           const { from, to } = monthDateRange(year, month);
           const report = await fetchXeroProfitAndLoss(accessToken, tenantId, from, to);
-          const { revenue, costOfSales, netProfit, expenseLineItems, depreciation, interest } = parseXeroPnl(report);
+          const { revenue, costOfSales, netProfit, expenseLineItems, depreciation, interest, lines: pnlLines } = parseXeroPnl(report);
           pnlByMonth.set(`${year}-${month}`, { netProfit, depreciation });
           const grossMarginPct = revenue > 0 ? ((revenue - costOfSales) / revenue) * 100 : 0;
           const { sellExp, adminExp, rndExp, financeExp } = applyCategoryMapping(expenseLineItems, categoryMapping);
@@ -349,6 +355,11 @@ export async function syncGroupFromXero(organizationId: string, months = 3): Pro
           const existing = await db.monthlyFinancial.findFirst({ where: { organizationId, subsidiaryId: null, year, month } });
           if (existing) await db.monthlyFinancial.update({ where: { id: existing.id }, data });
           else await db.monthlyFinancial.create({ data: { ...data, organizationId, subsidiaryId: null, year, month } });
+          try {
+            await storePnlLines({ organizationId, subsidiaryId: null, year, month, lines: pnlLines, categoryMapping });
+          } catch (err) {
+            errors.push(`P&L account lines ${year}-${month}: ${err instanceof Error ? err.message : String(err)}`);
+          }
           result.monthsSynced++;
         } catch (err) {
           result.monthsFailed++;

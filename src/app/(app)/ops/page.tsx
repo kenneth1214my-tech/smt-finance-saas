@@ -16,6 +16,7 @@ import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
 import KpiBreakdown from "@/components/ui/KpiBreakdown";
 import { buildPnlSections } from "@/lib/overview-breakdown";
+import { loadPlAccountFn } from "@/lib/pl-accounts-data";
 import { buildRatioSections } from "@/lib/ratio-breakdown";
 import RankList from "@/components/ui/RankList";
 import TrendChart from "@/components/ui/TrendChart";
@@ -121,7 +122,9 @@ export default async function OpsPage(props: PageProps<"/ops">) {
     ...(bySub.some((r) => r.sub.id === HQ_PSEUDO_SUB.id) ? [{ id: null as string | null, label: t("集团总部", "Group HQ"), headcount: headcountOf.get(HQ_PSEUDO_SUB.id) ?? 0 }] : []),
     ...subsidiaries.map((sub) => ({ id: sub.id as string | null, label: localizedName(sub, locale), headcount: headcountOf.get(sub.id) ?? 0 })),
   ];
+  const plAccounts = await loadPlAccountFn(organizationId, opsEntities, kpiCur, isZh);
   const opsSections = buildPnlSections({
+    plAccounts,
     entities: opsEntities,
     rows: kpiCur,
     fromMonth: period.fromMonth,
@@ -232,6 +235,7 @@ export default async function OpsPage(props: PageProps<"/ops">) {
   }
   const latestEq = [...eqRows].sort((a, b) => b.year * 12 + b.month - (a.year * 12 + a.month))[0];
   const ratios = buildRatioSections({
+    plAccounts,
     dividendsTtm,
     shareCapital: latestEq ? Number(latestEq.shareCapital) : null,
     entities: ratioEntities,

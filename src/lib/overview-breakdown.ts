@@ -1,4 +1,5 @@
 import type { BreakdownRow, BreakdownSection } from "@/lib/treasury-breakdown";
+import type { PlAccountFn, PlKind } from "@/lib/pl-accounts";
 
 // Pure workings for the P&L-based KPIs on the Overview, Business Analysis and Profit Analysis pages —
 // no I/O, built from the same monthly rows the tiles are summed from, so every line re-adds to its tile.
@@ -33,8 +34,12 @@ export function buildPnlSections(args: {
   isZh: boolean;
   headcounts?: number[];
   equity?: number[];
+  /** The Xero P&L accounts behind each figure (absent until the next sync has stored them). */
+  plAccounts?: PlAccountFn;
 }): BreakdownSection[] {
-  const { entities, rows, fromMonth, toMonth, monthNames, isZh, headcounts, equity } = args;
+  const { entities, rows, fromMonth, toMonth, monthNames, isZh, headcounts, equity, plAccounts } = args;
+  const A = (k: PlKind) => plAccounts?.(k);
+  const negAcc = (a: ReturnType<PlAccountFn>) => a?.map((x) => ({ ...x, values: x.values.map((v) => (v === null ? null : -v + 0)) }));
   const t = (zh: string, en: string) => (isZh ? zh : en);
   const multi = entities.length > 1;
   const cols = multi ? [...entities.map((e) => e.label), t("合计", "Total")] : entities.map((e) => e.label);
@@ -75,7 +80,7 @@ export function buildPnlSections(args: {
     }
     return out;
   };
-  const exp = (label: string, vals: number[]): BreakdownRow => ({ label, values: neg(vals) });
+  const exp = (label: string, vals: number[], accounts?: ReturnType<PlAccountFn>): BreakdownRow => ({ label, values: neg(vals), accounts: negAcc(accounts) });
 
   const sections: BreakdownSection[] = [];
 
@@ -85,7 +90,7 @@ export function buildPnlSections(args: {
     result: (revenue[last] ?? 0),
     formula: t("所选期间内每个主体各月利润表营业收入（来自月度利润表）之和", "Sum of each entity's monthly P&L revenue over the selected period (from the monthly P&L)"),
     cols,
-    rows: [...monthlyRows((r) => num(r.revenue)), { label: t("营业收入合计", "Total revenue"), values: revenue, kind: "total" }],
+    rows: [...monthlyRows((r) => num(r.revenue)), { label: t("营业收入合计", "Total revenue"), values: revenue, kind: "total", accounts: A("revenue") }],
     notes: [period],
   });
 
@@ -95,7 +100,7 @@ export function buildPnlSections(args: {
     result: (cost[last] ?? 0),
     formula: t("所选期间内每个主体各月利润表销售成本（毛利润线以上的成本）之和", "Sum of each entity's monthly cost of sales (costs above the gross-profit line) over the selected period"),
     cols,
-    rows: [...monthlyRows((r) => num(r.opCost)), { label: t("营业成本合计", "Total cost of sales"), values: cost, kind: "total" }],
+    rows: [...monthlyRows((r) => num(r.opCost)), { label: t("营业成本合计", "Total cost of sales"), values: cost, kind: "total", accounts: A("cost") }],
     notes: [period],
   });
 
@@ -107,8 +112,8 @@ export function buildPnlSections(args: {
     formula: t("（营业收入 − 销售成本）÷ 营业收入；集团口径用各主体合计后再相除，而不是对各主体毛利率取平均", "(Revenue − cost of sales) ÷ revenue. The group figure divides the combined totals — it is not an average of the entities' own margins"),
     cols,
     rows: [
-      { label: t("营业收入", "Revenue"), values: revenue },
-      exp(t("－ 销售成本", "− Cost of sales"), cost),
+      { label: t("营业收入", "Revenue"), values: revenue, accounts: A("revenue") },
+      exp(t("－ 销售成本", "− Cost of sales"), cost, A("cost")),
       { label: t("＝ 毛利润", "= Gross profit"), values: gross, kind: "total" },
       { label: t("毛利率", "Gross margin"), values: ratio(gross, revenue), kind: "total", format: "pct" },
     ],
@@ -123,10 +128,10 @@ export function buildPnlSections(args: {
     formula: t("（销售费用 + 管理费用 + 研发费用 + 财务费用）÷ 营业收入", "(Selling + administrative + R&D + finance expenses) ÷ revenue"),
     cols,
     rows: [
-      { label: t("销售费用", "Selling expenses"), values: sell },
-      { label: t("＋ 管理费用", "+ Administrative expenses"), values: admin },
-      { label: t("＋ 研发费用", "+ R&D expenses"), values: rnd },
-      { label: t("＋ 财务费用", "+ Finance expenses"), values: fin },
+      { label: t("销售费用", "Selling expenses"), values: sell, accounts: A("sell") },
+      { label: t("＋ 管理费用", "+ Administrative expenses"), values: admin, accounts: A("admin") },
+      { label: t("＋ 研发费用", "+ R&D expenses"), values: rnd, accounts: A("rnd") },
+      { label: t("＋ 财务费用", "+ Finance expenses"), values: fin, accounts: A("fin") },
       { label: t("＝ 期间费用合计", "= Total period expenses"), values: expenses, kind: "total" },
       { label: t("÷ 营业收入", "÷ Revenue"), values: revenue },
       { label: t("期间费用率", "Expense ratio"), values: ratio(expenses, revenue), kind: "total", format: "pct" },
@@ -142,7 +147,7 @@ export function buildPnlSections(args: {
     formula: t("研发费用 ÷ 营业收入", "R&D expenses ÷ revenue"),
     cols,
     rows: [
-      { label: t("研发费用", "R&D expenses"), values: rnd },
+      { label: t("研发费用", "R&D expenses"), values: rnd, accounts: A("rnd") },
       { label: t("÷ 营业收入", "÷ Revenue"), values: revenue },
       { label: t("研发投入强度", "R&D intensity"), values: ratio(rnd, revenue), kind: "total", format: "pct" },
     ],
@@ -159,7 +164,7 @@ export function buildPnlSections(args: {
       formula: t("营业收入 ÷ 员工人数（取期间内最新一个月的人数；该月未填则用主体当前人数）", "Revenue ÷ headcount (latest month in the period; the entity's current headcount if that month has none)"),
       cols,
       rows: [
-        { label: t("营业收入", "Revenue"), values: revenue },
+        { label: t("营业收入", "Revenue"), values: revenue, accounts: A("revenue") },
         { label: t("÷ 员工人数", "÷ Headcount"), values: hc, format: "count" },
         { label: t("人均创收", "Revenue per employee"), values: perHead, kind: "total" },
       ],
@@ -192,7 +197,7 @@ export function buildPnlSections(args: {
     formula: t("净利润 ÷ 营业收入", "Net profit ÷ revenue"),
     cols,
     rows: [
-      { label: t("净利润（利润表）", "Net profit (P&L)"), values: net },
+      { label: t("净利润（利润表）", "Net profit (P&L)"), values: net, accounts: A("net") },
       { label: t("÷ 营业收入", "÷ Revenue"), values: revenue },
       { label: t("净利率", "Net margin"), values: ratio(net, revenue), kind: "total", format: "pct" },
     ],
@@ -206,13 +211,13 @@ export function buildPnlSections(args: {
     formula: t("营业收入 − 销售成本 − 销售费用 − 管理费用 − 研发费用 − 财务费用", "Revenue − cost of sales − selling − administrative − R&D − finance expenses"),
     cols,
     rows: [
-      { label: t("营业收入", "Revenue"), values: revenue },
-      exp(t("－ 销售成本", "− Cost of sales"), cost),
+      { label: t("营业收入", "Revenue"), values: revenue, accounts: A("revenue") },
+      exp(t("－ 销售成本", "− Cost of sales"), cost, A("cost")),
       { label: t("＝ 毛利润", "= Gross profit"), values: gross, kind: "total" },
-      exp(t("－ 销售费用", "− Selling expenses"), sell),
-      exp(t("－ 管理费用", "− Administrative expenses"), admin),
-      exp(t("－ 研发费用", "− R&D expenses"), rnd),
-      exp(t("－ 财务费用", "− Finance expenses"), fin),
+      exp(t("－ 销售费用", "− Selling expenses"), sell, A("sell")),
+      exp(t("－ 管理费用", "− Administrative expenses"), admin, A("admin")),
+      exp(t("－ 研发费用", "− R&D expenses"), rnd, A("rnd")),
+      exp(t("－ 财务费用", "− Finance expenses"), fin, A("fin")),
       { label: t("＝ 营业利润", "= Operating profit"), values: opProfit, kind: "total" },
     ],
     notes: [t("费用按「设置 → 费用分类映射」把每个费用科目归入销售/管理/研发/财务四类。", "Expenses are grouped into selling / administrative / R&D / finance by the expense-category mapping in Settings."), period],
@@ -236,8 +241,8 @@ export function buildPnlSections(args: {
     formula: t("EBIT = 净利润 + 利息费用；月度利润表的净利润为税前，不含所得税；银行手续费不加回", "EBIT = net profit + interest expense; the monthly P&L net profit is before income tax; bank charges are not added back"),
     cols,
     rows: [
-      { label: t("净利润（利润表，税前）", "Net profit (P&L, before tax)"), values: net },
-      { label: t("＋ 利息费用（贷款利息、租赁利息等）", "+ Interest expense (loan, lease and other interest)"), hint: t("按科目名称识别（含 interest / finance costs）；银行手续费不在其中", "Picked by account name (anything with interest / finance costs); bank charges are not in it"), values: interest },
+      { label: t("净利润（利润表，税前）", "Net profit (P&L, before tax)"), values: net, accounts: A("net") },
+      { label: t("＋ 利息费用（贷款利息、租赁利息等）", "+ Interest expense (loan, lease and other interest)"), hint: t("按科目名称识别（含 interest / finance costs）；银行手续费不在其中", "Picked by account name (anything with interest / finance costs); bank charges are not in it"), values: interest, accounts: A("interest") },
       { label: t("＝ EBIT", "= EBIT"), values: ebit, kind: "total" },
       { label: t("EBIT 利润率（EBIT ÷ 营业收入）", "EBIT margin (EBIT ÷ revenue)"), values: ebitMargin, format: "pct" },
       { label: t("不加回：银行手续费及其他财务费用", "Not added back: bank charges and other finance costs"), values: otherFinance },
@@ -269,7 +274,7 @@ export function buildPnlSections(args: {
     cols,
     rows: [
       { label: t("EBIT（见上）", "EBIT (above)"), values: ebit },
-      { label: t("＋ 折旧与摊销", "+ Depreciation & amortisation"), hint: t("按科目名称从月度利润表识别（含 depreciation / amortisation）", "Picked from the monthly P&L by account name (anything with depreciation / amortisation)"), values: dna },
+      { label: t("＋ 折旧与摊销", "+ Depreciation & amortisation"), hint: t("按科目名称从月度利润表识别（含 depreciation / amortisation）", "Picked from the monthly P&L by account name (anything with depreciation / amortisation)"), values: dna, accounts: A("dna") },
       { label: t("＝ EBITDA", "= EBITDA"), values: ebitda, kind: "total" },
       { label: t("EBITDA 利润率（EBITDA ÷ 营业收入）", "EBITDA margin (EBITDA ÷ revenue)"), values: ebitdaMargin, format: "pct" },
     ],
@@ -299,7 +304,7 @@ export function buildPnlSections(args: {
     rows: [
       { label: t("营业利润（见上）", "Operating profit (above)"), values: opProfit },
       { label: t("＋ 其他收入、其他支出及税项（报告净利润与营业利润之差）", "+ Other income, other expenses & tax (reported net profit − operating profit)"), values: net.map((n, i) => r2(n - opProfit[i])) },
-      { label: t("＝ 净利润（利润表）", "= Net profit (P&L)"), values: net, kind: "total" },
+      { label: t("＝ 净利润（利润表）", "= Net profit (P&L)"), values: net, kind: "total", accounts: A("net") },
     ],
     notes: [period],
   });

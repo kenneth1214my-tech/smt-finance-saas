@@ -6,6 +6,13 @@ import type { XeroReport } from "@/lib/xero";
 // RowType structure and standard section titles (Income/Revenue, Cost of Sales, Net Profit) are
 // consistent — mirrors the section semantics in pnl-parser.ts so both feed MonthlyFinancial the
 // same way (opCost = cost of sales, not operating expenses).
+/** One account line of the P&L: which part of it (revenue / cost of sales / operating expense / other income) and its amount for the month. */
+export interface PnlLine {
+  kind: "revenue" | "cost" | "expense" | "other";
+  label: string;
+  value: number;
+}
+
 export interface XeroPnlResult {
   revenue: number;
   costOfSales: number;
@@ -19,10 +26,12 @@ export interface XeroPnlResult {
   depreciation: number;
   // Interest expense (by account name) from every cost section — the part of the finance costs EBIT adds back; bank charges excluded.
   interest: number;
+  /** Every account line, so a P&L figure can be traced to the Xero accounts behind it. */
+  lines: PnlLine[];
 }
 
-const DEPRECIATION_RE = /depreciat|amortis|amortiz/i;
-const INTEREST_RE = /\binterest\b|finance\s+(costs?|charges?)|borrowing\s+costs?/i;
+export const DEPRECIATION_RE = /depreciat|amortis|amortiz/i;
+export const INTEREST_RE = /\binterest\b|finance\s+(costs?|charges?)|borrowing\s+costs?/i;
 
 function cellNumber(cells: { Value?: string }[] | undefined, index: number): number {
   const raw = cells?.[index]?.Value ?? "";
@@ -48,8 +57,9 @@ export function parseXeroPnl(report: XeroReport): XeroPnlResult {
   const expenseLineItems: { label: string; value: number }[] = [];
   let depreciation = 0;
   let interest = 0;
+  const lines: PnlLine[] = [];
 
-  function walk(rows: XeroReport["Rows"], inExpenseSection: boolean, inCostOfSales = false) {
+  function walk(rows: XeroReport["Rows"], inExpenseSection: boolean, inCostOfSales = false, kind: PnlLine["kind"] | null = null) {
     for (const row of rows) {
       if (row.RowType === "Section") {
         const summary = row.Rows?.find((r) => r.RowType === "SummaryRow");
@@ -59,9 +69,10 @@ export function parseXeroPnl(report: XeroReport): XeroPnlResult {
         const isOtherIncome = otherIncomeSection(row.Title);
         if (isRevenue) revenue += total;
         else if (isCostOfSales) costOfSales += total;
-        if (row.Rows) walk(row.Rows, !isRevenue && !isCostOfSales && !isOtherIncome, isCostOfSales);
+        if (row.Rows) walk(row.Rows, !isRevenue && !isCostOfSales && !isOtherIncome, isCostOfSales, isRevenue ? "revenue" : isCostOfSales ? "cost" : isOtherIncome ? "other" : "expense");
       } else if (row.RowType === "Row" && row.Cells && row.Cells.length >= 2) {
         const label = (row.Cells[0]?.Value ?? "").trim();
+        if (kind && label && !/^net\s+(profit|income)$/i.test(label)) lines.push({ kind, label, value: cellNumber(row.Cells, row.Cells.length - 1) });
         if (/^net\s+(profit|income)$/i.test(label)) {
           netProfit = cellNumber(row.Cells, row.Cells.length - 1);
           foundNetProfit = true;
@@ -93,5 +104,5 @@ export function parseXeroPnl(report: XeroReport): XeroPnlResult {
     netProfit = revenue - otherSections;
   }
 
-  return { revenue, costOfSales, netProfit, expenseLineItems, depreciation, interest };
+  return { revenue, costOfSales, netProfit, expenseLineItems, depreciation, interest, lines };
 }

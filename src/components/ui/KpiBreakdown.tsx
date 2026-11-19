@@ -117,7 +117,7 @@ export default function KpiBreakdown({ sections, locale, unit, heading, hint }: 
                                           </tr>
                                           {off && (
                                             <tr style={{ color: "var(--status-warning)" }}>
-                                              <td className="py-1 pl-2.5">{locale === "zh" || locale === "zh-Hant" ? "与上方数字的差额（该月科目明细尚不完整，请再次「全部同步」）" : "Difference to the figure above (account detail for that month is incomplete — Sync all again)"}</td>
+                                              <td className="py-1 pl-2.5">{locale === "zh" || locale === "zh-Hant" ? "与上方数字的差额（合并调整，或该期间的科目明细尚不完整——请再次「全部同步」）" : "Difference to the figure above (a consolidation adjustment, or the account detail for the period is incomplete — Sync all again)"}</td>
                                               {diffs.map((d, j) => (
                                                 <td key={j} className="tabular-nums py-1 pr-1 text-right">{Math.abs(d) > 0.5 ? fmt(d) : "–"}</td>
                                               ))}

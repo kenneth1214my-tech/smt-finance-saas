@@ -17,6 +17,7 @@ import Card from "@/components/ui/Card";
 import KpiTile from "@/components/ui/KpiTile";
 import KpiBreakdown from "@/components/ui/KpiBreakdown";
 import { buildPnlSections } from "@/lib/overview-breakdown";
+import { loadPlAccountFn } from "@/lib/pl-accounts-data";
 import RankList from "@/components/ui/RankList";
 import TrendChart from "@/components/ui/TrendChart";
 import StatusPill from "@/components/ui/StatusPill";
@@ -131,7 +132,9 @@ export default async function ProfitPage(props: PageProps<"/profit">) {
     ...(bySub.some((r) => r.sub.id === HQ_PSEUDO_SUB.id) ? [{ id: null as string | null, label: t("集团总部", "Group HQ"), equity: Number(organization.equity) }] : []),
     ...subsidiaries.map((sub) => ({ id: sub.id as string | null, label: localizedName(sub, locale), equity: Number(sub.equity) })),
   ];
+  const plAccounts = await loadPlAccountFn(organizationId, profitEntities, kpiRows, isZh);
   const profitSections = buildPnlSections({
+    plAccounts,
     entities: profitEntities,
     rows: kpiRows,
     fromMonth: period.fromMonth,

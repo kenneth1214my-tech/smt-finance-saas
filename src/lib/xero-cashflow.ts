@@ -103,7 +103,7 @@ export async function syncDerivedCashFlow(args: {
         .filter((l) => l.balances.has(key))
         .map((l) => ({ organizationId, subsidiaryId, year: y, month: m, group: `BS_${l.bucket}`, section: l.title || (l.section as string), accountName: l.name, balance: r2(l.balances.get(key) as number) }));
       const rows = [...ledgerRows, ...lineRows];
-      await db.accountBalanceMonthly.deleteMany({ where: { organizationId, subsidiaryId, year: y, month: m } });
+      await db.accountBalanceMonthly.deleteMany({ where: { organizationId, subsidiaryId, year: y, month: m, NOT: { group: { startsWith: "PL_" } } } });
       if (rows.length > 0) await db.accountBalanceMonthly.createMany({ data: rows });
     }
   } catch (err) {

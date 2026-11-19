@@ -18,6 +18,7 @@ import KpiTile from "@/components/ui/KpiTile";
 import KpiBreakdown from "@/components/ui/KpiBreakdown";
 import { buildFlowSections, type BreakdownSection } from "@/lib/treasury-breakdown";
 import { buildPnlSections } from "@/lib/overview-breakdown";
+import { loadPlAccountFn } from "@/lib/pl-accounts-data";
 
 export default async function OverviewPage(props: PageProps<"/overview">) {
   const user = await requireUser();
@@ -148,7 +149,8 @@ export default async function OverviewPage(props: PageProps<"/overview">) {
     ...(pnlEntityIds.has(null) ? [{ id: null as string | null, label: hqLabel }] : []),
     ...subsidiaries.filter((sub) => pnlEntityIds.has(sub.id)).map((sub) => ({ id: sub.id as string | null, label: localizedName(sub, locale) })),
   ];
-  const pnlSections = buildPnlSections({ entities: pnlEntities, rows: monthlyRows, fromMonth: period.fromMonth, toMonth: period.toMonth, monthNames: fiscalMonthLabels(locale, fye), isZh });
+  const plAccounts = await loadPlAccountFn(organizationId, pnlEntities, monthlyRows, isZh);
+  const pnlSections = buildPnlSections({ plAccounts, entities: pnlEntities, rows: monthlyRows, fromMonth: period.fromMonth, toMonth: period.toMonth, monthNames: fiscalMonthLabels(locale, fye), isZh });
   const ocfSection =
     cashflow.length > 0
       ? (await buildFlowSections({ organizationId, year: period.year, fromMonth: period.fromMonth, toMonth: period.toMonth, subsidiaryFilter: {}, locale, isZh, fyeMonth: fye })).find((x) => x.id === "ocf")
